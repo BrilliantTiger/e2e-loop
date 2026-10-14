@@ -81,7 +81,8 @@ test("1라운드: 재시도·삭제 규칙·로그아웃·스킵·증거", async
   // 이슈: 불안정 1건만. 스킵 3건은 이슈가 아니다
   const rep: any = A.aRoundReport({ project: root, format: "json" });
   expect(rep.summary).toMatchObject({ FLAKY: 1, SKIP: 3 });
-  expect(rep.issues).toBe(1);
+  expect(rep.issue_count).toBe(1);
+  expect(rep.issues.map((i: any) => i.id)).toEqual(["FL-1"]);
   expect(rep.trend.at(-1).issues).toBe(1);
   expect(A.aCompleteCheck({ project: root }).complete).toBe(false);
 

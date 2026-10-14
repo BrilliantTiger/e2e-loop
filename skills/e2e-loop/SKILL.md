@@ -100,9 +100,16 @@ Ask before starting the first round. Use `e2e_prestart` to record the answers.
 
 ### 7. Round results
 
+Every round writes two sheets in `.e2e/rounds/<round>/`:
+
+- **Human sheet** `report.html`: summary cards, the issue trend per round, the issue list, then screen -> feature unit -> case results with videos (chapter buttons) and screenshots.
+- **AI sheet** `ai-sheet.md` (and `ai-sheet.json`): for every issue it has the reproduction steps, expected value, actual value, API requests and responses, console logs, screenshot and video location (with the video time), and suspect code location (when code analysis exists). It is split into **development tasks**, each with a fix scope, acceptance criteria (cases that must pass), prerequisite tasks, and regression watch.
+
+What to do:
+
 - Read the result with `e2e_round_report`.
-- Tell the user the human sheet and the dashboard address.
-- Hand the AI sheet to the development agent.
+- Tell the user the human sheet path and the dashboard address.
+- Hand the AI sheet to the development agent. Tell it to work task by task and to confirm each task with a partial round (`verify` in the task).
 
 ### 8. Fix
 

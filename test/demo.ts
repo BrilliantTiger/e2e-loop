@@ -81,7 +81,7 @@ try {
   } while (st.running);
   ok(st.status === "finished", "1회차 끝남");
   const rep1: any = A.aRoundReport({ project: root, format: "json" });
-  console.log("   실패:", rep1.failures.map((f: any) => `${f.priority} ${f.id}`).join(", "));
+  console.log("   실패:", rep1.issues.map((f: any) => `${f.priority} ${f.id}`).join(", "));
   ok(rep1.summary.FAIL >= 3, `결함 ${rep1.summary.FAIL}건 발견`);
   ok(existsSync(join(root, ".e2e/rounds/R01/report.html")), "사람용 report.html 생성");
   const c1 = A.aCompleteCheck({ project: root });

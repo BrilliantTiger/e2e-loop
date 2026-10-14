@@ -164,6 +164,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
     pendingFeedback: project.feedback().filter((f) => f.status === "pending").map((f) => ({ id: f.id, text: f.text })),
   };
   project.writeJson(`rounds/${id}/meta.json`, meta);
+  project.writeJson(`rounds/${id}/cases.json`, selected); // 이 라운드가 돌린 케이스 정의(결과물의 기대값 설명용)
   writeFileSync(project.p("running.json"), JSON.stringify({ pid: process.pid, round: id }));
   rmSync(project.p("stop"), { force: true });
   const emit = (ev: Record<string, unknown>) => {

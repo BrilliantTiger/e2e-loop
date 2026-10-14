@@ -297,10 +297,10 @@ export function aRoundReport(a: { project?: string; round?: string; format?: "md
   const rounds = p.rounds().filter((r) => r.status !== "running");
   const r = a.round ? rounds.find((x) => x.id === a.round) : rounds[rounds.length - 1];
   if (!r) return { error: "끝난 회차가 없습니다." };
-  const paths = { html: p.p("rounds", r.id, "report.html"), md: p.p("rounds", r.id, "report.md"), json: p.p("rounds", r.id, "report.json"), dashboard: dashboards.get(p.root)?.url };
-  if (a.format === "paths") return { round: r.id, ...paths, human: "사람용: report.html (영상·스크린샷 포함, 브라우저로 열기)", ai: "AI용: report.md(요약)·report.json(전체)" };
-  if (a.format === "json") return JSON.parse(readFileSync(paths.json, "utf8"));
-  return { round: r.id, markdown: readFileSync(paths.md, "utf8"), human_report: paths.html };
+  const paths = { human: p.p("rounds", r.id, "report.html"), ai_md: p.p("rounds", r.id, "ai-sheet.md"), ai_json: p.p("rounds", r.id, "ai-sheet.json"), dashboard: dashboards.get(p.root)?.url };
+  if (a.format === "paths") return { round: r.id, ...paths, sheets: "사람용: report.html (영상·스크린샷·이슈 추이, 브라우저로 열기) / AI용: ai-sheet.md(읽기용)·ai-sheet.json(구조) — 이슈별 재현 단계·기대값·실제값·API·콘솔·증거 위치·의심 코드와 개발 작업 단위" };
+  if (a.format === "json") return JSON.parse(readFileSync(paths.ai_json, "utf8"));
+  return { round: r.id, markdown: readFileSync(paths.ai_md, "utf8"), human_report: paths.human };
 }
 
 export function aCompleteCheck(a: { project?: string }) {

@@ -164,7 +164,7 @@ server.registerTool("e2e_round_stop", { title: "회차 중단", description: "�
 
 server.registerTool("e2e_round_report", {
   title: "회차 결과",
-  description: "끝난 회차의 결과. format=md(AI용 요약: 실패·원인 힌트·증거 경로·다음 행동), json(전체 구조), paths(사람용 report.html 경로 등). 사람에게는 report.html 과 대시보드 주소를 알려 준다.",
+  description: "끝난 라운드의 결과물. AI용 시트(format=md 읽기용 / json 구조)는 이슈마다 재현 단계·기대값·실제값·API 요청과 응답·콘솔 로그·스크린샷과 영상 위치(영상 시각)·의심 코드 위치를 담고, 개발을 단계적으로 시킬 수 있게 작업 단위(수정 범위·수용 기준·선행 의존·회귀 주의)로 쪼갠다. 사람용 시트는 report.html(영상·스크린샷·이슈 추이 포함, format=paths 로 경로). 사람에게는 report.html 과 대시보드 주소를, 개발 에이전트에게는 AI용 시트를 넘긴다.",
   inputSchema: { project, round: z.string().optional(), format: z.enum(["md", "json", "paths"]).optional() },
 }, wrap(A.aRoundReport));
 
