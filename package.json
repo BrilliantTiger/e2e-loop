@@ -1,0 +1,27 @@
+{
+  "name": "e2e-loop",
+  "version": "0.1.0",
+  "description": "웹 E2E 회차 루프 — 스킬 + MCP. 기획서/디자인/기능정의서/라이브 사이트에서 모든 이벤트를 점검하고, 회차마다 사람용·AI용 결과물을 낸다.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "e2e-loop": "src/cli.ts"
+  },
+  "scripts": {
+    "mcp": "bun src/mcp.ts",
+    "cli": "bun src/cli.ts",
+    "doctor": "bun src/cli.ts doctor",
+    "demo": "bun test/demo.ts",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "playwright": "^1.64.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "typescript": "^7.0.2"
+  }
+}
