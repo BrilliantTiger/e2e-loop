@@ -37,6 +37,8 @@ export interface SessionState {
 
 export interface IntakeState {
   baseUrl?: string;
+  /** 사용자가 시트를 확인한 뒤 시작하기를 원하면 true (기본은 한 번 보여 주고 바로 시작) */
+  sheetConfirm?: boolean;
   updatedAt: string;
 }
 

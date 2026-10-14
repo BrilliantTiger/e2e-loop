@@ -231,7 +231,7 @@ test("SKILL.md 가 있고 이름·설명 머리말과 동작 흐름 9단계, 금
   for (let i = 1; i <= 9; i++) expect(text).toContain(`### ${i}. `);
   expect(text).toContain("코드를 수정하지 않는다");
   expect(text).toContain("다음 라운드");
-  for (const t of ["e2e_status", "e2e_session_start", "e2e_intake", "e2e_round_start", "e2e_complete_check", "e2e_feedback"]) expect(text).toContain(t);
+  for (const t of ["e2e_status", "e2e_session_start", "e2e_intake", "e2e_analyze", "e2e_os_check", "e2e_sheet", "e2e_round_start", "e2e_complete_check", "e2e_feedback"]) expect(text).toContain(t);
 });
 
 test("스킬을 Claude(~/.claude/skills)와 Codex(~/.agents/skills)에 링크하고, 두 번째는 이미 있음", () => {

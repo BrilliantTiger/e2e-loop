@@ -57,7 +57,7 @@ if (!window.__e2e) {
   };
   window.__e2e = { v: 1, norm, vis, textOf, accName, roleOf, resolve, dialogs };
   // 오류 수집 훅 (ego 에서 쓰고, Playwright 는 네이티브 이벤트를 쓴다)
-  window.__e2eHooks = window.__e2eHooks || { console: [], errors: [], requests: [] };
+  window.__e2eHooks = window.__e2eHooks || { console: [], errors: [], requests: [], net: [] };
 }
 `;
 
@@ -70,14 +70,21 @@ if (!window.__e2eHooksOn) {
   addEventListener('error', (e) => h.errors.push(String(e.message).slice(0, 300)));
   addEventListener('unhandledrejection', (e) => h.errors.push('unhandledrejection: ' + String((e.reason && e.reason.message) || e.reason).slice(0, 300)));
   const of = window.fetch;
+  const rec = (m, u, st, ct, body) => {
+    try {
+      const x = new URL(u, location.href); const e = { method: String(m || 'GET').toUpperCase(), url: x.pathname + x.search, origin: x.origin, status: st, contentType: (ct || '').split(';')[0] };
+      if (body && /json/i.test(e.contentType) && st < 400 && body.length < 500000) { try { const j = JSON.parse(body); if (Array.isArray(j)) e.jsonArray = true; else if (j && typeof j === 'object') e.jsonKeys = Object.keys(j).slice(0, 30); } catch (er) {} }
+      h.net.push(e); if (h.net.length > 300) h.net.shift();
+    } catch (er) {}
+  };
   if (of) window.fetch = function (input, init) {
     const url = typeof input === 'string' ? input : (input && input.url) || String(input);
     const method = (init && init.method) || (input && input.method) || 'GET';
-    return of.apply(this, arguments).then((r) => { if (r.status >= 400) h.requests.push(r.status + ' ' + method + ' ' + url); return r; }, (err) => { h.requests.push('ERR ' + method + ' ' + url); throw err; });
+    return of.apply(this, arguments).then((r) => { if (r.status >= 400) h.requests.push(r.status + ' ' + method + ' ' + url); try { r.clone().text().then((t) => rec(method, url, r.status, r.headers.get('content-type'), t)).catch(() => rec(method, url, r.status, r.headers.get('content-type'))); } catch (er) {} return r; }, (err) => { h.requests.push('ERR ' + method + ' ' + url); throw err; });
   };
   const xo = XMLHttpRequest.prototype.open; const xs = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function (m, u) { this.__m = m; this.__u = u; return xo.apply(this, arguments); };
-  XMLHttpRequest.prototype.send = function () { this.addEventListener('loadend', () => { if (this.status >= 400 || this.status === 0) h.requests.push((this.status || 'ERR') + ' ' + this.__m + ' ' + this.__u); }); return xs.apply(this, arguments); };
+  XMLHttpRequest.prototype.send = function () { this.addEventListener('loadend', () => { if (this.status >= 400 || this.status === 0) h.requests.push((this.status || 'ERR') + ' ' + this.__m + ' ' + this.__u); if (this.status) { let b = ''; try { b = typeof this.responseText === 'string' ? this.responseText : ''; } catch (er) {} rec(this.__m, this.__u, this.status, this.getResponseHeader('content-type'), b); } }); return xs.apply(this, arguments); };
 }
 `;
 
@@ -179,12 +186,13 @@ export const inventoryExpr = (scope: string | null) => String.raw`(() => {
       tag, kind, inputType: tag === 'input' ? el.type : undefined,
       label: E.accName(el).slice(0, 80) || el.getAttribute('name') || el.id || tag,
       selector, href: href || undefined, external,
+      download: (tag === 'a' && (el.hasAttribute('download') || /\.(pdf|zip|csv|xlsx?|docx?|pptx?|hwp|txt|json|xml|png|jpe?g|gif|webp|svg|mp4|mp3)(\?|#|$)/i.test(href || ''))) || undefined,
       newTab: el.getAttribute('target') === '_blank' || undefined,
       disabled: el.disabled || el.getAttribute('aria-disabled') === 'true' || undefined,
       required: el.required || undefined, formKey,
       submit: (tag === 'button' && (el.getAttribute('type') === 'submit' || (!el.getAttribute('type') && !!form))) || (tag === 'input' && el.type === 'submit') || undefined,
       options: tag === 'select' ? [...el.options].map((o) => o.value || o.text).slice(0, 12) : undefined,
-      attrs: { pattern: aria('pattern'), min: aria('min'), max: aria('max'), maxlength: aria('maxlength'), 'aria-haspopup': aria('aria-haspopup'), 'aria-controls': aria('aria-controls'), 'data-bs-toggle': aria('data-bs-toggle'), 'data-toggle': aria('data-toggle') },
+      attrs: { accept: aria('accept'), multiple: el.multiple ? '1' : undefined, pattern: aria('pattern'), min: aria('min'), max: aria('max'), maxlength: aria('maxlength'), 'aria-haspopup': aria('aria-haspopup'), 'aria-controls': aria('aria-controls'), 'data-bs-toggle': aria('data-bs-toggle'), 'data-toggle': aria('data-toggle') },
       popupHint: !!(aria('aria-haspopup') && aria('aria-haspopup') !== 'false') || aria('data-bs-toggle') === 'modal' || aria('data-toggle') === 'modal' || undefined,
     });
     if (out.length >= 500) break;

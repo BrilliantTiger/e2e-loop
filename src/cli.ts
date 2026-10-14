@@ -31,6 +31,9 @@ const HELP = `e2e-loop — 웹 E2E 회차 루프
   setup [--confirm ffmpeg] [--dry-run]   doctor --fix 와 같음
   session [--mode here|new] [--agent claude|codex] [--new_session] [--baseUrl URL] [--dryRun]   테스터 세션 시작
   intake [--baseUrl URL] [--materials '[{"kind":"plan","location":"docs/plan.md"}]']   웹 주소·근거 등록과 최소 진행 조건 검사
+  analyze [--codeRoot 경로] [--rediscover false]   코드 분석 + 사이트 탐색 결과와 대조
+  os-check [--decision allow|skip]       OS 창(다운로드·파일 선택) 점검
+  sheet [--confirm] [--confirm_before_start] [--full]   테스트 시트(화면 → 기능 → 케이스)
   init --baseUrl URL [--driver ego|chrome|chromium|auto] [--dataPolicy ask|reset|keep] [--resetCommand CMD]
   source --kind plan|design|feature-spec|live-site --title T --location L [--sections '["3.1","3.2"]']
   discover                               사이트 전수 탐색 + 자동 점검 케이스 생성
@@ -50,6 +53,9 @@ switch (cmd) {
   case "setup": print(await A.aDoctor({ fix: true, dryRun: !!flags["dry-run"], confirm: typeof flags.confirm === "string" ? String(flags.confirm).split(",") : undefined })); break;
   case "session": print(await A.aSessionStart({ ...flags, project } as any)); break;
   case "intake": print(await A.aIntake({ ...flags, project } as any)); break;
+  case "analyze": print(await A.aAnalyze({ ...flags, project } as any)); break;
+  case "os-check": print(await A.aOsCheck({ ...flags, project } as any)); break;
+  case "sheet": print(A.aSheet({ ...flags, project } as any)); break;
   case "init": print(await A.aInit({ ...flags, project } as any)); break;
   case "source": print(A.aSourceAdd({ ...flags, project } as any)); break;
   case "discover": print(await A.aDiscover({ ...flags, project })); break;

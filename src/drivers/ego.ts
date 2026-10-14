@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import type { Config } from "../types.ts";
 import { expandEnv } from "../store.ts";
-import type { DPage, Drained, Driver, Session } from "./index.ts";
+import { OsWindowRequired, type DPage, type Drained, type Driver, type NetEntry, type Session } from "./index.ts";
 import { HOOKS, LIB } from "./inpage.ts";
 
 // ego-browser 는 자기 내장 Node 런타임 안에서만 page API 를 쓸 수 있다.
@@ -116,6 +116,15 @@ class EgoPage implements DPage {
   async screenshot(path: string) {
     await this.call({ op: "shot", path }, 20000);
   }
+  async drainNet(): Promise<NetEntry[]> {
+    return this.evaluate<NetEntry[]>(`(() => { const h = window.__e2eHooks; const r = h.net.slice(); h.net.length = 0; return r; })()`).catch(() => []);
+  }
+  async upload(_sel: string, _filePath: string): Promise<void> {
+    throw new OsWindowRequired("Ego 의 파일 선택 창은 브라우저 밖 OS 창이라 컴퓨터 제어 도구가 맡아야 합니다.");
+  }
+  async download(_sel: string, _dir: string, _timeoutMs: number): Promise<never> {
+    throw new OsWindowRequired("Ego 의 다운로드는 브라우저 밖 OS 창이라 컴퓨터 제어 도구가 맡아야 합니다.");
+  }
   async drain(): Promise<Drained> {
     const h = await this.evaluate<{ console: string[]; errors: string[]; requests: string[] }>(
       `(() => { const h = window.__e2eHooks; const r = { console: h.console.slice(), errors: h.errors.slice(), requests: h.requests.slice() }; h.console.length = 0; h.errors.length = 0; h.requests.length = 0; return r; })()`,
@@ -126,7 +135,7 @@ class EgoPage implements DPage {
 
 export class EgoDriver implements Driver {
   name = "ego-browser";
-  capabilities = { video: false, network: false };
+  capabilities = { video: false, network: true, files: false };
   private proc?: ReturnType<typeof Bun.spawn>;
   private port = 0;
   constructor(private cfg: Config, private bin: string) {}

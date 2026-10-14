@@ -24,7 +24,10 @@ export function coverage(project: Project): Coverage {
   const bySpec = els.filter((e) => specEl.has(e.id) || specSel.has(e.selector));
   const byProbe = els.filter((e) => probeEl.has(e.id) && cfg.probes === "auto");
   const covered = new Set([...bySpec, ...byProbe].map((e) => e.id));
-  const uncovered = els.filter((e) => !covered.has(e.id) && !e.disabled);
+  // 모든 화면에 똑같이 있는 메뉴·푸터 요소는 한 곳에서만 점검하므로, 같은 요소가 점검됐으면 덮인 것으로 센다
+  const keyOf = (e: (typeof els)[number]) => `${e.layer}|${e.kind}|${e.selector}|${e.href ?? ""}|${e.label}`;
+  const coveredKeys = new Set(els.filter((e) => covered.has(e.id)).map(keyOf));
+  const uncovered = els.filter((e) => !covered.has(e.id) && !coveredKeys.has(keyOf(e)) && !e.disabled);
   const notes: string[] = [];
   if (!inv) notes.push("인벤토리가 없음 — 개발된 사이트가 있으면 e2e_discover 로 모든 요소를 수집하세요.");
   if (cfg.probes === "off") notes.push("자동 점검(probes)이 꺼져 있어 spec 케이스만 실행됩니다.");

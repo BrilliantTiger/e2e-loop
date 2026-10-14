@@ -39,6 +39,13 @@ E2E 는 코드를 고치는 에이전트가 아니라 **새 세션의 AI(테스�
 - 상태는 대상 프로젝트의 `.e2e/session.json`, `.e2e/intake.json`, `.e2e/sources.json` 에 있다.
 - 터미널에서: `bun src/cli.ts session --mode new`, `bun src/cli.ts intake --baseUrl URL --materials '[{"kind":"plan","location":"docs/plan.md"}]'`
 
+### 분석과 시트
+
+- `e2e_discover`: 사이트를 돌며 클릭·입력·선택·토글·탭·폼·모달에 더해 **API 요청·응답(fetch·XHR), 다운로드 링크, 파일 입력**을 모은다.
+- `e2e_analyze`: 코드(Next·React Router·Vue Router·Nuxt·SvelteKit·정적 HTML)에서 화면·이벤트·API·다운로드/업로드 후보를 뽑아 사이트 탐색 결과와 대조한다. 코드에는 있는데 링크로 안 닿는 화면은 직접 열어 확인하는 케이스로 만든다. 새 프레임워크는 `src/analysis/code.ts` 의 `ROUTE_EXTRACTORS` 에 추가한다.
+- `e2e_os_check`: 다운로드·파일 선택이 브라우저 밖 OS 창을 거치는지 테스트 전에 점검한다. Chrome 계열은 Playwright 가 직접 처리하므로 해당 없다. Ego 에서 컴퓨터 제어가 안 되면 권한 안내와 함께 허용/스킵을 묻는다.
+- `e2e_sheet`: 화면 → 기능 단위 → 케이스로 묶은 시트(`.e2e/sheet.md`)를 만든다. 케이스마다 근거(문서 절·코드 위치)가 있다. 요약을 한 번 보여 주고 바로 시작하며, 확인 후 시작을 원하면 `confirm_before_start`.
+
 ### Ego 에 대해
 
 Ego 는 MCP 서버가 아니라 **스킬 + `ego-browser` 명령**으로 동작한다. e2e-loop 는 그 명령을 직접 쓰므로 Ego 용 MCP 등록은 필요 없다. 설치: <https://lite.ego.app/> → 앱을 열어 첫 실행 온보딩을 마치면 `ego-browser` 명령이 PATH 에 등록된다(macOS 전용).

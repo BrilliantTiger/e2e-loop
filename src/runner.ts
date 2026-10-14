@@ -92,6 +92,20 @@ async function runExpect(p: DPage, s: Step, base: string) {
   if (errs.length) throw new Error(errs.join(" | "));
 }
 
+/** 상태코드 기대값: 숫자, 숫자 배열, "2xx" "3xx", "<400" */
+export function statusMatches(status: number, exp: unknown): boolean {
+  if (typeof exp === "number") return status === exp;
+  if (Array.isArray(exp)) return exp.some((e) => statusMatches(status, e));
+  if (typeof exp === "string") {
+    const m1 = exp.match(/^([1-5])xx$/i);
+    if (m1) return Math.floor(status / 100) === Number(m1[1]);
+    const m2 = exp.match(/^<\s*(\d{3})$/);
+    if (m2) return status < Number(m2[1]);
+    return String(status) === exp;
+  }
+  return false;
+}
+
 function jsonPath(obj: any, path: string): any {
   return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
@@ -115,6 +129,11 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     res.reason = c.reason ?? "(사유 없음)";
     return res;
   }
+  if (c.skipReason) {
+    res.status = "SKIP";
+    res.reason = c.skipReason;
+    return res;
+  }
   if (c.risk === "destructive" && ctx.decision === "keep") {
     res.status = "SKIP";
     res.reason = "데이터 유지 모드라 파괴적 동작(삭제·로그아웃 등)은 실행하지 않음 — 데이터 초기화 회차에서 확인 필요";
@@ -128,6 +147,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   const steps: Step[] = [...(cfg.auth?.setupSteps ?? []), ...c.steps];
   const keepAllShots = !ctx.driver.capabilities.video;
   let failedAt = -1;
+  let osBlocked: string | undefined;
   const shot = async (name: string): Promise<string | undefined> => {
     const p = join(edir, name + ".png");
     try {
@@ -158,18 +178,41 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           break;
         case "expect": await runExpect(page, s, cfg.baseUrl); break;
         case "api": {
-          const r = await fetch(abs(s.url, cfg.baseUrl), {
-            method: s.method ?? "GET",
-            headers: { "content-type": "application/json", ...(s.headers ?? {}) },
-            body: s.body === undefined ? undefined : typeof s.body === "string" ? s.body : JSON.stringify(s.body),
-            signal: AbortSignal.timeout(15000),
-          });
-          const text = await r.text();
-          if (s.status !== undefined && r.status !== s.status) throw new Error(`API 상태코드 ${r.status} (기대 ${s.status}): ${text.slice(0, 120)}`);
-          if (s.status === undefined && r.status >= 400) throw new Error(`API 상태코드 ${r.status}: ${text.slice(0, 120)}`);
-          if (s.json) {
-            const body = JSON.parse(text);
-            for (const [k, v] of Object.entries(s.json)) if (JSON.stringify(jsonPath(body, k)) !== JSON.stringify(v)) throw new Error(`API 응답 ${k} 가 다름: 기대 ${JSON.stringify(v)} / 실제 ${JSON.stringify(jsonPath(body, k))}`);
+          const method = String(s.method ?? "GET").toUpperCase();
+          const url = abs(s.url, cfg.baseUrl);
+          const reqBody = s.body === undefined ? undefined : typeof s.body === "string" ? s.body : JSON.stringify(s.body);
+          const headers = { "content-type": "application/json", ...(s.headers ?? {}) };
+          let status: number;
+          let text: string;
+          sr.api = { method, url, requestBody: reqBody?.slice(0, 2000), via: s.via === "page" ? "page" : "server" };
+          if (s.via === "page") {
+            // 브라우저 안에서 보낸다: 로그인 쿠키·세션이 그대로 실린다
+            const r = await page.evaluate<{ status: number; text: string }>(
+              `(async () => { const r = await fetch(${JSON.stringify(url)}, { method: ${JSON.stringify(method)}, headers: ${JSON.stringify(headers)}, body: ${JSON.stringify(reqBody ?? null)} === null ? undefined : ${JSON.stringify(reqBody ?? null)}, credentials: 'include' }); const t = await r.text(); return { status: r.status, text: t.slice(0, 200000) }; })()`,
+            );
+            status = r.status;
+            text = r.text;
+          } else {
+            const r = await fetch(url, { method, headers, body: reqBody, signal: AbortSignal.timeout(15000) });
+            text = await r.text();
+            status = r.status;
+          }
+          sr.api.status = status;
+          sr.api.responseBody = text.slice(0, 2000);
+          const exp = s.status;
+          if (exp === undefined) {
+            if (status >= 400) throw new Error(`API 상태코드 ${status}: ${text.slice(0, 120)}`);
+          } else if (!statusMatches(status, exp)) throw new Error(`API 상태코드 ${status} (기대 ${JSON.stringify(exp)}): ${text.slice(0, 120)}`);
+          if (s.json || s.jsonHas || s.jsonArray !== undefined) {
+            let body: any;
+            try {
+              body = JSON.parse(text);
+            } catch {
+              throw new Error(`API 응답이 JSON 이 아님: ${text.slice(0, 80)}`);
+            }
+            if (s.jsonArray !== undefined && Array.isArray(body) !== s.jsonArray) throw new Error(`API 응답 형태가 다름: 기대 ${s.jsonArray ? "배열" : "객체"} / 실제 ${Array.isArray(body) ? "배열" : typeof body}`);
+            for (const k of s.jsonHas ?? []) if (jsonPath(body, k) === undefined) throw new Error(`API 응답에 ${k} 가 없음: ${text.slice(0, 120)}`);
+            for (const [k, v] of Object.entries(s.json ?? {})) if (JSON.stringify(jsonPath(body, k)) !== JSON.stringify(v)) throw new Error(`API 응답 ${k} 가 다름: 기대 ${JSON.stringify(v)} / 실제 ${JSON.stringify(jsonPath(body, k))}`);
           }
           break;
         }
@@ -180,7 +223,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           break;
         }
         case "probe": {
-          const pr = await runProbe(page, s, () => page.drain(), cfg.baseUrl, allowErrors);
+          const pr = await runProbe(page, s, () => page.drain(), cfg.baseUrl, allowErrors, edir);
           res.warnings.push(...pr.warns);
           if (pr.notes.length) sr.desc += " — " + pr.notes.join("; ");
           break;
@@ -192,6 +235,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       sr.status = "fail";
       sr.error = String(e?.message ?? e).replace(/\n\s+/g, " ").slice(0, 600);
       failedAt = i;
+      if (e?.name === "OsWindowRequired") osBlocked = String(e.message);
     }
     sr.ms = Date.now() - t0;
     const isLast = i === steps.length - 1;
@@ -225,6 +269,11 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   if (failedAt >= 0) {
     res.status = "FAIL";
     res.reason = res.steps[failedAt]!.error;
+  }
+  if (osBlocked) {
+    // 도구가 할 수 없는 일이지 사이트의 결함이 아니다 — 검증하지 못한 것으로 둔다
+    res.status = "BLOCKED";
+    res.reason = osBlocked;
   }
   const ev = await session.finish(res.status !== "FAIL");
   if (ev.video) res.video = rel(ev.video);

@@ -7,6 +7,7 @@ import { resolveDriver } from "./drivers/index.ts";
 import { runCase } from "./runner.ts";
 import { writeReports } from "./report.ts";
 import { evidenceSources } from "./session.ts";
+import { sheetGate } from "./sheet.ts";
 
 async function sh(cmd: string, cwd: string, timeoutMs = 600000): Promise<{ code: number; out: string }> {
   const p = Bun.spawn(["/bin/sh", "-lc", cmd], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -49,6 +50,8 @@ export function precheck(project: Project, opts: StartOpts): { ok: true; decisio
   const cases = project.cases().filter((c) => (c.status ?? "active") === "active");
   if (!sources.length || !evidenceSources(project).length) return { ok: false, error: "최소 진행 조건을 못 채웠습니다. 기획서·디자인·기능정의서·코드 중 하나 이상이 근거로 필요합니다. 사용자에게 받아 e2e_intake 로 등록하세요." };
   if (!cases.length) return { ok: false, error: "실행할 케이스가 없습니다. e2e_discover 로 자동 점검 케이스를 만들거나 e2e_case_upsert 로 기획서의 케이스를 등록하세요." };
+  const sg = sheetGate(project);
+  if (!sg.ok) return { ok: false, error: sg.error };
   let d = opts.data;
   if (!d && cfg.data.policy !== "ask") d = cfg.data.policy;
   if (!d)

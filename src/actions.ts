@@ -3,7 +3,13 @@ import { existsSync, readFileSync } from "node:fs";
 import type { Case, Config, DriverName, Source, Step } from "./types.ts";
 import { Project, nowIso } from "./store.ts";
 import { doctor } from "./doctor.ts";
-import { discover, mergeProbeCases, probeCases } from "./discover.ts";
+import { discover } from "./discover.ts";
+import { analyzeCode } from "./analysis/code.ts";
+import { loadAnalyses, saveAnalyses } from "./analysis/store.ts";
+import { reconcile } from "./analysis/reconcile.ts";
+import { regenerateProbes } from "./analysis/cases.ts";
+import { osCheck, osPending } from "./analysis/os.ts";
+import { aSheet as buildAndWriteSheet } from "./sheet.ts";
 import { coverage } from "./coverage.ts";
 import { precheck, runningRound, startRound, stopRound, type StartOpts } from "./round.ts";
 import { completeCheck } from "./gate.ts";
@@ -88,22 +94,71 @@ export async function aDiscover(a: { project?: string; seeds?: string[]; maxPage
   const p = proj(a.project);
   const cfg = p.config();
   const inv = await discover(p, a);
-  const probes = cfg.probes === "off" ? [] : probeCases(cfg, inv);
-  const merged = mergeProbeCases(p.cases(), probes);
-  p.saveCases(merged.cases);
+  const merged = regenerateProbes(p);
   if (!p.sources().some((s) => s.kind === "live-site")) p.writeJson("sources.json", [...p.sources(), { id: "S" + String(p.sources().length + 1).padStart(2, "0"), kind: "live-site", title: "개발된 사이트 " + cfg.baseUrl, location: cfg.baseUrl, addedAt: nowIso() } satisfies Source]);
   const byKind: Record<string, number> = {};
   for (const e of inv.elements) byKind[e.kind] = (byKind[e.kind] ?? 0) + 1;
   const risky = inv.elements.filter((e) => e.risk !== "safe");
+  const rec = reconcile(loadAnalyses(p), inv);
   return {
-    pages: inv.pages.map((x) => `${x.path} (${x.elements}개${x.error ? ", 오류: " + x.error : ""})`),
+    pages: inv.pages.map((x) => `${x.path} (${x.elements}개${x.via && x.via !== "link" ? `, ${x.via === "code" ? "코드로 직접 열음" : "시작 주소"}` : ""}${x.error ? ", 오류: " + x.error : ""})`),
     elements: { total: inv.elements.length, byKind, modalOpeners: inv.elements.filter((e) => e.opensModal).length, inModal: inv.elements.filter((e) => e.layer !== "page").length },
+    events: {
+      downloads: inv.elements.filter((e) => e.download).length,
+      uploads: inv.elements.filter((e) => e.kind === "file").length,
+      apis_observed: (inv.apis ?? []).map((x) => `${x.method} ${x.path} → ${x.status}${x.jsonKeys?.length ? ` {${x.jsonKeys.slice(0, 4).join(",")}}` : ""}`),
+    },
     risky: { destructive: risky.filter((e) => e.risk === "destructive").map((e) => `${e.page} “${e.label}”`), mutating: risky.filter((e) => e.risk === "mutating").length },
-    probe_cases: { added: merged.added, removed: merged.removed, specKept: merged.kept, total: probes.length },
+    probe_cases: { added: merged.added, removed: merged.removed, specKept: merged.kept, total: merged.total },
+    code_cross_check: rec.routes.length ? rec.summary : undefined,
     skipped: inv.skipped.slice(0, 10),
-    next: "기획서/디자인이 있으면 그 문서의 기대 동작을 e2e_case_upsert 로 spec 케이스로 옮기고, e2e_coverage 로 빠진 곳을 확인한 뒤 e2e_round_start 하세요.",
+    next: "기획서/디자인이 있으면 그 문서의 기대 동작을 e2e_case_upsert 로 spec 케이스로 옮기고, 코드가 있으면 e2e_analyze 로 대조한 뒤 e2e_sheet 로 시트를 만들어 보여 주세요.",
   };
 }
+
+/** 코드 분석: 등록된 코드(또는 codeRoot)를 읽어 화면·이벤트·API 후보를 뽑고 사이트 탐색 결과와 맞춰 본다. */
+export async function aAnalyze(a: { project?: string; codeRoot?: string; rediscover?: boolean }) {
+  const p = proj(a.project);
+  const roots = a.codeRoot ? [a.codeRoot] : p.sources().filter((s) => s.kind === "code" && !/^https?:\/\//.test(s.location)).map((s) => s.location);
+  if (!roots.length) return { error: "분석할 코드가 없습니다. 코드 경로를 e2e_intake(materials kind=code) 로 등록하거나 codeRoot 를 주세요." };
+  const analyses = roots.map((r) => analyzeCode(r));
+  saveAnalyses(p, analyses);
+  let inv = p.inventory();
+  let rec = reconcile(analyses, inv);
+  let rediscovered = false;
+  const wantRe = a.rediscover ?? true;
+  if (inv && wantRe && rec.routes.some((r) => r.status === "unreached")) {
+    inv = await discover(p, {});
+    rec = reconcile(analyses, inv);
+    rediscovered = true;
+  }
+  const cases = regenerateProbes(p);
+  const sum = (k: "routes" | "events" | "apis" | "fileOps") => analyses.reduce((n, x) => n + x[k].length, 0);
+  return {
+    code: analyses.map((x) => ({ root: x.root, files: x.files, frameworks: x.frameworks, routes: x.routes.length, events: x.events.length, apis: x.apis.length, fileOps: x.fileOps.length, notes: x.notes })),
+    totals: { routes: sum("routes"), events: sum("events"), apis: sum("apis"), fileOps: sum("fileOps") },
+    cross_check: inv
+      ? {
+          ...rec.summary,
+          unreached: rec.routes.filter((r) => r.status === "unreached").map((r) => `${r.route.path} (${r.route.file}:${r.route.line})`),
+          code_only: rec.routes.filter((r) => r.status === "code-only").map((r) => `${r.route.path} (${r.route.file}:${r.route.line})`),
+          dynamic: rec.routes.filter((r) => r.status === "dynamic").map((r) => r.route.path),
+          events_not_on_screen: rec.eventsNotOnScreen.slice(0, 15).map((e) => `${e.kind} ${Object.values(e.hints).filter(Boolean).join("/")} (${e.file}:${e.line})`),
+          events_unmatchable: rec.eventsUnmatchable,
+          apis_not_observed: rec.apisNotObserved.slice(0, 15).map((x) => `${x.method} ${x.url} (${x.file}:${x.line})`),
+        }
+      : "사이트 탐색 결과가 없어 대조하지 못했습니다. e2e_discover 를 한 뒤 e2e_analyze 를 다시 호출하세요.",
+    rediscovered,
+    probe_cases: { added: cases.added, total: cases.total },
+    next: "코드에서 나온 이벤트·API 중 케이스가 필요한 것은 문서의 기대값으로 e2e_case_upsert 하세요(요청 본문이 있어야 하는 API 포함). 그다음 e2e_os_check, e2e_sheet.",
+  };
+}
+
+export async function aOsCheck(a: { project?: string; driver?: DriverName; decision?: "allow" | "skip" }) {
+  return osCheck(proj(a.project), a);
+}
+
+export const aSheet = (a: { project?: string; confirm?: boolean; confirm_before_start?: boolean; full?: boolean }) => buildAndWriteSheet(proj(a.project), a);
 
 export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
   const p = proj(a.project);
@@ -155,6 +210,13 @@ export async function aRoundStart(a: StartOpts & { project?: string; open?: bool
   const p = proj(a.project);
   const pre = precheck(p, a);
   if (!pre.ok) return pre.decision ? pre.decision : { error: pre.error };
+  const os = await osPending(p, a.driver);
+  if (os.pending)
+    return {
+      needs_decision: true,
+      question: `${os.driver} 로는 다운로드·파일 선택 케이스 ${os.count}건이 브라우저 밖 OS 창을 거칩니다. 먼저 e2e_os_check 로 컴퓨터 제어 도구를 점검하고, 동작하지 않으면 사용자에게 허용/스킵을 물어 결정하세요.`,
+      options: [{ value: "e2e_os_check", meaning: "점검 후 필요하면 허용/스킵을 사용자에게 묻는다" }],
+    };
   const dash = ensureDashboard(p);
   const { id, done } = await startRound(p, a);
   liveRounds.set(p.root + id, done.catch(() => {}));

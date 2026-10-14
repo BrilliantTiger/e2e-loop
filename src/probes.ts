@@ -1,6 +1,9 @@
 // 사이트 탐색으로 만든 케이스의 "판정 규칙". 기대값이 없는 상태에서도 쓸 수 있는 일반 규칙만 둔다.
 import type { DPage, Drained } from "./drivers/index.ts";
 import { OBSERVE } from "./drivers/inpage.ts";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -123,12 +126,29 @@ export interface ProbeResult {
   notes: string[];
 }
 
+/** 업로드 점검에 쓰는 작은 샘플 파일. accept 에 맞는 형식으로 만든다. */
+export function sampleUploadFile(accept: string | undefined): string {
+  const dir = mkdtempSync(join(tmpdir(), "e2e-loop-upload-"));
+  const a = (accept ?? "").toLowerCase();
+  const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  let name = "e2e-sample.txt";
+  let data: Buffer | string = "e2e sample file\n";
+  if (/image|png|jpe?g|gif|webp/.test(a)) { name = "e2e-sample.png"; data = PNG; }
+  else if (/pdf/.test(a)) { name = "e2e-sample.pdf"; data = "%PDF-1.1\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"; }
+  else if (/csv|spreadsheet|excel|xls/.test(a)) { name = "e2e-sample.csv"; data = "a,b\n1,2\n"; }
+  else if (/json/.test(a)) { name = "e2e-sample.json"; data = '{"e2e":true}'; }
+  const p = join(dir, name);
+  writeFileSync(p, data);
+  return p;
+}
+
 export async function runProbe(
   p: DPage,
   step: Record<string, any>,
   drainErrors: () => Promise<Drained>,
   baseUrl: string,
   allowErrors = false,
+  evidenceDir?: string,
 ): Promise<ProbeResult> {
   const kind: string = step.kind;
   const sel: string = step.sel;
@@ -164,6 +184,37 @@ export async function runProbe(
       fail(`링크 이동 실패: 기대 ${target.pathname} / 실제 ${here.pathname}`);
     }
     if (/\b(404|not found|error|오류|찾을 수 없)/i.test(after.title)) fail(`이동한 화면 제목이 오류처럼 보임: "${after.title}"`);
+    return finish();
+  }
+
+  if (kind === "page") {
+    const t = await p.title();
+    if (/\b(404|not found|error|오류|찾을 수 없)/i.test(t)) fail(`화면 제목이 오류처럼 보임: "${t}"`);
+    notes.push(`화면 열림: "${t}"`);
+    return finish();
+  }
+
+  if (kind === "download") {
+    const dir = join(evidenceDir ?? mkdtempSync(join(tmpdir(), "e2e-loop-dl-")), "downloads");
+    mkdirSync(dir, { recursive: true });
+    const got = await p.download(sel, dir, step.soft ? 2500 : 8000);
+    if (!got) {
+      if (!step.soft) fail("눌렀는데 다운로드가 시작되지 않음");
+      warns.push("다운로드가 시작되지 않음(버튼 이름이 다운로드처럼 보여 확인했지만, 파일을 내려받는 버튼이 아닐 수 있음)");
+    } else {
+      if (got.size === 0) fail(`내려받은 파일이 비어 있음: ${got.filename}`);
+      notes.push(`다운로드: ${got.filename} (${got.size}바이트)`);
+    }
+    return finish();
+  }
+
+  if (kind === "upload") {
+    const file = sampleUploadFile(step.attrs?.accept);
+    await p.upload(sel, file);
+    const n = await p.evaluate<number>(`(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; return e && e.files ? e.files.length : -1; })()`);
+    if (n === 0) fail("파일을 넣었는데 input 에 반영되지 않음");
+    await sleep(300);
+    notes.push(`샘플 파일 업로드(${file.split("/").pop()}), input.files=${n}`);
     return finish();
   }
 
@@ -263,13 +314,15 @@ export async function runProbe(
   }
 
   if (kind === "form-valid") {
-    const fields: { sel: string; kind: string; inputType?: string; label: string; options?: string[] }[] = step.fields ?? [];
+    const fields: { sel: string; kind: string; inputType?: string; label: string; options?: string[]; accept?: string }[] = step.fields ?? [];
     for (const f of fields) {
       try {
         if (f.kind === "input") await p.fill(f.sel, SAMPLE(f.inputType, f.label));
         else if (f.kind === "select" && f.options?.length) await p.selectOption(f.sel, f.options.find((o) => o) ?? f.options[0]!);
         else if (f.kind === "toggle") await p.check(f.sel, true);
+        else if (f.kind === "file") await p.upload(f.sel, sampleUploadFile(f.accept));
       } catch (e) {
+        if ((e as Error).name === "OsWindowRequired") throw e;
         notes.push(`채우기 생략(${f.label}): ${String(e).slice(0, 80)}`);
       }
     }

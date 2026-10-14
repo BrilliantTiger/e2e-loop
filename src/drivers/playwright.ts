@@ -1,13 +1,13 @@
 import { chromium, type Browser, type Page } from "playwright";
-import { mkdirSync, renameSync, existsSync } from "node:fs";
+import { mkdirSync, renameSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../types.ts";
 import { expandEnv } from "../store.ts";
-import type { DPage, Drained, Driver, Session } from "./index.ts";
+import type { DPage, Drained, Driver, NetEntry, Session } from "./index.ts";
 import { LIB } from "./inpage.ts";
 
 class PwPage implements DPage {
-  constructor(private page: Page, private d: Drained, private timeout: number) {}
+  constructor(private page: Page, private d: Drained, private timeout: number, private net: { list: NetEntry[]; pending: Promise<unknown>[] }) {}
   private L(sel: string) {
     return this.page.locator(sel);
   }
@@ -68,6 +68,24 @@ class PwPage implements DPage {
   async screenshot(path: string) {
     await this.page.screenshot({ path, fullPage: false });
   }
+  async drainNet(): Promise<NetEntry[]> {
+    await Promise.race([Promise.allSettled(this.net.pending), new Promise((r) => setTimeout(r, 3000))]);
+    this.net.pending.length = 0;
+    return this.net.list.splice(0);
+  }
+  async upload(sel: string, filePath: string) {
+    await this.L(sel).first().setInputFiles(filePath, { timeout: this.timeout });
+  }
+  async download(sel: string, dir: string, timeoutMs: number) {
+    mkdirSync(dir, { recursive: true });
+    const wait = this.page.waitForEvent("download", { timeout: timeoutMs }).catch(() => null);
+    await this.L(sel).first().click({ timeout: this.timeout });
+    const dl = await wait;
+    if (!dl) return null;
+    const path = join(dir, dl.suggestedFilename() || "download.bin");
+    await dl.saveAs(path);
+    return { filename: dl.suggestedFilename(), size: statSync(path).size, path };
+  }
   async drain(): Promise<Drained> {
     const out = { console: [...this.d.console], pageErrors: [...this.d.pageErrors], failedRequests: [...this.d.failedRequests] };
     this.d.console.length = 0;
@@ -79,7 +97,7 @@ class PwPage implements DPage {
 
 export class PwDriver implements Driver {
   name: string;
-  capabilities = { video: true, network: true };
+  capabilities = { video: true, network: true, files: true };
   private browser?: Browser;
   constructor(private cfg: Config, private pick: "chrome" | "edge" | "chromium") {
     this.name = `playwright+${pick}`;
@@ -131,7 +149,31 @@ export class PwDriver implements Driver {
     page.on("response", (r) => {
       if (r.status() >= 400 && !/favicon\.ico/.test(r.url())) uniq(d.failedRequests, `${r.status()} ${r.request().method()} ${r.url().replace(/^https?:\/\/[^/]+/, "")}`);
     });
-    const wrapped = new PwPage(page, d, this.cfg.stepTimeoutMs);
+    const net = { list: [] as NetEntry[], pending: [] as Promise<unknown>[] };
+    page.on("response", (r) => {
+      const t = r.request().resourceType();
+      if (t !== "fetch" && t !== "xhr") return;
+      let u: URL;
+      try {
+        u = new URL(r.url());
+      } catch {
+        return;
+      }
+      const entry: NetEntry = { method: r.request().method(), url: u.pathname + u.search, origin: u.origin, status: r.status(), contentType: r.headers()["content-type"]?.split(";")[0] };
+      net.list.push(entry);
+      if (net.list.length > 300) net.list.shift();
+      if (/json/i.test(entry.contentType ?? "") && r.status() < 400) {
+        net.pending.push(
+          r.text().then((txt) => {
+            if (txt.length > 500_000) return;
+            const j = JSON.parse(txt);
+            if (Array.isArray(j)) entry.jsonArray = true;
+            else if (j && typeof j === "object") entry.jsonKeys = Object.keys(j).slice(0, 30);
+          }).catch(() => {}),
+        );
+      }
+    });
+    const wrapped = new PwPage(page, d, this.cfg.stepTimeoutMs, net);
     return {
       page: wrapped,
       finish: async (passed: boolean) => {

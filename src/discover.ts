@@ -1,6 +1,7 @@
 // 라이브 사이트를 돌며 클릭·입력·선택·토글·모달 등 모든 이벤트 후보를 모으고, 자동 점검 케이스를 만든다.
 import { createHash } from "node:crypto";
-import type { Case, Config, InvElement, Inventory, Risk, Step } from "./types.ts";
+import type { Case, Config, InvElement, Inventory, ObservedApi, Risk, Step } from "./types.ts";
+import { loadAnalyses } from "./analysis/store.ts";
 import type { DPage } from "./drivers/index.ts";
 import { resolveDriver } from "./drivers/index.ts";
 import { inventoryExpr } from "./drivers/inpage.ts";
@@ -36,7 +37,21 @@ export async function discover(
   const doReveal = opts.reveal ?? cfg.crawl.reveal;
   const inv: Inventory = { generatedAt: nowIso(), baseUrl: cfg.baseUrl, pages: [], elements: [], skipped: [] };
   const seenPages = new Set<string>();
-  const queue: { url: string; depth: number }[] = [{ url: cfg.baseUrl, depth: 0 }, ...[...cfg.crawl.seeds, ...(opts.seeds ?? [])].map((s) => ({ url: new URL(s, base).toString(), depth: 0 }))];
+  type QItem = { url: string; depth: number; via: "link" | "code" | "seed" };
+  const queue: QItem[] = [{ url: cfg.baseUrl, depth: 0, via: "link" }, ...[...cfg.crawl.seeds, ...(opts.seeds ?? [])].map((s) => ({ url: new URL(s, base).toString(), depth: 0, via: "seed" as const }))];
+  // 코드 분석에서 알게 된 화면은 링크 탐색이 끝난 뒤에 직접 열어 본다(링크로 닿는 화면과 구별하려고)
+  const codeQueue: QItem[] = [];
+  for (const a of loadAnalyses(project)) for (const r of a.routes) if (!r.dynamic) codeQueue.push({ url: new URL(r.path, base).toString(), depth: 0, via: "code" });
+  const apiMap = new Map<string, ObservedApi>();
+  const takeNet = async (pagePath: string) => {
+    for (const n of await page.drainNet().catch(() => [])) {
+      const path = n.url.split("?")[0]!;
+      const key = `${n.method} ${n.origin}${path} ${n.status}`;
+      const cur = apiMap.get(key);
+      if (cur) cur.count++;
+      else apiMap.set(key, { method: n.method, path, sample: n.url, status: n.status, contentType: n.contentType, jsonKeys: n.jsonKeys, jsonArray: n.jsonArray, page: pagePath, sameOrigin: n.origin === base.origin, count: 1 });
+    }
+  };
 
   const collect = async (path: string, layer: string, scope: string | null) => {
     const r = await page.evaluate<{ elements: any[]; links: string[]; forms: number; title: string }>(inventoryExpr(scope));
@@ -48,8 +63,10 @@ export async function discover(
   };
 
   try {
-    while (queue.length && inv.pages.length < maxPages) {
-      const { url, depth } = queue.shift()!;
+    for (;;) {
+      if (!queue.length && codeQueue.length) queue.push(...codeQueue.splice(0));
+      if (!queue.length || inv.pages.length >= maxPages) break;
+      const { url, depth, via } = queue.shift()!;
       const u = new URL(url);
       if (u.origin !== base.origin) continue;
       const key = normalizePath(u) + (u.search || "");
@@ -64,7 +81,7 @@ export async function discover(
         await page.goto(url);
         await sleep(300);
       } catch (e: any) {
-        inv.pages.push({ path: key, title: "", elements: 0, forms: 0, depth, error: String(e.message).slice(0, 200) });
+        inv.pages.push({ path: key, title: "", elements: 0, forms: 0, depth, via, error: String(e.message).slice(0, 200) });
         continue;
       }
       const landed = new URL(await page.url());
@@ -74,14 +91,15 @@ export async function discover(
         continue;
       }
       const first = await collect(path, "page", null);
-      inv.pages.push({ path, title: first.title, elements: first.out.length, forms: first.forms, depth });
+      await takeNet(path);
+      inv.pages.push({ path, title: first.title, elements: first.out.length, forms: first.forms, depth, via });
       inv.elements.push(...first.out);
 
       // 링크 큐
       for (const href of first.links) {
         try {
           const lu = new URL(href);
-          if (lu.origin === base.origin && depth + 1 <= cfg.crawl.maxDepth) queue.push({ url: lu.origin + lu.pathname + lu.search, depth: depth + 1 });
+          if (lu.origin === base.origin && depth + 1 <= cfg.crawl.maxDepth) queue.push({ url: lu.origin + lu.pathname + lu.search, depth: depth + 1, via: "link" });
         } catch {}
       }
 
@@ -92,9 +110,11 @@ export async function discover(
           try {
             await page.goto(url);
             const before = await observe(page);
+            await page.drainNet().catch(() => []);
             await page.click(t.selector);
             await sleep(500);
             const after = await observe(page);
+            await takeNet(path);
             if (after.dialogs.length > before.dialogs.length) {
               t.opensModal = true;
               const scope = '[role=dialog], dialog[open], [aria-modal=true], .modal.show';
@@ -117,6 +137,7 @@ export async function discover(
   // 중복 제거(같은 id)
   const seen = new Set<string>();
   inv.elements = inv.elements.filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)));
+  inv.apis = [...apiMap.values()];
   project.writeJson("inventory.json", inv);
   return inv;
 }
@@ -127,6 +148,17 @@ export function probeCases(cfg: Config, inv: Inventory): Case[] {
   const cases: Case[] = [];
   const forms = new Map<string, InvElement[]>();
   for (const e of inv.elements) if (e.formKey) forms.set(`${e.page}|${e.layer}|${e.formKey}`, [...(forms.get(`${e.page}|${e.layer}|${e.formKey}`) ?? []), e]);
+
+  const DOWNLOAD_LABEL = /다운로드|내려받기|내보내기|엑셀|download|export/i;
+  const featureOf = (e: InvElement): string => {
+    if (e.formKey) {
+      const sub = forms.get(`${e.page}|${e.layer}|${e.formKey}`)?.find((x) => (x as any).submit);
+      return `폼 “${(sub?.label ?? e.formKey).slice(0, 30)}”`;
+    }
+    if (e.layer.startsWith("modal:")) return `모달 “${(byId.get(e.layer.slice(6))?.label ?? "").slice(0, 30)}”`;
+    if (e.download || e.kind === "file") return "파일 다운로드·업로드";
+    return ({ link: "화면 이동(링크)", tab: "탭", summary: "펼침 영역", toggle: "입력 요소", input: "입력 요소", select: "입력 요소", button: "버튼 동작" } as Record<string, string>)[e.kind] ?? "기타";
+  };
 
   const pre = (e: InvElement): Step[] => {
     const s: Step[] = [{ op: "goto", url: e.page }];
@@ -147,12 +179,26 @@ export function probeCases(cfg: Config, inv: Inventory): Case[] {
       continue;
     }
     seenShared.set(dup, 1);
-    const base = { type: "probe" as const, element: e.id, area: e.page + (e.layer === "page" ? "" : ` · ${e.layer}`), risk: e.risk };
+    const base = { type: "probe" as const, element: e.id, area: e.page + (e.layer === "page" ? "" : ` · ${e.layer}`), risk: e.risk, screen: e.page, feature: featureOf(e) };
     const label = e.label.slice(0, 40);
     const common = { sel: e.selector, label: e.label, inputType: e.inputType, attrs: e.attrs, options: e.options, href: e.href, newTab: (e as any).newTab };
     let kind: string | null = null;
     let title = "";
-    if (e.kind === "link") {
+    let extra: Partial<Case> = {};
+    if (e.kind === "link" && e.download) {
+      kind = "download";
+      title = `다운로드 링크 “${label}”`;
+      extra = { needs_os: true };
+    } else if (e.kind === "file") {
+      kind = "upload";
+      title = `파일 올리기 “${label}”`;
+      extra = { needs_os: true };
+    } else if (e.kind === "button" && !(e as any).submit && DOWNLOAD_LABEL.test(e.label)) {
+      kind = "download";
+      title = `버튼 “${label}” → 다운로드 확인`;
+      (common as any).soft = true;
+      extra = { needs_os: true };
+    } else if (e.kind === "link") {
       if (e.external) {
         kind = "nav";
         title = `링크(외부) “${label}”`;
@@ -177,6 +223,7 @@ export function probeCases(cfg: Config, inv: Inventory): Case[] {
       title,
       event: kind,
       steps: [...pre(e), { op: "probe", kind, ...common }],
+      ...extra,
     });
   }
 
@@ -191,18 +238,19 @@ export function probeCases(cfg: Config, inv: Inventory): Case[] {
   for (const [key, els] of forms) {
     const submit = els.find((e) => (e as any).submit);
     if (!submit) continue;
-    const fields = els.filter((e) => ["input", "select", "toggle"].includes(e.kind) && !e.disabled);
+    const fields = els.filter((e) => ["input", "select", "toggle", "file"].includes(e.kind) && !e.disabled);
     const required = fields.some((f) => f.required);
     const first = els[0]!;
     const fid = "F-" + h6(key);
     const pf = pre(first);
     if (required)
-      cases.push({ id: fid + "-empty", type: "probe", event: "form-empty", element: submit.id, area: first.page, risk: "safe", title: `폼 “${submit.label}” 필수값 비우고 제출 → 검증`, steps: [...pf, { op: "probe", kind: "form-empty", sel: submit.selector, label: submit.label }] });
+      cases.push({ id: fid + "-empty", type: "probe", event: "form-empty", element: submit.id, area: first.page, risk: "safe", screen: first.page, feature: `폼 “${submit.label.slice(0, 30)}”`, title: `폼 “${submit.label}” 필수값 비우고 제출 → 검증`, steps: [...pf, { op: "probe", kind: "form-empty", sel: submit.selector, label: submit.label }] });
     cases.push({
-      id: fid + "-valid", type: "probe", event: "form-valid", element: submit.id, area: first.page,
+      id: fid + "-valid", type: "probe", event: "form-valid", element: submit.id, area: first.page, screen: first.page, feature: `폼 “${submit.label.slice(0, 30)}”`,
       risk: riskOf(cfg, submit) === "destructive" ? "destructive" : "mutating",
+      needs_os: fields.some((f) => f.kind === "file") || undefined,
       title: `폼 “${submit.label}” 유효한 값으로 제출`,
-      steps: [...pf, { op: "probe", kind: "form-valid", sel: submit.selector, label: submit.label, fields: fields.map((f) => ({ sel: f.selector, kind: f.kind, inputType: f.inputType, label: f.label, options: f.options })) }],
+      steps: [...pf, { op: "probe", kind: "form-valid", sel: submit.selector, label: submit.label, fields: fields.map((f) => ({ sel: f.selector, kind: f.kind, inputType: f.inputType, label: f.label, options: f.options, accept: f.attrs?.accept })) }],
     });
   }
   return cases;

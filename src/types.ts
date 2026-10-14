@@ -21,6 +21,13 @@ export interface Case {
   reason?: string;
   steps: Step[];
   tags?: string[];
+  /** 시트의 묶음: 화면 → 기능 단위 → 케이스 */
+  screen?: string;
+  feature?: string;
+  /** 브라우저 밖 OS 창(다운로드·파일 선택)이 필요한 케이스 — 컴퓨터 제어 도구가 맡는다 */
+  needs_os?: boolean;
+  /** 규칙이나 사용자 선택으로 일부러 돌리지 않는 케이스(결과는 SKIP) */
+  skipReason?: string;
 }
 
 export type DriverName = "auto" | "ego" | "chrome" | "edge" | "chromium";
@@ -91,14 +98,35 @@ export interface InvElement {
   attrs?: Record<string, string>;
   risk: Risk;
   opensModal?: boolean;
+  /** 눌렀을 때 파일이 내려받아지는 링크(download 속성 또는 파일 확장자) */
+  download?: boolean;
 }
 
 export interface Inventory {
   generatedAt: string;
   baseUrl: string;
-  pages: { path: string; title: string; elements: number; forms: number; depth: number; error?: string }[];
+  pages: { path: string; title: string; elements: number; forms: number; depth: number; error?: string; /** link=링크로 닿음, code=코드 분석에서 알게 된 화면을 직접 열었음, seed=사용자가 준 시작 주소 */ via?: "link" | "code" | "seed" }[];
   elements: InvElement[];
   skipped: { url: string; reason: string }[];
+  /** 화면을 열고 눌러 보는 동안 브라우저가 보낸 API 요청(fetch·XHR) */
+  apis?: ObservedApi[];
+}
+
+export interface ObservedApi {
+  method: string;
+  /** 쿼리를 뗀 경로 */
+  path: string;
+  /** 처음 본 요청의 경로+쿼리 */
+  sample: string;
+  status: number;
+  contentType?: string;
+  /** JSON 객체 응답의 최상위 키 */
+  jsonKeys?: string[];
+  jsonArray?: boolean;
+  /** 이 요청을 처음 본 화면 */
+  page: string;
+  sameOrigin: boolean;
+  count: number;
 }
 
 export type Verdict = "PASS" | "FAIL" | "BLOCKED" | "NA" | "SKIP";
@@ -111,6 +139,8 @@ export interface StepResult {
   ms: number;
   error?: string;
   shot?: string; // evidence 상대 경로
+  /** api 스텝이면 요청·응답(AI용 시트에 쓴다) */
+  api?: { method: string; url: string; status?: number; requestBody?: string; responseBody?: string; via: "server" | "page" };
 }
 
 export interface CaseResult {

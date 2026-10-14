@@ -44,6 +44,24 @@ server.registerTool("e2e_intake", {
   inputSchema: { project, baseUrl: z.string().optional(), materials: z.array(materialShape).optional() },
 }, wrap(A.aIntake as any));
 
+server.registerTool("e2e_analyze", {
+  title: "코드 분석·사이트 대조",
+  description: "등록된 코드(e2e_intake 의 kind=code, 또는 codeRoot)를 읽어 라우터·페이지·핸들러에서 화면·이벤트·API 호출·다운로드/업로드 후보를 뽑고, 사이트 전수 탐색 결과와 대조해 '코드에는 있는데 탐색으로 못 닿은 화면'을 찾는다. 못 닿은 화면은 직접 열어 보고(rediscover, 기본 켜짐) 열리는지 점검 케이스를 만든다. 코드에서 부르는 읽기(GET) API 도 케이스로 만든다. 지원: Next(app·pages)·React Router·Vue Router·Nuxt·SvelteKit·정적 HTML. 사이트 탐색(e2e_discover) 뒤에 부르면 대조까지 한다.",
+  inputSchema: { project, codeRoot: z.string().optional().describe("분석할 코드 경로(생략하면 등록된 코드 전부)"), rediscover: z.boolean().optional().describe("못 닿은 화면이 있으면 직접 열어 보기 위해 사이트를 다시 탐색(기본 true)") },
+}, wrap(A.aAnalyze));
+
+server.registerTool("e2e_os_check", {
+  title: "OS 창(다운로드·파일 선택) 점검",
+  description: "브라우저 밖 OS 창(다운로드·파일 선택)을 컴퓨터 제어 도구가 맡아야 하는 케이스가 있는지 테스트 전에 점검한다. Chrome 계열은 Playwright 가 OS 창 없이 직접 처리하므로 해당 없음. Ego 처럼 OS 창이 뜨는 브라우저에서 컴퓨터 제어가 동작하면 자동 포함하고, 동작하지 않으면 권한 안내와 함께 '허용 / 스킵'을 묻는 needs_decision 을 돌려준다. 답을 받으면 decision 으로 다시 호출한다. 스킵한 케이스는 SKIP 으로 두며 이슈가 아니다.",
+  inputSchema: { project, driver: z.enum(["auto", "ego", "chrome", "edge", "chromium"]).optional(), decision: z.enum(["allow", "skip"]).optional().describe("사용자가 고른 답") },
+}, wrap(A.aOsCheck));
+
+server.registerTool("e2e_sheet", {
+  title: "테스트 시트 만들기·보여 주기",
+  description: "화면 → 기능 단위 → 케이스로 묶은 테스트 시트를 만들고(.e2e/sheet.json, sheet.md) 요약을 돌려준다. 케이스마다 근거(문서 절·코드 위치)가 적힌다. 라운드 시작 전에 요약을 사용자에게 한 번 보여 주고 묻지 말고 바로 시작한다. 사용자가 확인 후 시작을 원하면 confirm_before_start=true 로 켜고, 승인을 받은 뒤 confirm=true 로 확정한다(그 전에는 e2e_round_start 가 거부된다). 빈틈(못 닿은 화면, 요청 본문이 필요한 API, 케이스 없는 요소)도 함께 보여 준다.",
+  inputSchema: { project, confirm: z.boolean().optional(), confirm_before_start: z.boolean().optional(), full: z.boolean().optional().describe("케이스를 줄이지 않고 전부 보여 주기") },
+}, wrap(A.aSheet));
+
 server.registerTool("e2e_doctor", {
   title: "환경 점검·설치·등록",
   description: "E2E 에 필요한 도구를 점검한다(bun·Playwright 브라우저·Chrome·Edge·Ego·ffmpeg·git·Orca·macOS 권한). fix=true 면 빠진 Playwright 브라우저를 자동 설치하고 e2e-loop MCP 를 설치된 모든 클라이언트(Claude·Codex 등)에 등록한다. ffmpeg 처럼 설치 전에 사용자에게 물어야 하는 것은 needs_confirmation 으로 돌려주니, 사용자가 승인하면 confirm=['ffmpeg'] 로 다시 호출한다. Ego 설치·OS 권한 허용은 manual 로 안내만 한다. dryRun=true 면 실행하지 않고 할 일만 보여 준다.",
@@ -79,7 +97,7 @@ server.registerTool("e2e_discover", {
 
 server.registerTool("e2e_case_upsert", {
   title: "케이스 등록·수정",
-  description: "기획서/디자인/기능정의서의 기대 동작을 spec 케이스로 등록한다. 스텝 op: goto{url} click{sel} dblclick hover fill{sel,value} select{sel,value} check{sel,checked} press{key,sel?} wait{ms | sel,state} expect{sel?, visible|hidden|text|textContains|value|count|checked|enabled, url, title, titleContains, dialog} api{method,url,body,status,json} screenshot eval{script,equals}. 선택자: CSS · text=\"정확한 글\" · role=button[name=\"저장\"] · xpath=. 케이스는 매번 새 브라우저에서 시작하므로 첫 스텝은 goto. source_ref 에 근거 위치를 적는다.",
+  description: "기획서/디자인/기능정의서의 기대 동작을 spec 케이스로 등록한다. 스텝 op: goto{url} click{sel} dblclick hover fill{sel,value} select{sel,value} check{sel,checked} press{key,sel?} wait{ms | sel,state} expect{sel?, visible|hidden|text|textContains|value|count|checked|enabled, url, title, titleContains, dialog} api{method,url,body,headers,status(숫자·배열·'2xx'·'<400'),json{경로:값},jsonHas[경로],jsonArray,via:'page'(브라우저 안에서 보내 로그인 세션이 실림)} screenshot eval{script,equals}. 케이스에 screen(화면 경로)·feature(기능 단위 이름)를 적으면 시트가 그 아래로 묶는다. 선택자: CSS · text=\"정확한 글\" · role=button[name=\"저장\"] · xpath=. 케이스는 매번 새 브라우저에서 시작하므로 첫 스텝은 goto. source_ref 에 근거 위치를 적는다.",
   inputSchema: { project, cases: z.array(caseShape).min(1) },
 }, wrap(A.aCaseUpsert as any));
 

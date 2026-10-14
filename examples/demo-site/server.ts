@@ -20,13 +20,14 @@ const layout = (title: string, body: string, script = "") => `<!doctype html><ht
 .modal-back{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center}.modal-back.open{display:flex}
 .modal{background:#fff;padding:20px;border-radius:8px;min-width:280px}[role=tab][aria-selected=true]{font-weight:700;border-bottom:2px solid #36c}
 #msg{color:green;min-height:1.2em}.err{color:#c00}</style></head><body>
-<nav><a href="/">홈</a><a href="/items">항목</a><a href="/about">소개</a><a href="/reports">리포트</a><a href="https://example.com" target="_blank">외부</a><a href="/logout">로그아웃</a></nav>
+<nav><a href="/">홈</a><a href="/items">항목</a><a href="/about">소개</a><a href="/reports">리포트</a><a href="/upload">업로드</a><a href="https://example.com" target="_blank">외부</a><a href="/logout">로그아웃</a></nav>
 <main>${body}</main><script>${script}</script></body></html>`;
 
 const home = (b: Record<string, boolean>) =>
   layout(
     "홈",
     `<h1>대시보드</h1>
+<p><a href="/files/report.csv" download>보고서 내려받기</a></p>
 <p><button id="open-notice">공지 열기</button> <button id="stats">통계 새로고침</button> <button id="export">내보내기</button> <button id="noop">아무 일 없음</button> <button id="del-all">전체 삭제</button></p>
 <div id="stat-out"></div>
 <div class="modal-back" id="mb"><div class="modal" role="dialog" aria-modal="true" aria-label="공지"><h2>공지사항</h2><p>점검 안내입니다.</p>${b.modalNoClose ? "" : '<button id="close-notice" aria-label="닫기">닫기</button>'}</div></div>
@@ -61,7 +62,27 @@ Bun.serve({
     const html = (s: string, status = 200) => new Response(s, { status, headers: { "content-type": "text/html; charset=utf-8" } });
     if (u.pathname === "/") return html(home(b));
     if (u.pathname === "/items")
-      return html(layout("항목", `<h1>항목</h1><ul id="list">${items.map((i) => `<li>${i.name}</li>`).join("")}</ul><a href="/">홈으로</a>`));
+      return html(layout("항목", `<h1>항목</h1><ul id="list">${items.map((i) => `<li>${i.name}</li>`).join("")}</ul><p id="count"></p><a href="/">홈으로</a>`, `fetch('/api/items').then(r=>r.json()).then(j=>{document.querySelector('#count').textContent='총 '+j.length+'개';});`));
+    if (u.pathname === "/upload")
+      return html(layout("업로드", `<h1>업로드</h1><input id="file" type="file" accept=".csv,text/csv" aria-label="파일 선택"><button id="send">올리기</button><div id="up-out"></div>`, `
+const $=(s)=>document.querySelector(s);
+$('#send').onclick=async()=>{const f=$('#file').files[0];if(!f){$('#up-out').textContent='파일을 고르세요';return;}const fd=new FormData();fd.append('file',f);const r=await fetch('/api/upload',{method:'POST',body:fd});const j=await r.json().catch(()=>({}));$('#up-out').textContent=r.ok?('업로드 완료 '+j.name):'업로드 실패';};
+`));
+    if (u.pathname === "/admin/audit")
+      return html(layout("감사 로그", `<h1>감사 로그</h1><button id="refresh-audit">새로고침</button><div id="audit-out"></div>`, `
+const $=(s)=>document.querySelector(s);
+fetch('/api/audit').then(r=>r.json()).then(j=>{$('#audit-out').textContent='기록 '+j.length+'건';});
+$('#refresh-audit').onclick=()=>fetch('/api/audit');
+`));
+    if (u.pathname === "/files/report.csv")
+      return new Response(b.downloadEmpty ? "" : "id,name\n1,샘플 항목 A\n2,샘플 항목 B\n", { headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": 'attachment; filename="report.csv"' } });
+    if (u.pathname === "/api/upload" && req.method === "POST") {
+      const fd = await req.formData();
+      const f = fd.get("file") as File | null;
+      return f ? Response.json({ ok: true, name: f.name, size: f.size }) : new Response("{}", { status: 400 });
+    }
+    if (u.pathname === "/api/audit") return Response.json([{ at: 1, what: "login" }]);
+    if (u.pathname === "/api/health") return Response.json({ status: "ok" });
     if (u.pathname === "/about") return html(layout("소개", `<h1>소개</h1><p>데모 사이트</p>`));
     if (u.pathname === "/reports") return b.brokenLink ? html(layout("404 Not Found", "<h1>찾을 수 없음</h1>"), 404) : html(layout("리포트", "<h1>리포트</h1>"));
     if (u.pathname === "/logout") return html(layout("로그아웃", "<h1>로그아웃됨</h1>"));
