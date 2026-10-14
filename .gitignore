@@ -2,3 +2,5 @@ node_modules
 .DS_Store
 .e2e/
 *.log
+
+docs/요구사항-정리와-검토_v0.1.md
