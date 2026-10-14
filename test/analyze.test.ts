@@ -12,6 +12,7 @@ import { statusMatches } from "../src/runner.ts";
 import { Project } from "../src/store.ts";
 import { aSheet, buildSheet, renderSheetMd, sheetGate } from "../src/sheet.ts";
 import { precheck } from "../src/round.ts";
+import { aPrestart } from "../src/prestart.ts";
 import type { Case, Inventory } from "../src/types.ts";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "e2e-loop-an-"));
@@ -186,35 +187,37 @@ test("상태코드 기대값: 숫자·배열·2xx·<400", () => {
 
 const probe = (id: string, over: Partial<Case> = {}): Case => ({ id, title: id, type: "probe", steps: [{ op: "goto", url: "/" }], ...over });
 
-test("Chrome 계열은 파일·다운로드를 OS 창 없이 처리하므로 컴퓨터 제어가 필요 없다", async () => {
+test("다운로드·파일 올리기는 브라우저 API 가 처리하므로 os-window 태그가 없으면 컴퓨터 제어가 필요 없다", async () => {
   const p = new Project(tmp());
   p.ensure();
-  p.saveCases([probe("D1", { needs_os: true, event: "download" })]);
-  const r: any = await osCheck(p, { driver: "chromium" });
+  p.saveCases([probe("D1", { event: "download" }), probe("U1", { event: "upload" })]);
+  const r: any = await osCheck(p);
   expect(r.needed).toBe(false);
-  expect(r.message).toContain("OS 창 없이");
+  expect(r.message).toContain("브라우저 API");
+  expect((await osPending(p)).pending).toBe(false);
 });
 
-test("OS 창이 뜨는 브라우저(Ego)에서 컴퓨터 제어가 안 되면 권한 안내와 함께 허용/스킵을 묻고, 답에 따라 포함하거나 SKIP 으로 둔다", async () => {
+test("OS 창을 거치는 케이스(os-window)가 있고 컴퓨터 제어가 안 되면 권한 안내와 함께 허용/스킵을 묻고, 답에 따라 포함하거나 SKIP 으로 둔다", async () => {
   const p = new Project(tmp());
   p.ensure();
-  p.saveCases([probe("D1", { needs_os: true, event: "download" }), probe("U1", { needs_os: true, event: "upload" }), probe("N1")]);
+  p.saveCases([probe("D1", { tags: ["os-window"], event: "download" }), probe("U1", { tags: ["os-window"], event: "upload" }), probe("N1")]);
   // 컴퓨터 제어가 없는 가짜 환경(claude·codex 모두 없음)
   const env = { ...process.env, PATH: `${tmp()}:/usr/bin:/bin` };
-  const q: any = await osCheck(p, { _driver: "ego", env } as any);
+  expect((await osPending(p)).pending).toBe(true);
+  const q: any = await osCheck(p, { env });
   expect(q.needs_decision).toBe(true);
   expect(q.options.map((o: any) => o.value)).toEqual(["allow", "skip"]);
   expect(q.total).toBe(2);
   expect(q.permission_help.length).toBeGreaterThan(0);
-  expect(await osPending(p, "ego" as any).catch(() => null)).toBeDefined();
 
-  const skip: any = await osCheck(p, { _driver: "ego", env, decision: "skip" } as any);
+  const skip: any = await osCheck(p, { env, decision: "skip" });
   expect(skip.message).toContain("스킵");
   const after = p.cases();
   expect(after.find((c) => c.id === "D1")!.skipReason).toContain("[OS 창]");
   expect(after.find((c) => c.id === "N1")!.skipReason).toBeUndefined();
+  expect((await osPending(p)).pending).toBe(false);
 
-  const allow: any = await osCheck(p, { _driver: "ego", env, decision: "allow" } as any);
+  const allow: any = await osCheck(p, { env, decision: "allow" });
   expect(allow.decision).toBe("allow");
   expect(p.cases().find((c) => c.id === "D1")!.skipReason).toBeUndefined();
   expect(applyOsPolicy(p)).toEqual({ skipped: 0, cleared: 0 });
@@ -232,12 +235,12 @@ test("시트: 화면 → 기능 단위 → 케이스로 묶고, 근거와 빈틈
     probe("P-1", { screen: "/", feature: "버튼 동작", title: "버튼 통계 클릭" }),
     probe("P-2", { screen: "/items", feature: "화면 이동(링크)", title: "링크 홈" }),
     probe("B-1", { status: "blocked", reason: "기대값 근거 없음", steps: [{ op: "goto", url: "/x" }] }),
-    probe("D-1", { needs_os: true, skipReason: "[OS 창] 스킵", screen: "/", feature: "파일 다운로드·업로드" }),
+    probe("D-1", { tags: ["os-window"], skipReason: "[OS 창] 스킵", screen: "/", feature: "파일 다운로드·업로드" }),
   ];
   p.saveCases(cases);
   saveAnalyses(p, [analyzeCode(DEMO_SRC)]);
   const sh = buildSheet(p);
-  expect(sh.totals).toMatchObject({ screens: 4, cases: 6, spec: 2, probe: 4, blocked: 1, skip: 1, needsOs: 1 });
+  expect(sh.totals).toMatchObject({ screens: 4, cases: 6, spec: 2, probe: 4, blocked: 1, skip: 1, osWindow: 1 });
   const home = sh.screens.find((s) => s.screen === "/")!;
   expect(home.features.map((f) => f.feature).sort()).toEqual(["버튼 동작", "파일 다운로드·업로드", "회원 가입"]);
   expect(sh.screens.find((s) => s.screen === "/signup")!.features[0]!.feature).toBe("회원 가입"); // 화면은 첫 goto 에서
@@ -287,5 +290,6 @@ test("회차 시작 검사(precheck)가 시트 확인 대기를 막는다", () =
   expect(pre.ok).toBe(false);
   expect(pre.error).toContain("시트");
   aSheet(p, { confirm: true });
+  aPrestart(p, { dataPolicy: "keep", maxRounds: 10, login: "none", account: { mode: "none" }, acknowledged: true });
   expect((precheck(p, { data: "keep" }) as any).ok).toBe(true);
 });

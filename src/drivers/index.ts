@@ -57,7 +57,7 @@ export interface DPage {
 
 export interface Session {
   page: DPage;
-  finish(passed: boolean): Promise<{ video?: string; trace?: string }>;
+  finish(passed: boolean): Promise<{ video?: string; trace?: string; /** 영상을 못 남긴 이유 등 */ warn?: string }>;
 }
 
 export interface Driver {

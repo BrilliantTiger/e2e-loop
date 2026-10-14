@@ -56,7 +56,11 @@ try {
   });
   ok(up.errors.length === 0, `spec 케이스 ${up.added}건 등록`);
 
-  console.log("5) 회차 시작 전 데이터 결정 요구");
+  console.log("5) 시작 전 질문(상한·로그인·계정·안내) 후 데이터 결정 요구");
+  const gate0: any = await A.aRoundStart({ project: root });
+  ok(gate0.needs_decision && gate0.options[0].value === "e2e_prestart", "시작 전 질문을 마치기 전에는 회차를 시작하지 않음");
+  const pre: any = A.aPrestart({ project: root, maxRounds: 10, login: "none", account: { mode: "none" }, acknowledged: true });
+  ok(pre.questions.every((q: any) => q.id === "data"), "상한·로그인·계정·안내는 기록 완료(데이터 초기화는 회차마다 묻는 흐름)");
   const q: any = await A.aRoundStart({ project: root });
   ok(q.options?.length === 3, "data 를 안 주면 사용자에게 물을 선택지 3개가 돌아옴");
 

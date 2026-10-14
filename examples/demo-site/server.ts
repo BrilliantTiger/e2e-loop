@@ -14,6 +14,7 @@ const bugs = () => {
 };
 const seed = () => [{ id: 1, name: "샘플 항목 A" }, { id: 2, name: "샘플 항목 B" }];
 let items = seed();
+let flaky = 0;
 
 const layout = (title: string, body: string, script = "") => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${title}</title>
 <style>body{font-family:sans-serif;margin:0}nav{display:flex;gap:16px;padding:12px 20px;background:#223}nav a{color:#fff}main{padding:20px}
@@ -62,7 +63,8 @@ Bun.serve({
     const html = (s: string, status = 200) => new Response(s, { status, headers: { "content-type": "text/html; charset=utf-8" } });
     if (u.pathname === "/") return html(home(b));
     if (u.pathname === "/items")
-      return html(layout("항목", `<h1>항목</h1><ul id="list">${items.map((i) => `<li>${i.name}</li>`).join("")}</ul><p id="count"></p><a href="/">홈으로</a>`, `fetch('/api/items').then(r=>r.json()).then(j=>{document.querySelector('#count').textContent='총 '+j.length+'개';});`));
+      return html(layout("항목", `<h1>항목</h1><ul id="list">${items.map((i) => `<li>${i.name} <button class="del" data-id="${i.id}">삭제</button></li>`).join("")}</ul><p id="count"></p><a href="/">홈으로</a>`, `fetch('/api/items').then(r=>r.json()).then(j=>{document.querySelector('#count').textContent='총 '+j.length+'개';});
+document.querySelectorAll('.del').forEach(b=>b.onclick=async()=>{await fetch('/api/items/'+b.dataset.id,{method:'DELETE'});location.reload();});`));
     if (u.pathname === "/upload")
       return html(layout("업로드", `<h1>업로드</h1><input id="file" type="file" accept=".csv,text/csv" aria-label="파일 선택"><button id="send">올리기</button><div id="up-out"></div>`, `
 const $=(s)=>document.querySelector(s);
@@ -90,8 +92,21 @@ $('#refresh-audit').onclick=()=>fetch('/api/audit');
     if (u.pathname === "/api/signup" && req.method === "POST") {
       const j = JSON.parse((await req.text()) || "{}");
       if (!j.email) return new Response("{}", { status: 400 });
-      items.push({ id: items.length + 1, name: `가입자 ${j.email}` });
+      items.push({ id: (items.at(-1)?.id ?? 0) + 1, name: `가입자 ${j.email}` });
       return Response.json({ ok: true });
+    }
+    const del = u.pathname.match(/^\/api\/items\/(\d+)$/);
+    if (del && req.method === "DELETE") {
+      items = items.filter((i) => String(i.id) !== del[1]);
+      return Response.json({ ok: true });
+    }
+    if (u.pathname === "/api/flaky/reset") {
+      flaky = 0;
+      return Response.json({ ok: true });
+    }
+    if (u.pathname === "/api/flaky") {
+      flaky++;
+      return flaky % 2 === 1 ? new Response('{"error":"flaky"}', { status: 500 }) : Response.json({ ok: true, n: flaky });
     }
     if (u.pathname === "/api/items" && req.method === "DELETE") {
       items = [];

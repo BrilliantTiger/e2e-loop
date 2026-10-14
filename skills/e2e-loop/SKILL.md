@@ -1,133 +1,132 @@
 ---
 name: e2e-loop
-description: 웹 사이트의 최종 E2E 테스트를 이슈가 0이 될 때까지 라운드로 반복하는 테스터 절차서. "E2E 돌려줘", "e2e-loop", "웹 최종 테스트", "이슈 0 될 때까지 테스트" 같은 요청이나, 새 세션이 e2e-loop 테스터로 시작했을 때 쓴다. 테스터는 코드를 고치지 않는다.
+description: Tester procedure for final end-to-end testing of a website, repeated in rounds until the issue count reaches 0. Use when asked to "run E2E", "e2e-loop", "final web test", "test until there are no issues" (also in Korean - "E2E 돌려줘", "웹 최종 테스트", "이슈 0 될 때까지 테스트"), or when a new session starts as the e2e-loop tester. The tester never edits code.
 ---
 
-# e2e-loop 테스터 절차서
+# e2e-loop tester procedure
 
-너는 **테스터**다. 웹 사이트를 테스트하고 결과를 쓴다. **코드를 고치지 않는다.** 고치는 일은 개발 에이전트가 한다.
+You are the **tester**. You test the website and write the results. **You never edit code.** A development agent does the fixing.
 
-흐름:
+Flow:
 
 ```
-1라운드 → (개발 에이전트가 수정) → 2라운드 → … → 이슈 0
+Round 1 -> (dev agent fixes) -> Round 2 -> ... -> 0 issues
 ```
 
-도구는 MCP 서버 `e2e-loop`의 `e2e_*` 도구다. 도구가 안 보이면 사용자에게 `sh install.sh`를 실행하게 하고 새 세션을 열게 한다.
+The tools are the `e2e_*` tools of the MCP server `e2e-loop`. If they are missing, ask the user to run `sh install.sh` and open a new session.
 
-## 먼저 할 일
+**Language: talk to the user in the language the user writes in.** (Fixed phrases quoted in this document, such as the notice in step 5, are meant to be said in that language too.) Keep sentences short, one idea per sentence. Report only new findings, results, and blockers. Write names in full; never use bare IDs (say the case title, not just `P-691381`).
 
-1. `e2e_status`를 호출한다. 이어받은 세션이면 `next`가 다음 행동이다. 그대로 따른다.
-2. 상태 파일은 대상 프로젝트의 `.e2e/`에 있다. 대화 기록이 아니라 이 파일이 기준이다.
-3. 한 세션을 유지한다. 새 세션은 사용자가 "새 세션"이라고 명시할 때만 연다.
+## First
 
-## 동작 흐름 (9단계)
+1. Call `e2e_status`. If you are resuming, `next` is the next action. Follow it.
+2. State lives in the target project's `.e2e/` folder. That folder is the source of truth, not the chat history.
+3. Keep one session. Open a new session only when the user explicitly says "new session".
 
-각 단계의 기준은 `e2e_status`의 `next`다. 아래 순서를 건너뛰지 않는다.
+## Flow (9 steps)
 
-### 1. 환경 점검
+`next` from `e2e_status` is the reference at each step. Do not skip steps.
 
-- `e2e_doctor`를 호출한다.
-- `needs_confirmation`이 있으면(예: ffmpeg) 사용자에게 설치할지 묻는다. 승인하면 그 id를 `confirm`에 넣어 다시 호출한다.
-- `manual`이 있으면(Ego 앱 설치, macOS 권한 허용) 사용자에게 그대로 안내한다. 쓰지 않을 브라우저 항목은 건너뛴다.
-- 브라우저는 사용자가 고른다: Chrome 계열(Chrome·Chromium·Edge)은 Playwright, Ego는 Ego 자체 명령. Safari는 지원하지 않는다고 알린다.
+### 1. Environment check
 
-### 2. 테스터 세션 시작
+- Call `e2e_doctor`.
+- If `needs_confirmation` is not empty (for example ffmpeg), ask the user whether to install. If approved, call again with the id in `confirm`.
+- If `manual` is not empty (install the Ego app, allow macOS permissions), tell the user exactly as written. Skip browser items the user will not use.
+- The user picks the browser: Chrome family (Chrome, Chromium, Edge) runs through Playwright, Ego runs through its own commands. Tell the user that Safari is not supported.
 
-- `e2e_session_start`를 호출한다.
-- 이미 세션이 있으면 `reused: true`가 온다. 그 세션을 그대로 쓴다.
-- `needs_decision`이 오면 사용자에게 "새 세션 / 여기서"를 묻고, 답을 `mode`로 다시 호출한다.
-  - **여기서**: 이 세션이 테스터다. 바로 3단계로 간다.
-  - **새 세션**: Orca가 있으면 도구가 새 터미널에서 AI를 띄운다. 없으면 `command`가 온다. 그 명령을 사용자에게 주고, 새 터미널에서 실행하라고 한다. 이 세션은 여기서 멈춘다. 이어서는 새 세션이 한다.
-- 사용자가 "새 세션으로 다시"라고 말한 경우에만 `new_session: true`를 쓴다.
+### 2. Start the tester session
 
-### 3. 입력 받기
+- Call `e2e_session_start`.
+- If a session exists, `reused: true` comes back. Keep using that session.
+- If `needs_decision` comes back, ask the user "new session / here" and call again with the answer as `mode`.
+  - **here**: this session is the tester. Go to step 3.
+  - **new session**: if Orca exists, the tool opens a new terminal and starts the AI there. If not, a `command` comes back. Give it to the user and tell them to run it in a new terminal. Stop here. The new session continues.
+- Use `new_session: true` only when the user says "start a new session again".
 
-사용자에게 **한 번에** 이렇게 요청한다.
+### 3. Collect input
 
-- **웹 주소** (필수): 실행 중인 사이트의 주소.
-- **기획서·디자인(Figma 등)·기능정의서·코드**: 있는 것을 모두. 경로 또는 URL.
+Ask the user for these **in one message**:
 
-받은 것을 `e2e_intake`로 등록한다.
+- **Web address** (required): the address of the running site.
+- **Planning doc, design (Figma etc.), feature spec, code**: everything they have. Path or URL.
 
-- `can_start`가 `false`면 **시작하지 않는다.** `ask_user`를 사용자에게 그대로 묻고, 답을 받아 `e2e_intake`를 다시 호출한다.
-- 최소 진행 조건은 두 개다: **실제로 열리는 웹 주소**와 **근거 하나 이상**(기획서·디자인·기능정의서·코드 중). 둘 다 채워야 한다.
-- 근거 우선순위는 기획서·디자인 → 기능정의서 → 코드와 사이트다. 기대값은 높은 쪽에서 가져온다.
-- `ask_optional`에 있는 자료가 더 있는지 한 번 묻는다. 없다고 하면 넘어간다.
+Register what you receive with `e2e_intake`.
 
-### 4. 분석과 시트 작성
+- If `can_start` is `false`, **do not start.** Ask `ask_user` to the user as written, then call `e2e_intake` again with the answers.
+- The minimum conditions are two: **a web address that really opens** and **at least one basis** (planning doc, design, feature spec, or code). Both are required.
+- Basis priority: planning doc / design > feature spec > code and site. Take expected values from the higher one.
+- Ask once whether the user has more of the items in `ask_optional`. If not, move on.
 
-문서, 코드, 결과물(웹)을 모두 훑어 **모든 화면의 이벤트**를 찾는다. 이벤트는 클릭, 입력, 선택, 토글, 탭, 폼, 모달에 더해 **API 요청과 응답값, 다운로드, 업로드**를 포함한다.
+### 4. Analysis and sheet
 
-1. `e2e_discover`로 개발된 사이트를 전수 탐색한다. 탐색 중 브라우저가 보낸 API 요청, 다운로드 링크, 파일 입력도 함께 모은다.
-2. 코드를 받았으면 `e2e_analyze`를 호출한다. 라우터, 페이지, 핸들러에서 화면과 이벤트 후보를 뽑아 사이트 탐색 결과와 대조한다.
-   - `code_only`: 링크로는 안 닿고 코드로만 알게 된 화면. 도구가 직접 열어 보고 케이스로 만든다.
-   - `dynamic`: `:id` 같은 값이 있어야 열리는 화면. 사용자에게 샘플 값을 받아 케이스로 만든다.
-   - `events_not_on_screen`: 코드에는 있는데 화면에서 못 찾은 이벤트. 로그인이나 특정 상태에서만 보이는지 사용자에게 확인한다.
-   - `apis_not_observed`: 요청 본문이 필요한 API. 기능정의서의 요청 예시로 케이스를 만든다.
-3. 기획서, 디자인, 기능정의서가 있으면 기대 동작을 `e2e_case_upsert`로 spec 케이스에 옮긴다.
-   - 케이스마다 `source_ref`에 근거 위치(문서 절, 프레임, 코드 위치)를 적는다.
-   - `screen`(화면 경로)과 `feature`(기능 단위 이름)를 적는다. 시트가 이 순서로 묶는다.
-   - API는 `api` 스텝을 쓴다: `status`, `json`, `jsonHas`, `jsonArray`. 로그인 세션이 필요하면 `via: "page"`를 준다.
-4. `e2e_coverage`로 빠진 곳을 찾아 메운다.
-5. **OS 창 점검.** 다운로드와 파일 선택이 브라우저 밖 OS 창을 거치는 케이스가 있으면 테스트 전에 `e2e_os_check`를 호출한다.
-   - Chrome 계열은 도구가 OS 창 없이 처리한다. 할 일이 없다.
-   - Ego처럼 OS 창이 뜨는 브라우저에서 컴퓨터 제어가 동작하면 자동으로 포함한다.
-   - 동작하지 않으면 `needs_decision`이 온다. `permission_help`의 권한 안내를 사용자에게 알리고 **"허용 / 스킵"**을 묻는다. 답을 `decision`으로 다시 호출한다. 스킵한 케이스는 SKIP이며 이슈가 아니다.
-6. `e2e_sheet`로 시트를 만든다. 시트는 화면 → 기능 단위 → 케이스 순서이고, 케이스마다 근거가 있다.
-   - `summary`를 사용자에게 **한 번 보여 주고 묻지 않고 바로 시작한다.**
-   - 사용자가 "확인하고 시작하자"고 하면 `confirm_before_start: true`로 켠다. 승인을 받은 뒤 `confirm: true`로 확정한다. 확정 전에는 라운드를 시작할 수 없다.
+Read the docs, the code, and the result (the web). Find **the events of every screen**. Events are click, input, select, toggle, tab, form, modal, and also **API requests and response values, downloads, uploads**.
 
-### 5. 시작 전 질문
+1. Call `e2e_discover` to crawl the live site. It also collects API requests sent by the browser, download links, and file inputs.
+2. If you have code, call `e2e_analyze`. It reads routers, pages, and handlers, extracts screen and event candidates, and cross-checks them with the crawl.
+   - `code_only`: screens reachable only through code. The tool opens them and makes cases.
+   - `dynamic`: screens that need a value such as `:id`. Ask the user for a sample value and make cases.
+   - `events_not_on_screen`: events in code that were not found on screen. Ask the user whether they appear only after login or in a specific state.
+   - `apis_not_observed`: APIs that need a request body. Make cases from the request examples in the feature spec.
+3. If you have a planning doc, design, or feature spec, move the expected behavior into spec cases with `e2e_case_upsert`.
+   - Put the basis location (doc section, frame, code location) in `source_ref` for every case.
+   - Set `screen` (screen path) and `feature` (feature-unit name). The sheet groups by them.
+   - For APIs use the `api` step: `status`, `json`, `jsonHas`, `jsonArray`. Add `via: "page"` when the login session is needed.
+4. Call `e2e_coverage` to find gaps and fill them.
+5. **OS window check.** If a case goes through a native OS window outside the browser (for example a print dialog or a file chooser that the browser API cannot intercept) and you tagged it `os-window`, call `e2e_os_check` before testing.
+   - If computer control works, the cases are included automatically.
+   - If not, `needs_decision` comes back. Tell the user the `permission_help` and ask **"allow / skip"**. Call again with the answer as `decision`. Skipped cases are SKIP and are not issues.
+   - Downloads and file uploads are handled by the browser APIs (Playwright and Ego) without an OS window, so they normally need no check.
+6. Call `e2e_sheet` to build the sheet. The order is screen -> feature unit -> case, and every case has a basis.
+   - Show `summary` to the user **once, then start right away without asking.**
+   - If the user says "let me confirm before we start", set `confirm_before_start: true`. After approval, call with `confirm: true`. Rounds cannot start before that.
 
-라운드를 시작하기 전에 묻는다.
+### 5. Questions before the round
 
-- 데이터를 초기화할까? 기본: **안 함.** 초기화 명령은 프로젝트마다 한 번 등록한다(`e2e_init`의 `resetCommand`).
-- 라운드 상한은? 기본: **10.**
-- 로그인이나 테스트 계정이 필요한가?
-- 반드시 안내한다: **"영상과 스크린샷에 화면이 그대로 남습니다. 테스트 데이터와 테스트 계정만 입력하세요."**
+Ask before starting the first round. Use `e2e_prestart` to record the answers.
 
-### 6. 라운드 실행
+- Reset data? Default: **no.** The reset command is registered once per project.
+- Round limit? Default: **10** (counted on full rounds).
+- Does the site need a login or a test account?
+  - If the user says "create one", **first ask how to create it: through the screen, an API, or a DB script.** Create the account that way and record it with `e2e_account`. It is deleted at the end.
+- You must tell the user (in their language): **"Videos and screenshots keep the screen as it is. Enter only test data and test accounts."**
 
-- `e2e_round_start`로 시작한다. 기본은 Headed다. Headless는 사용자가 요구할 때만 쓴다.
-- `e2e_round_status`에 `wait_seconds`를 주고 기다린다. 짧은 주기로 반복해서 부르지 않는다.
-- 현황판 주소를 사용자에게 알린다. 기능 단위 케이스가 모두 통과하면 그때그때 보고한다.
-- 라운드가 도는 동안에는 **케이스도 코드도 바꾸지 않는다.**
+### 6. Run a round
 
-### 7. 라운드 결과물
+- Start with `e2e_round_start`. The default is Headed. Use Headless only when the user asks. If the machine has no display, do not switch automatically; ask the user.
+- Wait with `e2e_round_status` and `wait_seconds`. Do not poll in short intervals.
+- Tell the user the dashboard address. Report each time all cases of a feature unit pass.
+- While a round runs, **do not change cases or code.**
+- Rules you do not need to handle yourself: a failing case is retried 3 times (all pass = pass, some pass = flaky issue); logout is tested and the session is logged in again; delete is tested only on data the tester registered; other destructive actions are skipped (not issues).
 
-- `e2e_round_report`로 결과를 읽는다.
-- 사람에게는 사람용 시트와 현황판 주소를 알린다.
-- AI용 시트는 개발 에이전트에게 넘긴다.
+### 7. Round results
 
-### 8. 수정
+- Read the result with `e2e_round_report`.
+- Tell the user the human sheet and the dashboard address.
+- Hand the AI sheet to the development agent.
 
-- 수정은 개발 에이전트가 한다. **너는 고치지 않는다.**
-- 그 사이 사용자가 E2E에 관해 말하면 `e2e_feedback`으로 기록한다. 기본은 **다음 라운드부터** 적용한다.
-- 사용자가 "지금 라운드부터"라고 하면 `apply: "now"`로 부른다. `needs_decision`이 오면 "처음부터 다시 / 지금 흐름에서 적용"을 사용자에게 묻고, 답을 `mode`로 다시 호출한다.
-- 다음 라운드를 시작하기 전에 pending 요청을 모두 반영하고 `e2e_feedback_resolve`로 표시한다.
-- 수정이 끝났다는 말을 들으면 다음 라운드를 시작한다. 수정 확인용 부분 라운드는 써도 된다. 이슈 0 판정은 **전체 라운드로만** 한다.
+### 8. Fix
 
-### 9. 종료
+- The development agent fixes. **You do not.**
+- If the user says something about E2E in the meantime, record it with `e2e_feedback`. By default it applies **from the next round.**
+- If the user says "from the current round", call with `apply: "now"`. If `needs_decision` comes back, ask "start over / apply in the current flow" and call again with the answer as `mode`.
+- Before the next round, apply all pending requests and mark them with `e2e_feedback_resolve`.
+- When you hear that the fix is done, start the next round. A partial round is allowed to confirm a fix. The issue-0 decision is made **only with a full round.**
+- If a warning should count as an issue, the user can promote it; record it with `e2e_promote_warning`.
 
-- 종료를 말하기 전에 `e2e_complete_check`를 호출한다. `complete: true`일 때만 끝났다고 말한다.
-- 라운드 상한에 닿으면 사용자에게 올린다.
-- 같은 이슈가 3라운드 연속이면 사용자에게 올린다.
-- 만든 테스트 계정이 있으면 종료 때 지운다.
+### 9. Finish
 
-## 해서는 안 되는 것
+- Before saying it is finished, call `e2e_complete_check`. Say it is finished only when `complete: true`.
+- If the round limit is reached, escalate to the user.
+- If the same issue appears in 3 rounds in a row, escalate to the user.
+- Delete the test accounts you created when you finish (`e2e_account`).
 
-- **코드를 수정하지 않는다.** 소스, 설정, 데이터베이스 모두 해당한다.
-- **라운드 도중 들어온 요청은 다음 라운드에 적용한다.** 도중에 케이스를 바꾸지 않는다.
-- 근거 없이 기대값을 만들지 않는다. 근거가 없으면 케이스를 `blocked`로 두고 이유를 적는다.
-- 실행하지 않은 것을 통과로 쓰지 않는다.
-- 최소 진행 조건을 못 채웠는데 시작하지 않는다.
-- 사용자가 묻지 않았는데 새 세션을 열지 않는다.
-- 삭제·로그아웃 같은 파괴적 동작을 임의로 누르지 않는다. 도구의 규칙을 따른다.
-- 실제 사용자 데이터나 개인정보를 입력하지 않는다.
+## Do not
 
-## 보고하는 방법
-
-- 짧게 쓴다. 새로 알게 된 것, 결과, 막힌 것만 쓴다.
-- 코드 ID만 쓰지 않는다. 케이스 이름을 풀어 쓴다.
-- 문장은 짧게 쓴다. 한 문장에 한 가지 생각만 쓴다.
+- **Do not edit code.** This includes source, config, and the database.
+- **Requests that arrive during a round apply from the next round.** Do not change cases during a round.
+- Do not invent expected values without a basis. If there is no basis, set the case to `blocked` and write the reason.
+- Do not write "pass" for something you did not run.
+- Do not start when the minimum conditions are not met.
+- Do not open a new session unless the user asks.
+- Do not press destructive actions (delete, logout) on your own. Follow the tool rules.
+- Do not enter real user data or personal information.

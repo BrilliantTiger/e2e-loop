@@ -51,9 +51,9 @@ server.registerTool("e2e_analyze", {
 }, wrap(A.aAnalyze));
 
 server.registerTool("e2e_os_check", {
-  title: "OS 창(다운로드·파일 선택) 점검",
-  description: "브라우저 밖 OS 창(다운로드·파일 선택)을 컴퓨터 제어 도구가 맡아야 하는 케이스가 있는지 테스트 전에 점검한다. Chrome 계열은 Playwright 가 OS 창 없이 직접 처리하므로 해당 없음. Ego 처럼 OS 창이 뜨는 브라우저에서 컴퓨터 제어가 동작하면 자동 포함하고, 동작하지 않으면 권한 안내와 함께 '허용 / 스킵'을 묻는 needs_decision 을 돌려준다. 답을 받으면 decision 으로 다시 호출한다. 스킵한 케이스는 SKIP 으로 두며 이슈가 아니다.",
-  inputSchema: { project, driver: z.enum(["auto", "ego", "chrome", "edge", "chromium"]).optional(), decision: z.enum(["allow", "skip"]).optional().describe("사용자가 고른 답") },
+  title: "OS 창 점검",
+  description: "브라우저 밖 OS 창(인쇄 창, API 로 가로챌 수 없는 파일 선택 창 등)을 컴퓨터 제어 도구가 맡아야 하는 케이스(태그 os-window)가 있는지 테스트 전에 점검한다. 다운로드·파일 올리기는 Playwright·Ego 의 API 가 OS 창 없이 직접 처리하므로 보통 해당 없다. 컴퓨터 제어가 동작하면 자동 포함하고, 동작하지 않으면 권한 안내와 함께 '허용 / 스킵'을 묻는 needs_decision 을 돌려준다. 답을 받으면 decision 으로 다시 호출한다. 스킵한 케이스는 SKIP 으로 두며 이슈가 아니다.",
+  inputSchema: { project, decision: z.enum(["allow", "skip"]).optional().describe("사용자가 고른 답") },
 }, wrap(A.aOsCheck));
 
 server.registerTool("e2e_sheet", {
@@ -61,6 +61,35 @@ server.registerTool("e2e_sheet", {
   description: "화면 → 기능 단위 → 케이스로 묶은 테스트 시트를 만들고(.e2e/sheet.json, sheet.md) 요약을 돌려준다. 케이스마다 근거(문서 절·코드 위치)가 적힌다. 라운드 시작 전에 요약을 사용자에게 한 번 보여 주고 묻지 말고 바로 시작한다. 사용자가 확인 후 시작을 원하면 confirm_before_start=true 로 켜고, 승인을 받은 뒤 confirm=true 로 확정한다(그 전에는 e2e_round_start 가 거부된다). 빈틈(못 닿은 화면, 요청 본문이 필요한 API, 케이스 없는 요소)도 함께 보여 준다.",
   inputSchema: { project, confirm: z.boolean().optional(), confirm_before_start: z.boolean().optional(), full: z.boolean().optional().describe("케이스를 줄이지 않고 전부 보여 주기") },
 }, wrap(A.aSheet));
+
+server.registerTool("e2e_prestart", {
+  title: "라운드 시작 전 질문 기록",
+  description: "1라운드를 시작하기 전에 사용자에게 한 번에 물어야 할 것을 확인하고 답을 기록한다: ① 데이터 초기화(기본 안 함=keep, 초기화=reset 이면 초기화 명령을 프로젝트마다 한 번 등록) ② 라운드 상한(기본 10, 전체 라운드만 센다) ③ 로그인·테스트 계정(만들라고 하면 만드는 방법 — 화면·API·DB 스크립트 — 을 먼저 묻는다) ④ '영상·스크린샷에 화면이 그대로 남으니 테스트 데이터와 테스트 계정만 입력하라'는 안내. 인자 없이 부르면 남은 질문 목록만 돌려준다. 모두 마쳐야 e2e_round_start 가 시작된다.",
+  inputSchema: {
+    project, dataPolicy: z.enum(["ask", "reset", "keep"]).optional(), resetCommand: z.string().optional(), resetCwd: z.string().optional(), maxRounds: z.number().optional(),
+    login: z.enum(["none", "provided"]).optional(), loginSetupSteps: z.array(step).optional().describe("케이스마다 맨 앞에서 실행할 로그인 스텝"), loginLocalStorage: z.record(z.string(), z.string()).optional(),
+    account: z.object({ mode: z.enum(["none", "provided", "create"]), method: z.enum(["ui", "api", "db-script"]).optional(), note: z.string().optional() }).optional(),
+    acknowledged: z.boolean().optional().describe("화면 노출 안내를 사용자에게 했을 때 true"),
+  },
+}, wrap(A.aPrestart as any));
+
+server.registerTool("e2e_account", {
+  title: "테스트 계정 기록·정리",
+  description: "테스터가 만든 테스트 계정을 기록해 두었다가 종료 때 지운다. action=record(만든 계정 기록, deleteCommand 가 있으면 종료 때 그 셸 명령으로 지움), list, cleanup(deleteCommand 가 있는 계정을 지우고 나머지는 지우는 방법을 안내), mark_deleted(사람이 방법대로 지운 뒤 표시). 계정을 만들기 전에 e2e_prestart 로 만드는 방법을 기록해야 한다.",
+  inputSchema: { project, action: z.enum(["record", "list", "cleanup", "mark_deleted"]), account: z.object({ id: z.string(), username: z.string().optional(), note: z.string().optional(), deleteCommand: z.string().optional() }).optional(), ids: z.array(z.string()).optional() },
+}, wrap(A.aAccount as any));
+
+server.registerTool("e2e_promote_warning", {
+  title: "경고를 이슈로 승격",
+  description: "사용자가 '이 경고도 이슈로 세라'고 했을 때 기록한다. 이후 라운드에서 경고 문구에 match(부분 문자열)가 들어 있으면 그 케이스(case 를 주면 그 케이스만)를 실패로 본다. remove=true 면 승격을 철회한다.",
+  inputSchema: { project, match: z.string(), case: z.string().optional(), note: z.string().optional(), remove: z.boolean().optional() },
+}, wrap(A.aPromoteWarning));
+
+server.registerTool("e2e_evidence", {
+  title: "증거 보관 용량",
+  description: "증거(영상·스크린샷) 보관 용량을 회차별로 보여 준다. 보관은 회차 단위이고 상한(기본 4096MB)에 닿기 전에 알린다. action=prune 과 keepLast 를 주면 오래된 회차의 증거만 지운다(결과·보고서는 남음). 사용자 승인 없이 지우지 않는다.",
+  inputSchema: { project, action: z.enum(["usage", "prune"]).optional(), keepLast: z.number().optional() },
+}, wrap(A.aEvidence));
 
 server.registerTool("e2e_doctor", {
   title: "환경 점검·설치·등록",
@@ -79,7 +108,7 @@ server.registerTool("e2e_init", {
     authSetupSteps: z.array(step).optional().describe("케이스마다 맨 앞에서 실행할 스텝(로그인 등)"),
     destructivePattern: z.string().optional(), acceptedSkips: z.array(z.string()).optional(),
     crawl: z.object({ maxPages: z.number().optional(), maxDepth: z.number().optional(), seeds: z.array(z.string()).optional(), ignore: z.array(z.string()).optional(), reveal: z.boolean().optional(), maxRevealPerPage: z.number().optional() }).optional(),
-    probes: z.enum(["auto", "off"]).optional(), dashboardPort: z.number().optional(), viewport: z.object({ width: z.number(), height: z.number() }).optional(),
+    probes: z.enum(["auto", "off"]).optional(), evidenceLimitMB: z.number().optional().describe("증거(영상·스크린샷) 보관 용량 상한(MB, 기본 4096)"), dashboardPort: z.number().optional(), viewport: z.object({ width: z.number(), height: z.number() }).optional(),
   },
 }, wrap(A.aInit as any));
 
@@ -122,8 +151,8 @@ server.registerTool("e2e_coverage", {
 server.registerTool("e2e_round_start", {
   title: "회차 시작",
   description: "전체 케이스를 처음부터 한 회차 실행한다(백그라운드). 시작 전에 데이터를 초기화할지 그대로 갈지 반드시 사용자에게 확인해야 한다 — data 를 주지 않고 정책이 ask 면 질문 선택지(needs_decision)가 돌아온다. data: reset(초기화 후 시작, 파괴적 동작도 점검) / keep(그대로, 파괴적 동작은 SKIP) / manual-reset-done(사용자가 직접 초기화 완료). 실시간 대시보드 주소가 함께 돌아온다. 회차가 도는 동안에는 코드·케이스를 고치지 않는다.",
-  inputSchema: { project, data: z.enum(["reset", "keep", "manual-reset-done"]).optional(), driver: z.enum(["auto", "ego", "chrome", "edge", "chromium"]).optional(), headless: z.boolean().optional(), only: z.array(z.string()).optional().describe("지정한 케이스만(부분 회차 — 완료 판정에는 쓸 수 없음)"), onlyFailed: z.boolean().optional().describe("직전 회차 실패 케이스만 다시(부분 회차)"), open: z.boolean().optional().describe("대시보드를 브라우저로 열기") },
-}, wrap(A.aRoundStart as any));
+  inputSchema: { project, data: z.enum(["reset", "keep", "manual-reset-done"]).optional(), driver: z.enum(["auto", "ego", "chrome", "edge", "chromium"]).optional(), headless: z.boolean().optional(), only: z.array(z.string()).optional().describe("지정한 케이스만(부분 회차 — 완료 판정에는 쓸 수 없음)"), onlyFailed: z.boolean().optional().describe("직전 회차 실패 케이스만 다시(부분 회차)"), acknowledge_repeated: z.boolean().optional().describe("같은 이슈가 3라운드 연속이라 사용자에게 올렸고 사용자가 계속하기로 했을 때만 true"), open: z.boolean().optional().describe("대시보드를 브라우저로 열기") },
+}, wrap(((a: any) => A.aRoundStart({ ...a, acknowledgeRepeated: a.acknowledge_repeated })) as any));
 
 server.registerTool("e2e_round_status", {
   title: "회차 진행 확인",

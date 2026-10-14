@@ -121,6 +121,25 @@ export async function closeModal(p: DPage): Promise<{ how: string | null; warns:
   return { how: null, warns };
 }
 
+/** 케이스를 실행하지 않고 건너뛴다(규칙에 따른 스킵). 이슈가 아니다. */
+export class SkipCase extends Error {
+  constructor(msg: string) {
+    super(msg);
+    this.name = "SkipCase";
+  }
+}
+
+export interface ProbePolicy {
+  /** 데이터를 초기화하지 않는 회차: 삭제는 테스터가 등록한 데이터만 */
+  ownDataOnly: boolean;
+  /** 테스터가 입력해 등록한 값들 */
+  created: string[];
+  onCreated?: (value: string) => void;
+}
+
+const OWN_MARK = /e2e[-+_.]/i;
+export const isOwnData = (text: string, created: string[]) => OWN_MARK.test(text) || created.some((v) => v.length >= 4 && text.includes(v));
+
 export interface ProbeResult {
   warns: string[];
   notes: string[];
@@ -149,6 +168,7 @@ export async function runProbe(
   baseUrl: string,
   allowErrors = false,
   evidenceDir?: string,
+  policy?: ProbePolicy,
 ): Promise<ProbeResult> {
   const kind: string = step.kind;
   const sel: string = step.sel;
@@ -184,6 +204,40 @@ export async function runProbe(
       fail(`링크 이동 실패: 기대 ${target.pathname} / 실제 ${here.pathname}`);
     }
     if (/\b(404|not found|error|오류|찾을 수 없)/i.test(after.title)) fail(`이동한 화면 제목이 오류처럼 보임: "${after.title}"`);
+    return finish();
+  }
+
+  if (kind === "delete") {
+    // 같은 목록의 앞선 삭제 케이스가 이 줄을 이미 지웠으면 대상이 없다 — 결함이 아니라 순서 때문이므로 이유를 적어 스킵한다
+    if ((await p.count(sel).catch(() => 0)) === 0) throw new SkipCase(`삭제 대상이 화면에 없음(“${step.label ?? sel}”) — 같은 목록의 앞선 삭제로 이미 지워졌을 수 있어 스킵함. 이슈가 아님`);
+    // 삭제는 그 줄(행·카드)에 테스터가 등록한 데이터가 있을 때만 누른다
+    const row = await p.evaluate<{ found: boolean; text: string }>(
+      `(() => { const E = window.__e2e; const e = E.resolve(${JSON.stringify(sel)})[0]; if (!e) return { found: false, text: '' }; let c = e; for (let i = 0; i < 6 && c.parentElement; i++) { c = c.parentElement; if (c.matches('li,tr,[role=row],[role=listitem],article,.card,.item')) return { found: true, text: E.textOf(c) }; } return { found: false, text: E.textOf(e) }; })()`,
+    );
+    if (policy?.ownDataOnly && !(row.found && isOwnData(row.text, policy.created))) throw new SkipCase(`삭제 대상이 테스터가 등록한 데이터가 아니라 삭제하지 않음(“${step.label ?? sel}”) — 규칙에 따른 스킵이며 이슈가 아님`);
+    const before = await observe(p);
+    await p.click(sel, step.label);
+    const after = await settle(p, before);
+    const diff = changed(before, after);
+    if (!diff.length) warns.push("NO_EFFECT: 삭제를 눌러도 화면 변화가 보이지 않음(확인 창이 떴거나 기능이 비어 있을 수 있음)");
+    else notes.push("삭제 후 변화: " + diff.slice(0, 4).join(", "));
+    return finish();
+  }
+
+  if (kind === "logout") {
+    const before = await observe(p);
+    await p.click(sel, step.label);
+    const after = await settle(p, before);
+    const diff = changed(before, after);
+    if (!diff.length) fail("로그아웃을 눌렀는데 주소·화면 변화가 없음");
+    notes.push("로그아웃 후 변화: " + diff.slice(0, 4).join(", "));
+    return finish();
+  }
+
+  if (kind === "relogin-check") {
+    const ok = await p.isVisible(sel).catch(() => false);
+    if (!ok) fail("다시 로그인한 뒤에도 로그인 상태 요소(로그아웃 버튼)가 보이지 않음");
+    notes.push("다시 로그인 확인됨");
     return finish();
   }
 
@@ -253,6 +307,7 @@ export async function runProbe(
     }
     const t: string | undefined = step.inputType;
     const sample = SAMPLE(t, step.label ?? "");
+    policy?.onCreated?.(sample);
     await p.fill(sel, sample);
     const got = await p.value(sel);
     const same = t === "number" || t === "range" ? Number(got) === Number(sample) : got === sample || (t === "date" || t === "time" || t === "datetime-local" || t === "month" || t === "week" || t === "color");
@@ -317,7 +372,11 @@ export async function runProbe(
     const fields: { sel: string; kind: string; inputType?: string; label: string; options?: string[]; accept?: string }[] = step.fields ?? [];
     for (const f of fields) {
       try {
-        if (f.kind === "input") await p.fill(f.sel, SAMPLE(f.inputType, f.label));
+        if (f.kind === "input") {
+          const v = SAMPLE(f.inputType, f.label);
+          policy?.onCreated?.(v);
+          await p.fill(f.sel, v);
+        }
         else if (f.kind === "select" && f.options?.length) await p.selectOption(f.sel, f.options.find((o) => o) ?? f.options[0]!);
         else if (f.kind === "toggle") await p.check(f.sel, true);
         else if (f.kind === "file") await p.upload(f.sel, sampleUploadFile(f.accept));

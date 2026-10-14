@@ -3,7 +3,8 @@ import { join, relative } from "node:path";
 import type { Case, CaseResult, Config, StepResult, Step, Verdict } from "./types.ts";
 import type { Driver, DPage } from "./drivers/index.ts";
 import { Project, expandEnv, nowIso } from "./store.ts";
-import { judgeErrors, runProbe, sleep } from "./probes.ts";
+import { judgeErrors, runProbe, sleep, type ProbePolicy } from "./probes.ts";
+import type { EvidenceKit } from "./evidence.ts";
 
 export interface RunCtx {
   project: Project;
@@ -13,6 +14,13 @@ export interface RunCtx {
   decision: "reset" | "keep" | "manual-reset-done";
   emit: (ev: Record<string, unknown>) => void;
   resetBeforeCase?: () => Promise<void>;
+  /** 재시도 번호(0 = 첫 시도). 재시도의 증거는 별도 폴더에 둔다 */
+  attempt?: number;
+  /** 증거 처리기: 스크린샷에 커밋·시각·케이스 id·해시 도장을 찍는다 */
+  kit?: EvidenceKit;
+  /** 테스터가 입력해 등록한 값(삭제 허용 판단용) */
+  created?: string[];
+  onCreated?: (value: string) => void;
 }
 
 const safe = (s: string) => s.replace(/[^\w.-]+/g, "_").slice(0, 80);
@@ -118,7 +126,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     status: "PASS", warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(),
   };
   const rdir = project.roundDir(roundId);
-  const edir = join(rdir, "evidence", safe(c.id));
+  const edir = join(rdir, "evidence", safe(c.id) + (ctx.attempt ? `.retry${ctx.attempt}` : ""));
   mkdirSync(edir, { recursive: true });
   const rel = (p: string) => relative(rdir, p);
 
@@ -135,23 +143,28 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     return res;
   }
   if (c.risk === "destructive" && ctx.decision === "keep") {
+    // 삭제·로그아웃은 별도 규칙(probe)으로 다룬다. 그 밖의 파괴적 동작은 스킵이며 이슈가 아니다.
     res.status = "SKIP";
-    res.reason = "데이터 유지 모드라 파괴적 동작(삭제·로그아웃 등)은 실행하지 않음 — 데이터 초기화 회차에서 확인 필요";
+    res.reason = "그 밖의 파괴적 동작이라 데이터를 초기화하지 않는 회차에서는 실행하지 않음 — 규칙에 따른 스킵이며 이슈가 아님";
     return res;
   }
   if (ctx.resetBeforeCase) await ctx.resetBeforeCase();
 
   const session = await ctx.driver.newSession(edir);
+  const t0 = Date.now(); // 영상 챕터의 기준 시각
   const page = session.page;
+  const policy: ProbePolicy = { ownDataOnly: ctx.decision === "keep", created: ctx.created ?? [], onCreated: ctx.onCreated };
   const allowErrors = (c.tags ?? []).includes("allow-errors");
   const steps: Step[] = [...(cfg.auth?.setupSteps ?? []), ...c.steps];
   const keepAllShots = !ctx.driver.capabilities.video;
   let failedAt = -1;
   let osBlocked: string | undefined;
+  let skipped: string | undefined;
   const shot = async (name: string): Promise<string | undefined> => {
     const p = join(edir, name + ".png");
     try {
       await page.screenshot(p);
+      await ctx.kit?.stampImage(p, c.id).catch(() => {});
       return rel(p);
     } catch {
       return undefined;
@@ -160,15 +173,15 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
 
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i]!;
-    const sr: StepResult = { i, op: s.op, desc: describe(s), status: "ok", ms: 0 };
-    const t0 = Date.now();
+    const sr: StepResult = { i, op: s.op, desc: describe(s), status: "ok", ms: 0, at: Date.now() - t0 };
+    const tStep = Date.now();
     try {
       switch (s.op) {
         case "goto": await page.goto(abs(s.url, cfg.baseUrl)); break;
         case "click": await page.click(s.sel); break;
         case "dblclick": await page.dblclick(s.sel); break;
         case "hover": await page.hover(s.sel); break;
-        case "fill": await page.fill(s.sel, expandEnv(String(s.value ?? ""))); break;
+        case "fill": { const v = expandEnv(String(s.value ?? "")); if (v.length >= 4) ctx.onCreated?.(v); await page.fill(s.sel, v); break; }
         case "select": await page.selectOption(s.sel, String(s.value)); break;
         case "check": await page.check(s.sel, s.checked ?? true); break;
         case "press": await page.press(s.sel ?? null, s.key); break;
@@ -223,7 +236,16 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           break;
         }
         case "probe": {
-          const pr = await runProbe(page, s, () => page.drain(), cfg.baseUrl, allowErrors, edir);
+          const pr = await runProbe(page, s, () => page.drain(), cfg.baseUrl, allowErrors, edir, policy);
+          if (s.kind === "logout") {
+            // 로그아웃은 테스트한 뒤 다시 로그인한다: 로그인 스텝을 이어 붙이고 로그인 상태가 돌아왔는지 확인한다
+            const setup = cfg.auth?.setupSteps ?? [];
+            if (setup.length) {
+              const back: Step[] = [{ op: "goto", url: steps.slice(0, i).reverse().find((x) => x.op === "goto")?.url ?? "/" }, ...setup, { op: "probe", kind: "relogin-check", sel: s.sel }];
+              steps.splice(i + 1, 0, ...back);
+              pr.notes.push("로그인 스텝으로 다시 로그인");
+            } else pr.notes.push("로그인 설정(auth.setupSteps)이 없어 다시 로그인은 생략");
+          }
           res.warnings.push(...pr.warns);
           if (pr.notes.length) sr.desc += " — " + pr.notes.join("; ");
           break;
@@ -236,8 +258,9 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       sr.error = String(e?.message ?? e).replace(/\n\s+/g, " ").slice(0, 600);
       failedAt = i;
       if (e?.name === "OsWindowRequired") osBlocked = String(e.message);
+      if (e?.name === "SkipCase") skipped = String(e.message);
     }
-    sr.ms = Date.now() - t0;
+    sr.ms = Date.now() - tStep;
     const isLast = i === steps.length - 1;
     if (sr.status === "fail" || keepAllShots || isLast) sr.shot = sr.shot ?? (await shot(`s${String(i).padStart(2, "0")}${sr.status === "fail" ? "_FAIL" : ""}`));
     // 실시간 대시보드용 최신 화면
@@ -270,12 +293,27 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     res.status = "FAIL";
     res.reason = res.steps[failedAt]!.error;
   }
+  if (skipped) {
+    res.status = "SKIP";
+    res.reason = skipped;
+  }
   if (osBlocked) {
     // 도구가 할 수 없는 일이지 사이트의 결함이 아니다 — 검증하지 못한 것으로 둔다
     res.status = "BLOCKED";
     res.reason = osBlocked;
   }
+  res.warnings = [...new Set(res.warnings)].slice(0, 12);
+  if (res.status === "PASS") {
+    // 사용자가 이슈로 승격한 경고가 나왔으면 실패로 본다
+    const hit = cfg.promotedWarnings.find((pw) => (!pw.case || pw.case === c.id) && res.warnings.some((w) => w.includes(pw.match)));
+    if (hit) {
+      res.status = "FAIL";
+      res.promoted = true;
+      res.reason = `사용자가 이슈로 승격한 경고: ${res.warnings.find((w) => w.includes(hit.match))}`;
+    }
+  }
   const ev = await session.finish(res.status !== "FAIL");
+  if (ev.warn) res.warnings.push(ev.warn);
   if (ev.video) res.video = rel(ev.video);
   if (ev.trace) res.trace = rel(ev.trace);
   res.warnings = [...new Set(res.warnings)].slice(0, 12);

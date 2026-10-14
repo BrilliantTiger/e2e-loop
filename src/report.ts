@@ -31,16 +31,19 @@ export function diffWithPrevious(project: Project, meta: RoundMeta, results: Cas
   return d;
 }
 
-export interface TrendRow { round: string; scope: string; issues: number; fail: number; skip: number; warn: number; pass: number; total: number; tainted: boolean }
-/** 회차별 이슈 수 추이. 이슈 = FAIL + 검증 못 한 SKIP. 0 에 수렴하면 끝. */
+export interface TrendRow { round: string; scope: string; issues: number; fail: number; flaky: number; blocked: number; skip: number; warn: number; pass: number; total: number }
+/** 회차별 이슈 수 추이. 이슈 = 실패 + 불안정 + 검증 못 한 것(BLOCKED). 스킵은 이슈가 아니다. 0 에 수렴하면 끝. */
 export function trend(project: Project, upTo?: RoundMeta, upToResults?: CaseResult[]): TrendRow[] {
   const rows: TrendRow[] = [];
   for (const r of project.rounds()) {
     if (r.status === "running" && r.id !== upTo?.id) continue;
     const res = r.id === upTo?.id && upToResults ? upToResults : project.readJson<CaseResult[]>(`rounds/${r.id}/results.json`, []);
+    const cfg = project.config();
     const fail = res.filter((x) => x.status === "FAIL").length;
+    const flaky = res.filter((x) => x.status === "FLAKY").length;
+    const blocked = res.filter((x) => x.status === "BLOCKED" && !cfg.acceptedSkips.includes(x.id)).length;
     const skip = res.filter((x) => x.status === "SKIP").length;
-    rows.push({ round: r.id, scope: r.scope, issues: fail + skip, fail, skip, warn: res.filter((x) => x.status === "PASS" && x.warnings.length).length, pass: res.filter((x) => x.status === "PASS").length, total: res.length, tainted: !!r.tainted });
+    rows.push({ round: r.id, scope: r.scope, issues: fail + flaky + blocked, fail, flaky, blocked, skip, warn: res.filter((x) => x.status === "PASS" && x.warnings.length).length, pass: res.filter((x) => x.status === "PASS").length, total: res.length });
   }
   return rows;
 }
@@ -63,16 +66,18 @@ export function writeReports(project: Project, meta: RoundMeta, results: CaseRes
   const diff = diffWithPrevious(project, meta, results);
   const cov = coverage(project);
   const tr = trend(project, meta, results);
-  const fails = results.filter((r) => r.status === "FAIL").sort((a, b) => (a.priority ?? "P9").localeCompare(b.priority ?? "P9"));
+  const fails = results.filter((r) => r.status === "FAIL" || r.status === "FLAKY").sort((a, b) => (a.priority ?? "P9").localeCompare(b.priority ?? "P9"));
   const warned = results.filter((r) => r.status === "PASS" && r.warnings.length);
   const skipped = results.filter((r) => r.status === "SKIP");
+  const unverified = results.filter((r) => r.status === "BLOCKED");
   const s = meta.summary!;
-  const verdict = meta.status !== "finished" ? "INCOMPLETE" : meta.tainted ? "TAINTED" : s.FAIL > 0 ? "FAIL" : s.SKIP > 0 ? "PASS_WITH_SKIPS" : "PASS";
+  const issueCount = tr.find((t) => t.round === meta.id)?.issues ?? 0;
+  const verdict = meta.status !== "finished" ? "INCOMPLETE" : issueCount > 0 ? "FAIL" : s.SKIP > 0 ? "PASS_WITH_SKIPS" : "PASS";
 
   // ── AI용 JSON ──
   const json = {
     round: meta.id, verdict, scope: meta.scope, driver: meta.driver, data: meta.data, startedAt: meta.startedAt, finishedAt: meta.finishedAt,
-    tainted: meta.tainted ?? null, error: meta.error ?? null, code: meta.code, summary: s, diff,
+    issues: issueCount, error: meta.error ?? null, code: meta.code, summary: s, diff,
     trend: tr,
     pendingFeedback: meta.pendingFeedback ?? [],
     injected: meta.injected ?? [],
@@ -84,6 +89,7 @@ export function writeReports(project: Project, meta: RoundMeta, results: CaseRes
     })),
     warnings: warned.map((r) => ({ id: r.id, title: r.title, warnings: r.warnings })),
     skipped: skipped.map((r) => ({ id: r.id, title: r.title, reason: r.reason })),
+    unverified: unverified.map((r) => ({ id: r.id, title: r.title, reason: r.reason })),
     coverage: { elements: { total: cov.elements.total, uncovered: cov.elements.uncovered }, cases: cov.cases, uncoveredSections: cov.sources.flatMap((x) => x.uncoveredSections.map((n) => `${x.title}: ${n}`)) },
   };
   writeFileSync(`${dir}/report.json`, JSON.stringify(json, null, 2));
@@ -92,8 +98,7 @@ export function writeReports(project: Project, meta: RoundMeta, results: CaseRes
   const L: string[] = [];
   L.push(`# E2E ${meta.id} — ${verdict}`);
   L.push(`- 범위 ${meta.scope === "full" ? "전체" : "부분"} · 브라우저 ${meta.driver} · 데이터 ${meta.data.decision} · 코드 ${meta.code.head ?? "?"}${meta.code.dirtyHash ? ` (+변경 ${meta.code.dirtyHash})` : ""}`);
-  L.push(`- PASS ${s.PASS} · FAIL ${s.FAIL} · SKIP ${s.SKIP} · BLOCKED ${s.BLOCKED} · NA ${s.NA} / ${s.total}`);
-  if (meta.tainted) L.push(`- ⚠ ${meta.tainted}`);
+  L.push(`- PASS ${s.PASS} · FAIL ${s.FAIL} · 불안정 ${s.FLAKY} · 검증 못 함(BLOCKED) ${s.BLOCKED} · 스킵 ${s.SKIP} · 해당 없음 ${s.NA} / ${s.total}`);
   if (meta.error) L.push(`- ⚠ ${meta.error}`);
   if (diff.prev) L.push(`- 이전 ${diff.prev} 대비: 고쳐짐 ${diff.fixed.length} · 새로 깨짐 ${diff.regressed.length} · 계속 실패 ${diff.stillFailing.length} · 새 케이스 ${diff.newCases.length}${diff.regressed.length ? ` (회귀: ${diff.regressed.join(", ")})` : ""}`);
   L.push(`- 이슈 추이: ${tr.map((t) => `${t.round}=${t.issues}`).join(" → ")} (0 에 수렴하면 종료)`);
@@ -112,7 +117,7 @@ export function writeReports(project: Project, meta: RoundMeta, results: CaseRes
       L.push(`  - 증거: ${[st?.shot, r.video, r.trace].filter(Boolean).map((p) => `rounds/${meta.id}/${p}`).join(" , ")}`);
     }
   }
-  if (skipped.length) L.push("", `## 검증 못 함(SKIP) ${skipped.length}건`, ...skipped.slice(0, 15).map((r) => `- ${r.id} ${r.title}`), "→ 데이터 초기화 회차에서 실행해야 완료 판정 가능");
+  if (skipped.length) L.push("", `## 스킵 ${skipped.length}건`, ...skipped.slice(0, 15).map((r) => `- ${r.id} ${r.title}`), "→ 스킵은 이슈가 아님(규칙 또는 사용자 선택으로 돌리지 않음)");
   if (warned.length) L.push("", `## 경고(PASS 지만 확인 필요) ${warned.length}건`, ...warned.slice(0, 15).map((r) => `- ${r.id} ${r.title}: ${r.warnings[0]}`));
   if (cov.elements.uncovered) L.push("", `## 커버리지: 케이스가 없는 요소 ${cov.elements.uncovered}개 (e2e_coverage 로 목록 확인)`);
   const us = json.coverage.uncoveredSections;
@@ -159,11 +164,11 @@ tr.fail td{color:var(--fail);font-weight:600}tr.err td{color:var(--fail);font-si
 </style></head><body><main>
 <h1>E2E ${meta.id} 결과 <span class="v ${verdict}">${verdict}</span></h1>
 <div class="meta">${esc(meta.baseUrl)} · ${meta.scope === "full" ? "전체 회차" : "부분 회차"} · 브라우저 ${esc(meta.driver)} · 데이터 ${esc(meta.data.decision)} · 코드 ${esc(meta.code.head ?? "-")} · ${esc(meta.startedAt)} ~ ${esc(meta.finishedAt ?? "")}</div>
-${meta.tainted ? `<div class="tw">⚠ ${esc(meta.tainted)}</div>` : ""}${meta.error ? `<div class="tw">⚠ ${esc(meta.error)}</div>` : ""}
-<div class="cards"><div class="card"><b style="color:var(--pass)">${s.PASS}</b>PASS</div><div class="card"><b style="color:var(--fail)">${s.FAIL}</b>FAIL</div><div class="card"><b>${s.SKIP}</b>SKIP</div><div class="card"><b>${s.BLOCKED + s.NA}</b>BLOCKED/NA</div><div class="card"><b>${s.total}</b>전체</div><div class="card"><b>${warned.length}</b>경고</div></div>
+${meta.error ? `<div class="tw">⚠ ${esc(meta.error)}</div>` : ""}
+<div class="cards"><div class="card"><b style="color:var(--pass)">${s.PASS}</b>PASS</div><div class="card"><b style="color:var(--fail)">${s.FAIL}</b>FAIL</div><div class="card"><b>${s.FLAKY}</b>불안정</div><div class="card"><b>${s.SKIP}</b>SKIP</div><div class="card"><b>${s.BLOCKED + s.NA}</b>BLOCKED/NA</div><div class="card"><b>${s.total}</b>전체</div><div class="card"><b>${warned.length}</b>경고</div></div>
 ${diff.prev ? `<h2>이전 회차(${diff.prev})와 비교</h2><p>고쳐짐: ${list(diff.fixed)}<br>새로 깨짐: ${list(diff.regressed)}<br>계속 실패: ${list(diff.stillFailing)}<br>새 케이스: ${diff.newCases.length}건</p>` : ""}
-<h2>이슈 추이 <small class="meta">(이슈 = FAIL + 검증 못 한 SKIP, 0 이 되면 종료)</small></h2>
-<div class="trend">${tr.map((t) => `<div class="tb"><div class="bar" style="height:${Math.min(100, 6 + t.issues * 8)}px;background:${t.issues ? "var(--fail)" : "var(--pass)"}"></div><b>${t.issues}</b><span>${t.round}${t.scope === "partial" ? "·부분" : ""}${t.tainted ? "·무효" : ""}</span></div>`).join("")}</div>
+<h2>이슈 추이 <small class="meta">(이슈 = 실패 + 불안정 + 검증 못 한 것, 스킵은 제외. 0 이 되면 종료)</small></h2>
+<div class="trend">${tr.map((t) => `<div class="tb"><div class="bar" style="height:${Math.min(100, 6 + t.issues * 8)}px;background:${t.issues ? "var(--fail)" : "var(--pass)"}"></div><b>${t.issues}</b><span>${t.round}${t.scope === "partial" ? "·부분" : ""}</span></div>`).join("")}</div>
 ${meta.pendingFeedback?.length ? `<div class="tw">이 회차 시작 때 아직 반영되지 않은 요청 ${meta.pendingFeedback.length}건: ${meta.pendingFeedback.map((f) => esc(f.id + " " + f.text)).join(" / ")}</div>` : ""}${meta.injected?.length ? `<div class="tw">회차 도중 끼워 넣은 케이스 ${meta.injected.length}건 — 이 회차는 완료 근거가 아닙니다: ${meta.injected.map(esc).join(", ")}</div>` : ""}
 <h2>결함 ${fails.length}건 (우선순위순)</h2>
 ${fails.length ? `<table class="steps"><tr><th>순위</th><th>케이스</th><th>원인</th><th>힌트</th></tr>${fails.map((r) => `<tr><td>${r.priority}</td><td><b>${esc(r.id)}</b> ${esc(r.title)}</td><td>${esc(r.reason)}</td><td>${esc(fixHint(r))}</td></tr>`).join("")}</table>` : "<p>없음</p>"}

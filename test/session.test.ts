@@ -225,13 +225,14 @@ test("e2e_status: 세션이 없으면 세션 시작을, 근거가 없으면 최�
 
 // ---------- 스킬 설치 ----------
 
-test("SKILL.md 가 있고 이름·설명 머리말과 동작 흐름 9단계, 금지 사항을 담는다", () => {
+test("SKILL.md 가 있고(영어) 이름·설명 머리말과 동작 흐름 9단계, 금지 사항을 담는다", () => {
   const text = readFileSync(join(skillSource(), "SKILL.md"), "utf8");
   expect(text).toMatch(/^---\nname: e2e-loop\ndescription: .+\n---/);
   for (let i = 1; i <= 9; i++) expect(text).toContain(`### ${i}. `);
-  expect(text).toContain("코드를 수정하지 않는다");
-  expect(text).toContain("다음 라운드");
-  for (const t of ["e2e_status", "e2e_session_start", "e2e_intake", "e2e_analyze", "e2e_os_check", "e2e_sheet", "e2e_round_start", "e2e_complete_check", "e2e_feedback"]) expect(text).toContain(t);
+  expect(text).toContain("Do not edit code");
+  expect(text).toContain("from the next round");
+  expect(text).toContain("in the language the user writes in");
+  for (const t of ["e2e_status", "e2e_session_start", "e2e_intake", "e2e_analyze", "e2e_os_check", "e2e_sheet", "e2e_prestart", "e2e_account", "e2e_round_start", "e2e_complete_check", "e2e_feedback"]) expect(text).toContain(t);
 });
 
 test("스킬을 Claude(~/.claude/skills)와 Codex(~/.agents/skills)에 링크하고, 두 번째는 이미 있음", () => {

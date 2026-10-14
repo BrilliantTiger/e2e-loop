@@ -21,8 +21,8 @@ beforeAll(async () => {
   await Bun.sleep(800);
   p = new Project(root);
   p.ensure();
-  const cfg = p.config();
-  p.saveConfig({ ...cfg, baseUrl: `http://127.0.0.1:${port}`, driver: "chromium", headless: true, data: { ...cfg.data, policy: "keep" }, dashboardPort: 7791 });
+  A.aPrestart({ project: root, dataPolicy: "keep", maxRounds: 10, login: "none", account: { mode: "none" }, acknowledged: true });
+  p.saveConfig({ ...p.config(), baseUrl: `http://127.0.0.1:${port}`, driver: "chromium", headless: true, dashboardPort: 7791 });
 });
 afterAll(() => server?.kill());
 
@@ -48,7 +48,6 @@ test("웹 주소 + 코드를 근거로 받고, 사이트를 탐색하면 다운�
   expect(ev("download").map((c) => c.title).join("|")).toContain("다운로드 링크 “보고서 내려받기”");
   expect(ev("download").some((c) => c.steps.some((s) => s.soft))).toBe(true); // “내보내기” 버튼은 추정이라 약하게 점검
   expect(ev("upload").length).toBe(1);
-  expect(ev("upload")[0]!.needs_os).toBe(true);
   expect(ev("api").some((c) => c.title.includes("GET /api/items"))).toBe(true);
   expect(cs.every((c) => c.screen && c.feature)).toBe(true); // 모든 케이스가 화면·기능 단위를 가진다
 }, 120000);
@@ -104,9 +103,11 @@ test("다운로드한 파일이 비어 있으면 실패하고, 이유가 적힌�
 }, 120000);
 
 test("OS 창을 스킵하기로 하면 해당 케이스는 SKIP 으로 기록된다(이슈 아님)", async () => {
-  p.writeJson("os-policy.json", { decision: "skip", driver: "ego", decidedAt: "", by: "user" });
-  expect(applyOsPolicy(p).skipped).toBeGreaterThan(0);
-  const ids = p.cases().filter((c) => c.needs_os).map((c) => c.id);
+  const target = p.cases().find((c) => c.event === "upload")!;
+  p.saveCases(p.cases().map((c) => (c.id === target.id ? { ...c, tags: ["os-window"] } : c)));
+  p.writeJson("os-policy.json", { decision: "skip", decidedAt: "", by: "user" });
+  expect(applyOsPolicy(p).skipped).toBe(1);
+  const ids = [target.id];
   const results = await runPartial(ids);
   expect(results.every((r) => r.status === "SKIP")).toBe(true);
   expect(results[0].reason).toContain("[OS 창]");

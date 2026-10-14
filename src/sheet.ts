@@ -15,7 +15,6 @@ export interface SheetCase {
   source_ref?: string;
   risk?: string;
   status: string;
-  needs_os?: boolean;
   skip?: string;
 }
 
@@ -24,7 +23,7 @@ export interface Sheet {
   caseHash: string;
   baseUrl: string;
   confirmedAt?: string;
-  totals: { screens: number; features: number; cases: number; spec: number; probe: number; blocked: number; na: number; skip: number; needsOs: number };
+  totals: { screens: number; features: number; cases: number; spec: number; probe: number; blocked: number; na: number; skip: number; osWindow: number };
   screens: { screen: string; features: { feature: string; cases: SheetCase[] }[] }[];
   sources: { id: string; kind: string; title: string; location: string }[];
   gaps: {
@@ -59,7 +58,7 @@ export function buildSheet(p: Project): Sheet {
     const ft = featureOf(c);
     const f = byScreen.get(sc) ?? new Map<string, SheetCase[]>();
     const list = f.get(ft) ?? [];
-    list.push({ id: c.id, title: c.title, type: c.type, event: c.event, source_ref: c.source_ref, risk: c.risk, status: c.status ?? "active", needs_os: c.needs_os, skip: c.skipReason });
+    list.push({ id: c.id, title: c.title, type: c.type, event: c.event, source_ref: c.source_ref, risk: c.risk, status: c.status ?? "active", skip: c.skipReason });
     f.set(ft, list);
     byScreen.set(sc, f);
   }
@@ -92,7 +91,7 @@ export function buildSheet(p: Project): Sheet {
       blocked: cases.filter((c) => c.status === "blocked").length,
       na: cases.filter((c) => c.status === "na").length,
       skip: cases.filter((c) => c.skipReason).length,
-      needsOs: cases.filter((c) => c.needs_os).length,
+      osWindow: cases.filter((c) => (c.tags ?? []).includes("os-window")).length,
     },
     screens,
     sources: p.sources().map((s) => ({ id: s.id, kind: s.kind, title: s.title, location: s.location })),

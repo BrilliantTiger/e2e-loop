@@ -10,6 +10,9 @@ import { reconcile } from "./analysis/reconcile.ts";
 import { regenerateProbes } from "./analysis/cases.ts";
 import { osCheck, osPending } from "./analysis/os.ts";
 import { aSheet as buildAndWriteSheet } from "./sheet.ts";
+import { aAccount as accountAction, aPrestart as prestartAction, prestartStatus, readAccounts, type PrestartAnswers } from "./prestart.ts";
+import { evidenceUsage, pruneEvidence } from "./evidence.ts";
+import { repeatedIssues } from "./round.ts";
 import { coverage } from "./coverage.ts";
 import { precheck, runningRound, startRound, stopRound, type StartOpts } from "./round.ts";
 import { completeCheck } from "./gate.ts";
@@ -46,7 +49,7 @@ export async function aInit(a: {
   project?: string; baseUrl?: string; driver?: DriverName; headless?: boolean; dataPolicy?: "ask" | "reset" | "keep";
   resetCommand?: string; resetCwd?: string; resetScope?: "round" | "case"; codeRoot?: string;
   authLocalStorage?: Record<string, string>; authSetupSteps?: Step[]; destructivePattern?: string; acceptedSkips?: string[];
-  crawl?: Partial<Config["crawl"]>; probes?: "auto" | "off"; dashboardPort?: number; viewport?: { width: number; height: number };
+  crawl?: Partial<Config["crawl"]>; probes?: "auto" | "off"; dashboardPort?: number; viewport?: { width: number; height: number }; evidenceLimitMB?: number;
 }) {
   const p = proj(a.project);
   const first = !p.initialized;
@@ -67,6 +70,7 @@ export async function aInit(a: {
   if (a.probes) c.probes = a.probes;
   if (a.dashboardPort) c.dashboardPort = a.dashboardPort;
   if (a.viewport) c.viewport = a.viewport;
+  if (a.evidenceLimitMB) c.evidenceLimitMB = a.evidenceLimitMB;
   p.ensure();
   p.saveConfig(c);
   const d = await doctor();
@@ -108,7 +112,7 @@ export async function aDiscover(a: { project?: string; seeds?: string[]; maxPage
       uploads: inv.elements.filter((e) => e.kind === "file").length,
       apis_observed: (inv.apis ?? []).map((x) => `${x.method} ${x.path} → ${x.status}${x.jsonKeys?.length ? ` {${x.jsonKeys.slice(0, 4).join(",")}}` : ""}`),
     },
-    risky: { destructive: risky.filter((e) => e.risk === "destructive").map((e) => `${e.page} “${e.label}”`), mutating: risky.filter((e) => e.risk === "mutating").length },
+    risky: { destructive: risky.filter((e) => ["logout", "delete", "destructive"].includes(e.risk)).map((e) => `${e.page} “${e.label}” (${e.risk === "logout" ? "로그아웃: 테스트 후 다시 로그인" : e.risk === "delete" ? "삭제: 테스터가 등록한 데이터만" : "그 밖의 파괴적 동작: 스킵"})`), mutating: risky.filter((e) => e.risk === "mutating").length },
     probe_cases: { added: merged.added, removed: merged.removed, specKept: merged.kept, total: merged.total },
     code_cross_check: rec.routes.length ? rec.summary : undefined,
     skipped: inv.skipped.slice(0, 10),
@@ -154,7 +158,28 @@ export async function aAnalyze(a: { project?: string; codeRoot?: string; redisco
   };
 }
 
-export async function aOsCheck(a: { project?: string; driver?: DriverName; decision?: "allow" | "skip" }) {
+export const aPrestart = (a: PrestartAnswers & { project?: string }) => prestartAction(proj(a.project), a);
+export const aAccount = (a: Parameters<typeof accountAction>[1] & { project?: string }) => accountAction(proj(a.project), a);
+
+export function aPromoteWarning(a: { project?: string; match: string; case?: string; note?: string; remove?: boolean }) {
+  const p = proj(a.project);
+  const cfg = p.config();
+  if (a.remove) cfg.promotedWarnings = cfg.promotedWarnings.filter((x) => !(x.match === a.match && x.case === a.case));
+  else if (!cfg.promotedWarnings.some((x) => x.match === a.match && x.case === a.case)) cfg.promotedWarnings.push({ match: a.match, case: a.case, note: a.note });
+  p.saveConfig(cfg);
+  return { promotedWarnings: cfg.promotedWarnings, message: "다음 라운드부터 이 경고가 나오면 그 케이스는 실패(이슈)로 봅니다." };
+}
+
+export function aEvidence(a: { project?: string; action?: "usage" | "prune"; keepLast?: number }) {
+  const p = proj(a.project);
+  if (a.action === "prune") {
+    if (a.keepLast === undefined) throw new Error("prune 하려면 keepLast(남길 최근 회차 수)가 필요합니다.");
+    return { ...pruneEvidence(p, a.keepLast), usage: evidenceUsage(p) };
+  }
+  return evidenceUsage(p);
+}
+
+export async function aOsCheck(a: { project?: string; decision?: "allow" | "skip" }) {
   return osCheck(proj(a.project), a);
 }
 
@@ -210,14 +235,15 @@ export async function aRoundStart(a: StartOpts & { project?: string; open?: bool
   const p = proj(a.project);
   const pre = precheck(p, a);
   if (!pre.ok) return pre.decision ? pre.decision : { error: pre.error };
-  const os = await osPending(p, a.driver);
+  const os = await osPending(p);
   if (os.pending)
     return {
       needs_decision: true,
-      question: `${os.driver} 로는 다운로드·파일 선택 케이스 ${os.count}건이 브라우저 밖 OS 창을 거칩니다. 먼저 e2e_os_check 로 컴퓨터 제어 도구를 점검하고, 동작하지 않으면 사용자에게 허용/스킵을 물어 결정하세요.`,
+      question: `브라우저 밖 OS 창을 거치는 케이스 ${os.count}건이 있습니다. 먼저 e2e_os_check 로 컴퓨터 제어 도구를 점검하고, 동작하지 않으면 사용자에게 허용/스킵을 물어 결정하세요.`,
       options: [{ value: "e2e_os_check", meaning: "점검 후 필요하면 허용/스킵을 사용자에게 묻는다" }],
     };
   const dash = ensureDashboard(p);
+  const usage = evidenceUsage(p);
   const { id, done } = await startRound(p, a);
   liveRounds.set(p.root + id, done.catch(() => {}));
   if (a.open) Bun.spawn(["open", dash.url], { stdout: "ignore", stderr: "ignore" });
@@ -226,6 +252,7 @@ export async function aRoundStart(a: StartOpts & { project?: string; open?: bool
     round: id, started: true, scope: m.scope, cases: m.caseCount, driver: m.driver, data: m.data.decision,
     dashboard: dash.url,
     pending_feedback: m.pendingFeedback ?? [],
+    evidence_usage: usage.level === "warn" ? { ...usage, warn: `증거 보관 용량이 상한의 ${usage.percent}% 입니다. 상한에 닿기 전에 사용자에게 알리고 정리(e2e_evidence prune)나 상한 조정을 정하세요.` } : undefined,
     message: `${id} 시작. 진행은 e2e_round_status 로 확인(실시간 화면: ${dash.url}). 회차가 끝나기 전에는 앱 코드·테스트 케이스를 고치지 마세요 — 사용자 요청은 e2e_feedback 으로 받아 다음 회차에 적용합니다.`,
   };
 }
@@ -253,7 +280,7 @@ export async function aRoundStatus(a: { project?: string; wait_seconds?: number 
     failing_so_far: results.filter((r) => r.status === "FAIL").slice(0, 8).map((r) => `${r.id}: ${String(r.reason).slice(0, 100)}`),
     last_events: events.map((e) => `${e.type}${e.case ? " " + e.case : ""}${e.status ? " " + e.status : ""}`),
     dashboard: dashboards.get(p.root)?.url,
-    tainted: cur.tainted, error: cur.error,
+    error: cur.error,
     next: run ? "진행 중 — 회차가 끝날 때까지 코드/케이스 수정 금지" : "끝났습니다 → e2e_round_report 로 결과 확인",
   };
 }
@@ -276,7 +303,12 @@ export function aRoundReport(a: { project?: string; round?: string; format?: "md
   return { round: r.id, markdown: readFileSync(paths.md, "utf8"), human_report: paths.html };
 }
 
-export const aCompleteCheck = (a: { project?: string }) => completeCheck(proj(a.project));
+export function aCompleteCheck(a: { project?: string }) {
+  const p = proj(a.project);
+  const g = completeCheck(p);
+  const pending = readAccounts(p).filter((x) => !x.deletedAt);
+  return pending.length ? { ...g, cleanup_pending: pending.map((x) => ({ id: x.id, username: x.username })), cleanup_next: "테스트 계정이 남아 있습니다. 종료하기 전에 e2e_account action=cleanup 으로 지우세요." } : g;
+}
 
 export const aFeedback = (a: { project?: string; text: string; apply?: "next" | "now"; mode?: "restart" | "in-flow"; cases?: Case[] }) => addFeedback(proj(a.project), a);
 export const aFeedbackResolve = (a: { project?: string; ids: string[]; note?: string }) => ({ resolved: resolveFeedback(proj(a.project), a.ids, a.note).map((f) => f.id) });
@@ -318,6 +350,10 @@ export function aStatus(a: { project?: string }) {
     cases: { total: cases.length, spec: cases.filter((c) => c.type === "spec").length, probe: cases.filter((c) => c.type === "probe").length },
     rounds: rounds.length, running: run?.id ?? null, trend: trend(p).map((t) => `${t.round}:${t.issues}`).join(" → "),
     pending_feedback: pending.map((f) => `${f.id} (${f.appliesFrom}부터) ${f.text.slice(0, 60)}`),
+    prestart: { ready: prestartStatus(p).ready, open_questions: prestartStatus(p).questions.map((q) => q.id) },
+    repeated_issues: repeatedIssues(p),
+    evidence: (() => { const u = evidenceUsage(p); return `${u.usedMB}MB / ${u.limitMB}MB (${u.percent}%)`; })(),
+    test_accounts_pending: readAccounts(p).filter((x) => !x.deletedAt).length,
     complete: gate.complete, next,
   };
 }

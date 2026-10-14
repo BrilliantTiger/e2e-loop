@@ -11,8 +11,13 @@ import { closeModal, observe, sleep } from "./probes.ts";
 const h6 = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 6);
 
 function riskOf(cfg: Config, e: { label: string; href?: string; submit?: boolean; kind: string }): Risk {
-  const re = new RegExp(cfg.destructivePattern, "i");
-  if (re.test(e.label) || (e.href && re.test(e.href))) return "destructive";
+  const hit = (pattern: string) => {
+    const re = new RegExp(pattern, "i");
+    return re.test(e.label) || (!!e.href && re.test(e.href));
+  };
+  if (hit(cfg.logoutPattern)) return "logout";
+  if (hit(cfg.deletePattern)) return "delete";
+  if (hit(cfg.destructivePattern)) return "destructive";
   if (e.submit) return "mutating";
   return "safe";
 }
@@ -185,19 +190,19 @@ export function probeCases(cfg: Config, inv: Inventory): Case[] {
     let kind: string | null = null;
     let title = "";
     let extra: Partial<Case> = {};
-    if (e.kind === "link" && e.download) {
+    if ((e.risk === "logout" || e.risk === "delete") && (e.kind === "button" || e.kind === "link") && !(e as any).submit) {
+      kind = e.risk;
+      title = e.risk === "logout" ? `로그아웃 “${label}” → 동작 확인 후 다시 로그인` : `삭제 “${label}” → 테스터가 등록한 데이터만`;
+    } else if (e.kind === "link" && e.download) {
       kind = "download";
       title = `다운로드 링크 “${label}”`;
-      extra = { needs_os: true };
     } else if (e.kind === "file") {
       kind = "upload";
       title = `파일 올리기 “${label}”`;
-      extra = { needs_os: true };
     } else if (e.kind === "button" && !(e as any).submit && DOWNLOAD_LABEL.test(e.label)) {
       kind = "download";
       title = `버튼 “${label}” → 다운로드 확인`;
       (common as any).soft = true;
-      extra = { needs_os: true };
     } else if (e.kind === "link") {
       if (e.external) {
         kind = "nav";
@@ -247,8 +252,7 @@ export function probeCases(cfg: Config, inv: Inventory): Case[] {
       cases.push({ id: fid + "-empty", type: "probe", event: "form-empty", element: submit.id, area: first.page, risk: "safe", screen: first.page, feature: `폼 “${submit.label.slice(0, 30)}”`, title: `폼 “${submit.label}” 필수값 비우고 제출 → 검증`, steps: [...pf, { op: "probe", kind: "form-empty", sel: submit.selector, label: submit.label }] });
     cases.push({
       id: fid + "-valid", type: "probe", event: "form-valid", element: submit.id, area: first.page, screen: first.page, feature: `폼 “${submit.label.slice(0, 30)}”`,
-      risk: riskOf(cfg, submit) === "destructive" ? "destructive" : "mutating",
-      needs_os: fields.some((f) => f.kind === "file") || undefined,
+      risk: ["safe", "mutating"].includes(riskOf(cfg, submit)) ? "mutating" : "destructive",
       title: `폼 “${submit.label}” 유효한 값으로 제출`,
       steps: [...pf, { op: "probe", kind: "form-valid", sel: submit.selector, label: submit.label, fields: fields.map((f) => ({ sel: f.selector, kind: f.kind, inputType: f.inputType, label: f.label, options: f.options, accept: f.attrs?.accept })) }],
     });

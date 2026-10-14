@@ -1,17 +1,34 @@
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { startWindowRecording } from "./egorec.ts";
 import type { Config } from "../types.ts";
 import { expandEnv } from "../store.ts";
-import { OsWindowRequired, type DPage, type Drained, type Driver, type NetEntry, type Session } from "./index.ts";
+import { type DPage, type Drained, type Driver, type NetEntry, type Session } from "./index.ts";
 import { HOOKS, LIB } from "./inpage.ts";
 
 // ego-browser 는 자기 내장 Node 런타임 안에서만 page API 를 쓸 수 있다.
 // 그래서 그 안에 작은 HTTP 서버를 띄우고, 이쪽(bun)에서 JSON 명령을 보낸다.
+export const SPACE_NAME = "e2e-loop";
 const BRIDGE = (port: number) => String.raw`
 const http = await import("node:http");
-const task = await taskSpace("e2e-loop");
+const task = await taskSpace(${JSON.stringify(SPACE_NAME)});
 const page = task.page("p1");
 const call = async (m) => {
   switch (m.op) {
+    case "ping": return "pong";
+    case "upload": await page.setInputFiles(m.sel, [m.path]); return null;
+    case "download": {
+      const wait = page.waitForEvent("download", { timeout: m.timeout }).catch(() => null);
+      await page.click(m.sel, { timeout: m.timeout });
+      const dl = await wait;
+      if (!dl) return null;
+      const fs = await import("node:fs");
+      fs.mkdirSync(m.dir, { recursive: true });
+      const name = dl.suggestedFilename() || "download.bin";
+      const path = m.dir + "/" + name;
+      await dl.saveAs(path);
+      return { filename: name, size: fs.statSync(path).size, path };
+    }
     case "goto": await page.goto(m.url); await page.waitForLoadState("load").catch(() => {}); return null;
     case "reload": await page.reload(); return null;
     case "click": await page.click(m.sel, { timeout: m.timeout, label: m.label }); return null;
@@ -119,11 +136,11 @@ class EgoPage implements DPage {
   async drainNet(): Promise<NetEntry[]> {
     return this.evaluate<NetEntry[]>(`(() => { const h = window.__e2eHooks; const r = h.net.slice(); h.net.length = 0; return r; })()`).catch(() => []);
   }
-  async upload(_sel: string, _filePath: string): Promise<void> {
-    throw new OsWindowRequired("Ego 의 파일 선택 창은 브라우저 밖 OS 창이라 컴퓨터 제어 도구가 맡아야 합니다.");
+  async upload(sel: string, filePath: string): Promise<void> {
+    await this.call({ op: "upload", sel: toEgoSel(sel), path: filePath });
   }
-  async download(_sel: string, _dir: string, _timeoutMs: number): Promise<never> {
-    throw new OsWindowRequired("Ego 의 다운로드는 브라우저 밖 OS 창이라 컴퓨터 제어 도구가 맡아야 합니다.");
+  async download(sel: string, dir: string, timeoutMs: number) {
+    return this.call({ op: "download", sel: toEgoSel(sel), dir, timeout: timeoutMs }, timeoutMs + 20000);
   }
   async drain(): Promise<Drained> {
     const h = await this.evaluate<{ console: string[]; errors: string[]; requests: string[] }>(
@@ -135,7 +152,7 @@ class EgoPage implements DPage {
 
 export class EgoDriver implements Driver {
   name = "ego-browser";
-  capabilities = { video: false, network: true, files: false };
+  capabilities = { video: true, network: true, files: true };
   private proc?: ReturnType<typeof Bun.spawn>;
   private port = 0;
   constructor(private cfg: Config, private bin: string) {}
@@ -150,22 +167,33 @@ export class EgoDriver implements Driver {
     this.port = probe.port!;
     probe.stop(true);
     this.proc = Bun.spawn([this.bin, "nodejs", "-e", BRIDGE(this.port)], { stdout: "pipe", stderr: "pipe" });
-    const reader = (this.proc.stdout as ReadableStream<Uint8Array>).getReader();
-    const dec = new TextDecoder();
+    // 내장 Node 런타임은 console.log 를 stderr 로 내보내기도 한다 — 두 스트림을 함께 읽는다
     let buf = "";
+    const dec = new TextDecoder();
+    const pump = async (s: ReadableStream<Uint8Array>) => {
+      const reader = s.getReader();
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value);
+        }
+      } catch {}
+    };
+    void pump(this.proc.stdout as ReadableStream<Uint8Array>);
+    void pump(this.proc.stderr as ReadableStream<Uint8Array>);
     const deadline = Date.now() + 30000;
+    // 내장 런타임은 출력을 프로세스가 끝날 때까지 쌓아 두기도 해서, 출력 대신 포트에 직접 물어본다
     while (Date.now() < deadline) {
-      const { value, done } = await Promise.race([
-        reader.read(),
-        new Promise<{ value?: Uint8Array; done: boolean }>((r) => setTimeout(() => r({ done: false }), 1000)),
-      ]);
-      if (value) buf += dec.decode(value);
-      if (buf.includes("E2E_READY")) return;
-      if (done) break;
+      try {
+        const r = await fetch(`http://127.0.0.1:${this.port}`, { method: "POST", body: JSON.stringify({ op: "ping" }), signal: AbortSignal.timeout(1500) });
+        if ((await r.json()).ok) return;
+      } catch {}
+      if (this.proc.exitCode !== null) break;
+      await new Promise((r) => setTimeout(r, 300));
     }
-    const err = this.proc.stderr ? await new Response(this.proc.stderr as ReadableStream).text().catch(() => "") : "";
     this.proc.kill();
-    throw new Error("ego-browser 브리지가 시작되지 않았습니다. ego lite 앱이 실행 중인지 확인하세요. " + err.slice(0, 300));
+    throw new Error("ego-browser 브리지가 시작되지 않았습니다. ego lite 앱이 실행 중인지 확인하세요. " + buf.slice(-300));
   }
   async newSession(evidenceDir: string): Promise<Session> {
     mkdirSync(evidenceDir, { recursive: true });
@@ -175,9 +203,14 @@ export class EgoDriver implements Driver {
     const kv = Object.fromEntries(Object.entries(this.cfg.auth?.localStorage ?? {}).map(([k, v]) => [k, expandEnv(v)]));
     await page.evaluate(`(() => { try { localStorage.clear(); sessionStorage.clear(); const kv = ${JSON.stringify(kv)}; for (const k of Object.keys(kv)) localStorage.setItem(k, kv[k]); } catch (e) {} return true; })()`);
     await page.drain();
+    // 창 하나만 녹화한다(macOS). 못 하면 이유를 남기고 스크린샷으로만 증거를 남긴다.
+    const rec = await startWindowRecording(join(evidenceDir, "video.mov"), SPACE_NAME);
     return {
       page,
-      finish: async () => ({}),
+      finish: async () => {
+        if ("warn" in rec) return { warn: rec.warn };
+        return rec.stop();
+      },
     };
   }
   async close() {

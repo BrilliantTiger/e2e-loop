@@ -2,7 +2,8 @@
 export type Step = { op: string; [k: string]: any };
 
 export type CaseStatus = "active" | "blocked" | "na";
-export type Risk = "safe" | "mutating" | "destructive";
+/** logout=로그아웃(테스트하고 다시 로그인), delete=삭제(테스터가 등록한 데이터만), destructive=그 밖의 파괴적 동작(스킵) */
+export type Risk = "safe" | "mutating" | "logout" | "delete" | "destructive";
 
 export interface Case {
   id: string;
@@ -20,12 +21,11 @@ export interface Case {
   status?: CaseStatus;
   reason?: string;
   steps: Step[];
+  /** 예약된 태그: allow-errors(오류 응답 허용), os-window(브라우저 밖 OS 창을 거침 — 컴퓨터 제어 도구가 맡음) */
   tags?: string[];
   /** 시트의 묶음: 화면 → 기능 단위 → 케이스 */
   screen?: string;
   feature?: string;
-  /** 브라우저 밖 OS 창(다운로드·파일 선택)이 필요한 케이스 — 컴퓨터 제어 도구가 맡는다 */
-  needs_os?: boolean;
   /** 규칙이나 사용자 선택으로 일부러 돌리지 않는 케이스(결과는 SKIP) */
   skipReason?: string;
 }
@@ -62,8 +62,18 @@ export interface Config {
     reveal: boolean; // 버튼을 눌러 모달/패널을 열어 안쪽 요소까지 수집
     maxRevealPerPage: number;
   };
-  /** 파괴적 동작으로 분류할 텍스트(정규식 문자열, 대소문자 무시) */
+  /** 로그아웃으로 분류할 텍스트(정규식 문자열, 대소문자 무시) */
+  logoutPattern: string;
+  /** 삭제로 분류할 텍스트 */
+  deletePattern: string;
+  /** 그 밖의 파괴적 동작으로 분류할 텍스트 */
   destructivePattern: string;
+  /** 라운드 상한(전체 라운드 기준). 기본 10 */
+  maxRounds: number;
+  /** 증거(영상·스크린샷) 보관 용량 상한(MB). 넘기 전에 알린다 */
+  evidenceLimitMB: number;
+  /** 사용자가 이슈로 승격한 경고: 경고 문구에 match(부분 문자열)가 들어 있으면 그 케이스를 실패로 본다. case 가 있으면 그 케이스에만 */
+  promotedWarnings: { match: string; case?: string; note?: string }[];
   /** 사람이 근거를 대고 "검증 못 해도 완료로 봄"으로 받아들인 케이스 id */
   acceptedSkips: string[];
   dashboardPort: number;
@@ -129,7 +139,7 @@ export interface ObservedApi {
   count: number;
 }
 
-export type Verdict = "PASS" | "FAIL" | "BLOCKED" | "NA" | "SKIP";
+export type Verdict = "PASS" | "FAIL" | "FLAKY" | "BLOCKED" | "NA" | "SKIP";
 
 export interface StepResult {
   i: number;
@@ -139,6 +149,8 @@ export interface StepResult {
   ms: number;
   error?: string;
   shot?: string; // evidence 상대 경로
+  /** 케이스 시작(세션 시작)으로부터 이 스텝이 시작된 시각(ms) — 영상 챕터에 쓴다 */
+  at?: number;
   /** api 스텝이면 요청·응답(AI용 시트에 쓴다) */
   api?: { method: string; url: string; status?: number; requestBody?: string; responseBody?: string; via: "server" | "page" };
 }
@@ -159,7 +171,15 @@ export interface CaseResult {
   pageErrors: string[];
   failedRequests: string[];
   video?: string;
+  /** 영상의 챕터 파일(스텝별 시각) */
+  chapters?: string;
   trace?: string;
+  /** 불안정 판정을 위해 다시 돌린 결과: 재시도 횟수와 통과·실패 수 */
+  retries?: { n: number; pass: number; fail: number; reasons: string[] };
+  /** 사용자가 이슈로 승격한 경고 때문에 실패로 바뀐 것 */
+  promoted?: boolean;
+  /** 증거 파일의 기록(커밋·시각·케이스 id·해시) */
+  evidence?: { file: string; sha256: string; rawSha256?: string }[];
   durationMs: number;
   startedAt: string;
   priority?: "P1" | "P2" | "P3";
@@ -179,7 +199,6 @@ export interface RoundMeta {
   caseHash: string;
   caseCount: number;
   code: { head?: string; dirtyHash?: string };
-  tainted?: string;
   /** 이 회차를 시작할 때 아직 반영되지 않은 사용자 요청 */
   pendingFeedback?: { id: string; text: string }[];
   /** 회차 도중 '지금 흐름에서 적용'으로 끼워 넣은 케이스 */
@@ -187,6 +206,8 @@ export interface RoundMeta {
   baseUrl: string;
   summary?: Record<Verdict, number> & { total: number };
   error?: string;
+  /** 영상 변환 실패·ffmpeg 없음 같은 증거 관련 경고 */
+  evidenceWarnings?: string[];
 }
 
 export interface Feedback {

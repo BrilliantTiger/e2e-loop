@@ -8,6 +8,9 @@ import { runCase } from "./runner.ts";
 import { writeReports } from "./report.ts";
 import { evidenceSources } from "./session.ts";
 import { sheetGate } from "./sheet.ts";
+import { EvidenceKit, evidenceUsage } from "./evidence.ts";
+import { issuesOf } from "./issues.ts";
+import { prestartStatus } from "./prestart.ts";
 
 async function sh(cmd: string, cwd: string, timeoutMs = 600000): Promise<{ code: number; out: string }> {
   const p = Bun.spawn(["/bin/sh", "-lc", cmd], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -34,6 +37,22 @@ export interface StartOpts {
   headless?: boolean;
   only?: string[]; // 케이스 id 목록(부분 실행)
   onlyFailed?: boolean; // 직전 회차에서 FAIL 이었던 것만 다시
+  /** 같은 이슈가 3라운드 연속이라고 사용자에게 올린 뒤, 사용자가 계속하기로 했을 때 */
+  acknowledgeRepeated?: boolean;
+}
+
+/** 화면이 있는 환경인가. Linux 에서 DISPLAY·WAYLAND_DISPLAY 가 없으면 화면이 없다. macOS·Windows 는 있다고 본다. */
+export const displayAvailable = (env: Record<string, string | undefined> = process.env, platform: string = process.platform) => platform !== "linux" || !!(env.DISPLAY || env.WAYLAND_DISPLAY);
+
+const fullRounds = (project: Project) => project.rounds().filter((r) => r.scope === "full" && r.status !== "running");
+
+/** 같은 이슈가 마지막 3개 전체 라운드에서 연속으로 나왔는지 */
+export function repeatedIssues(project: Project): string[] {
+  const last = fullRounds(project).slice(-3);
+  if (last.length < 3) return [];
+  const cfg = project.config();
+  const sets = last.map((r) => new Set(issuesOf(project.readJson<CaseResult[]>(`rounds/${r.id}/results.json`, []), cfg).map((x) => x.id)));
+  return [...sets[0]!].filter((id) => sets[1]!.has(id) && sets[2]!.has(id)).sort();
 }
 
 export interface Decision {
@@ -52,6 +71,27 @@ export function precheck(project: Project, opts: StartOpts): { ok: true; decisio
   if (!cases.length) return { ok: false, error: "실행할 케이스가 없습니다. e2e_discover 로 자동 점검 케이스를 만들거나 e2e_case_upsert 로 기획서의 케이스를 등록하세요." };
   const sg = sheetGate(project);
   if (!sg.ok) return { ok: false, error: sg.error };
+  const ps = prestartStatus(project);
+  const dataOnlyQ = ps.questions.filter((q) => q.id !== "data");
+  if (dataOnlyQ.length)
+    return { ok: false, decision: { needs_decision: true, question: `라운드를 시작하기 전에 사용자에게 물을 것이 남아 있습니다. 한 번에 묻고 e2e_prestart 로 기록하세요: ${dataOnlyQ.map((q) => q.ask).join(" / ")}`, options: [{ value: "e2e_prestart", meaning: "시작 전 질문(데이터 초기화·라운드 상한·로그인·테스트 계정·화면 노출 안내)을 기록한다" }] } };
+  const isFull = !opts.only?.length && !opts.onlyFailed;
+  if (isFull && fullRounds(project).length >= cfg.maxRounds)
+    return { ok: false, decision: { needs_decision: true, question: `라운드 상한 ${cfg.maxRounds}번에 닿았습니다(전체 라운드 ${fullRounds(project).length}번). 사용자에게 올려 더 돌릴지 정하세요.`, options: [{ value: "raise", meaning: "상한을 올린다: e2e_prestart 의 maxRounds 를 더 큰 값으로 기록한 뒤 다시 시작" }, { value: "stop", meaning: "여기서 멈추고 남은 이슈를 사용자에게 보고한다" }] } };
+  const rep = repeatedIssues(project);
+  if (rep.length) {
+    const key = rep.join(",");
+    const ack = project.readJson<{ key?: string }>("escalation.json", {});
+    if (opts.acknowledgeRepeated) project.writeJson("escalation.json", { key, at: nowIso() });
+    else if (ack.key !== key)
+      return { ok: false, decision: { needs_decision: true, question: `같은 이슈가 3라운드 연속 나왔습니다(${rep.slice(0, 8).join(", ")}${rep.length > 8 ? " …" : ""}). 사용자에게 올려 어떻게 할지 정하세요.`, options: [{ value: "continue", meaning: "계속한다: e2e_round_start 를 acknowledge_repeated=true 로 다시 호출" }, { value: "stop", meaning: "멈추고 이 이슈를 개발 쪽에 따로 넘긴다" }, { value: "na", meaning: "기대값이 틀렸다면 e2e_case_set_status 로 해당 없음(na) 처리하고 사유를 적는다" }] } };
+  }
+  const headless = opts.headless ?? cfg.headless;
+  if (!headless && !displayAvailable())
+    return { ok: false, decision: { needs_decision: true, question: "화면이 없는 환경입니다(DISPLAY 없음). 기본인 Headed 로는 돌릴 수 없습니다. 자동으로 바꾸지 않으니 사용자에게 물으세요.", options: [{ value: "headless", meaning: "Headless 로 돌린다: e2e_round_start 를 headless=true 로 다시 호출" }, { value: "display", meaning: "화면을 준비한다(예: xvfb-run 으로 실행, 원격 데스크톱) 후 다시 시작" }] } };
+  const usage = evidenceUsage(project);
+  if (usage.level === "over")
+    return { ok: false, decision: { needs_decision: true, question: `증거(영상·스크린샷) 보관 용량이 상한을 넘었습니다(${usage.usedMB}MB / ${usage.limitMB}MB). 사용자에게 정리할지 상한을 올릴지 물으세요.`, options: [{ value: "prune", meaning: "오래된 회차의 증거만 지운다: e2e_evidence action=prune keepLast=N (결과·보고서는 남음)" }, { value: "raise", meaning: "상한을 올린다: e2e_init 의 evidenceLimitMB" }] } };
   let d = opts.data;
   if (!d && cfg.data.policy !== "ask") d = cfg.data.policy;
   if (!d)
@@ -113,11 +153,14 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
   const rdir = project.roundDir(id);
   mkdirSync(join(rdir, "evidence"), { recursive: true });
   const driver = await resolveDriver(cfg, opts.driver);
+  const codeFp = await codeFingerprint(cfg.codeRoot ?? project.root);
+  const kit = new EvidenceKit({ project, roundId: id, commit: codeFp.head });
+  const createdSet = new Set(project.readJson<string[]>("created.json", []));
   const meta: RoundMeta = {
     id, n, status: "running", startedAt: nowIso(), driver: driver.name, headless: cfg.headless,
     data: { decision: pre.decision, scope: cfg.data.resetScope },
     scope, only: opts.only, caseHash: caseHash(active), caseCount: selected.length,
-    code: await codeFingerprint(cfg.codeRoot ?? project.root), baseUrl: cfg.baseUrl,
+    code: codeFp, baseUrl: cfg.baseUrl,
     pendingFeedback: project.feedback().filter((f) => f.status === "pending").map((f) => ({ id: f.id, text: f.text })),
   };
   project.writeJson(`rounds/${id}/meta.json`, meta);
@@ -169,9 +212,11 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         }
         const c = selected[i]!;
         emit({ type: "case-start", case: c.id, title: c.title, index: i + 1, total: selected.length });
+        const mk = (attempt: number) => runCase({ project, cfg, driver, roundId: id, decision: pre.decision, emit, resetBeforeCase, attempt, kit, created: [...createdSet], onCreated: (v) => createdSet.add(v) }, c);
         let r: CaseResult;
         try {
-          r = await runCase({ project, cfg, driver, roundId: id, decision: pre.decision, emit, resetBeforeCase }, c);
+          r = await mk(0);
+          if (r.status === "FAIL" && !r.promoted) r = await retryFailed(r, mk, emit, c.id);
         } catch (e: any) {
           r = { id: c.id, title: c.title, type: c.type, status: "FAIL", reason: `실행기 오류: ${String(e?.message ?? e).slice(0, 300)}`, warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(), priority: "P1" };
         }
@@ -186,11 +231,18 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
     } finally {
       await driver.close().catch(() => {});
       meta.finishedAt = nowIso();
-      const cnt: Record<string, number> = { PASS: 0, FAIL: 0, BLOCKED: 0, NA: 0, SKIP: 0 };
+      const cnt: Record<string, number> = { PASS: 0, FAIL: 0, FLAKY: 0, BLOCKED: 0, NA: 0, SKIP: 0 };
       for (const r of results) cnt[r.status] = (cnt[r.status] ?? 0) + 1;
       meta.summary = { ...(cnt as Record<Verdict, number>), total: results.length };
-      const after = await codeFingerprint(cfg.codeRoot ?? project.root);
-      if (after.head !== meta.code.head || after.dirtyHash !== meta.code.dirtyHash) meta.tainted = "회차 도중 코드가 바뀜(커밋 또는 작업 트리 변경). 이 회차는 완료 근거로 쓸 수 없음 — 수정은 회차가 끝난 뒤에 하고 새 회차로 다시 돌려야 함";
+      try {
+        await finalizeEvidence(project, id, kit, results);
+        meta.evidenceWarnings = kit.warnings.length ? kit.warnings : undefined;
+        project.writeJson("created.json", [...createdSet].slice(-500));
+      } catch (e: any) {
+        meta.evidenceWarnings = [...kit.warnings, `증거 정리 오류: ${String(e?.message ?? e).slice(0, 200)}`];
+      } finally {
+        await kit.close();
+      }
       project.writeJson(`rounds/${id}/meta.json`, meta);
       rmSync(project.p("running.json"), { force: true });
       try {
@@ -199,7 +251,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         meta.error = (meta.error ?? "") + ` 보고서 생성 오류: ${e?.message}`;
         project.writeJson(`rounds/${id}/meta.json`, meta);
       }
-      emit({ type: "round-end", round: id, status: meta.status, summary: meta.summary, tainted: meta.tainted });
+      emit({ type: "round-end", round: id, status: meta.status, summary: meta.summary });
     }
     return meta;
   })();
@@ -207,6 +259,42 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
 }
 
 const probesOff = (p: string) => p === "off";
+
+/** 실패한 케이스를 3번 다시 돌려 불안정(flaky)인지 가린다: 모두 통과=통과, 일부만=불안정, 모두 실패=실패 */
+async function retryFailed(first: CaseResult, mk: (attempt: number) => Promise<CaseResult>, emit: (ev: Record<string, unknown>) => void, caseId: string): Promise<CaseResult> {
+  const retries = { n: 0, pass: 0, fail: 0, reasons: [] as string[] };
+  let lastPass: CaseResult | undefined;
+  for (let i = 1; i <= 3; i++) {
+    emit({ type: "retry", case: caseId, attempt: i });
+    const rr = await mk(i);
+    retries.n++;
+    if (rr.status === "PASS") {
+      retries.pass++;
+      lastPass = rr;
+    } else {
+      retries.fail++;
+      retries.reasons.push(String(rr.reason ?? rr.status).slice(0, 160));
+    }
+    if (retries.pass > 0 && retries.fail > 0) break; // 일부만 통과 — 불안정으로 확정
+  }
+  if (retries.pass === retries.n && lastPass) return { ...lastPass, retries, warnings: [`첫 시도는 실패(${String(first.reason).slice(0, 100)})했지만 재시도 ${retries.n}번이 모두 통과함`, ...lastPass.warnings] };
+  if (retries.pass > 0) return { ...first, status: "FLAKY", reason: `불안정: 첫 시도 실패 뒤 재시도 ${retries.n}번 중 ${retries.pass}번 통과 — 첫 실패: ${first.reason}`, retries };
+  return { ...first, retries };
+}
+
+/** 회차가 끝난 뒤 영상을 mp4+챕터로 바꾸고 증거 기록(evidence.json)을 쓴다. */
+async function finalizeEvidence(project: Project, roundId: string, kit: EvidenceKit, results: CaseResult[]) {
+  const rdir = project.roundDir(roundId);
+  for (const r of results) {
+    if (!r.video) continue;
+    const out = await kit.processVideo(join(rdir, r.video), r);
+    if (!out) continue;
+    r.video = out.video.slice(rdir.length + 1);
+    if (out.chapters) r.chapters = out.chapters.slice(rdir.length + 1);
+  }
+  project.writeJson(`rounds/${roundId}/results.json`, results);
+  kit.writeManifest();
+}
 
 export function stopRound(project: Project) {
   writeFileSync(project.p("stop"), "1");
