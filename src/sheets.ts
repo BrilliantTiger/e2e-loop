@@ -266,13 +266,14 @@ export function buildTasks(issues: AiIssue[], results: CaseResult[], cases: Case
   return tasks;
 }
 
-export function renderAiMd(meta: RoundMeta, verdict: string, issues: AiIssue[], tasks: DevTask[], extra: { summaryLine: string; trendLine: string; diffLine?: string; skipped: CaseResult[]; warned: CaseResult[]; notes: string[] }): string {
+export function renderAiMd(meta: RoundMeta, verdict: string, issues: AiIssue[], tasks: DevTask[], extra: { applied?: { id: string; text: string; appliesTo: string }[]; summaryLine: string; trendLine: string; diffLine?: string; skipped: CaseResult[]; warned: CaseResult[]; notes: string[] }): string {
   const L: string[] = [];
   L.push(`# AI용 시트 — E2E ${meta.id} · ${verdict}`);
   L.push(`- 범위 ${meta.scope === "full" ? "전체" : "부분"} · 브라우저 ${meta.driver} · 데이터 ${meta.data.decision} · 코드 ${meta.code.head ?? "?"}${meta.code.dirtyHash ? ` (+변경 ${meta.code.dirtyHash})` : ""}`);
   L.push(`- ${extra.summaryLine}`);
   if (extra.diffLine) L.push(`- ${extra.diffLine}`);
   L.push(`- 이슈 추이: ${extra.trendLine}`);
+  if (extra.applied?.length) L.push(`- 이 라운드에 반영한 사용자 요청 ${extra.applied.length}건: ${extra.applied.map((f) => `${f.id} “${clip(f.text, 60)}”${f.appliesTo === "now-in-flow" ? "(도중 적용)" : ""}`).join(" / ")}`);
   for (const w of extra.notes) L.push(`- ⚠ ${w}`);
   if (!issues.length) {
     L.push("", "이슈가 없습니다.", verdict === "PASS" || verdict === "PASS_WITH_SKIPS" ? "→ 전체 라운드였다면 e2e_complete_check 로 완료 판정." : "");
@@ -327,7 +328,7 @@ function loadChapters(rdir: string, r: CaseResult): { title: string; startMs: nu
   }
 }
 
-export function renderHuman(project: Project, meta: RoundMeta, verdict: string, results: CaseResult[], cases: Case[], issues: AiIssue[], tasks: DevTask[], tr: ReturnType<typeof trend>, diff: ReturnType<typeof diffWithPrevious>): string {
+export function renderHuman(project: Project, meta: RoundMeta, verdict: string, applied: { id: string; text: string; appliesTo: string }[], results: CaseResult[], cases: Case[], issues: AiIssue[], tasks: DevTask[], tr: ReturnType<typeof trend>, diff: ReturnType<typeof diffWithPrevious>): string {
   const rdir = project.roundDir(meta.id);
   const cfg = project.config();
   const s = meta.summary!;
@@ -404,7 +405,7 @@ ${meta.error ? `<div class="tw">⚠ ${esc(meta.error)}</div>` : ""}${(meta.evide
 <div class="trend">${tr.map((t) => `<div class="tb"><div class="bar" style="height:${Math.round(6 + (t.issues / maxIssues) * 80)}px;background:${t.issues ? "var(--fail)" : "var(--pass)"}"></div><b>${t.issues}</b><span>${t.round}${t.scope === "partial" ? "·부분" : ""}</span></div>`).join("")}</div>
 <table class="tt"><tr><th>라운드</th><th>이슈</th><th>실패</th><th>불안정</th><th>검증 못 함</th><th>스킵</th><th>통과</th><th>전체</th></tr>${tr.map((t) => `<tr><td>${t.round}${t.scope === "partial" ? " (부분)" : ""}</td><td><b>${t.issues}</b></td><td>${t.fail}</td><td>${t.flaky}</td><td>${t.blocked}</td><td>${t.skip}</td><td>${t.pass}</td><td>${t.total}</td></tr>`).join("")}</table>
 ${diff.prev ? `<h2>이전 라운드(${diff.prev})와 비교</h2><p>고쳐짐: ${list(diff.fixed)}<br>새로 깨짐: ${list(diff.regressed)}<br>계속 실패: ${list(diff.stillFailing)}<br>새 케이스: ${diff.newCases.length}건</p>` : ""}
-${meta.pendingFeedback?.length ? `<div class="tw">이 라운드 시작 때 아직 반영되지 않은 요청 ${meta.pendingFeedback.length}건: ${meta.pendingFeedback.map((f) => esc(f.id + " " + f.text)).join(" / ")}</div>` : ""}${meta.injected?.length ? `<div class="tw">라운드 도중 끼워 넣은 케이스 ${meta.injected.length}건: ${meta.injected.map(esc).join(", ")}</div>` : ""}
+${applied.length ? `<h2>이 라운드에 반영한 사용자 요청 ${applied.length}건</h2><ul>${applied.map((f) => `<li>${esc(f.id)} ${esc(f.text)}${f.appliesTo === "now-in-flow" ? " (라운드 도중에 적용)" : ""}</li>`).join("")}</ul>` : ""}${meta.pendingFeedback?.length ? `<div class="tw">이 라운드 시작 때 아직 반영되지 않은 요청 ${meta.pendingFeedback.length}건: ${meta.pendingFeedback.map((f) => esc(f.id + " " + f.text)).join(" / ")}</div>` : ""}${meta.injected?.length ? `<div class="tw">라운드 도중 끼워 넣은 케이스 ${meta.injected.length}건: ${meta.injected.map(esc).join(", ")}</div>` : ""}
 <h2>이슈 ${issues.length}건</h2>
 ${issues.length ? `<table class="steps"><tr><th>순위</th><th>케이스</th><th>화면 · 기능</th><th>원인</th><th>힌트</th></tr>${issues.map((i) => `<tr><td>${i.priority ?? "-"} ${badge(i.status)}</td><td><b>${esc(i.title)}</b><br><span class="meta">${esc(i.id)}</span></td><td>${esc(i.screen ?? "-")} · ${esc(i.feature ?? "-")}</td><td>${esc(clip(i.actual, 200))}</td><td>${esc(i.hint)}</td></tr>`).join("")}</table>` : "<p>없음</p>"}
 ${tasks.length ? `<h2>개발 작업 단위 <small class="meta">(자세한 내용은 ai-sheet.md)</small></h2>${tasks.map((t) => `<div class="task"><b>${t.id}. ${esc(t.title)}</b>${t.dependsOn.length ? ` · 선행 ${t.dependsOn.join(", ")}` : ""}<br><span class="meta">수용 기준: ${esc(t.acceptance.join(", "))}${t.regressionWatch.length ? ` · 회귀 주의 ${t.regressionWatch.length}건` : ""}</span></div>`).join("")}` : ""}
@@ -431,6 +432,7 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
   const tasks = buildTasks(issues, results, cases, meta);
   const skipped = results.filter((r) => r.status === "SKIP");
   const warned = results.filter((r) => r.status === "PASS" && r.warnings.length);
+  const applied = project.feedback().filter((f) => f.appliesFrom === meta.id && (f.status === "done" || f.appliesTo === "now-in-flow")).map((f) => ({ id: f.id, text: f.text, appliesTo: f.appliesTo }));
   const notes = [...(meta.error ? [meta.error] : []), ...(meta.evidenceWarnings ?? []).map((w) => `증거: ${w}`)];
   if (meta.pendingFeedback?.length) notes.push(`이 라운드 시작 때 아직 반영 안 된 사용자 요청 ${meta.pendingFeedback.length}건: ${meta.pendingFeedback.map((f) => `${f.id} ${f.text.slice(0, 40)}`).join(" / ")}`);
   if (meta.injected?.length) notes.push(`라운드 도중 끼워 넣은 케이스 ${meta.injected.length}건(이 라운드는 완료 근거 아님): ${meta.injected.join(", ")}`);
@@ -441,7 +443,7 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
   const ai = {
     round: meta.id, verdict, scope: meta.scope, driver: meta.driver, data: meta.data, startedAt: meta.startedAt, finishedAt: meta.finishedAt,
     error: meta.error ?? null, code: meta.code, summary: s, issue_count: issueCount, diff, trend: tr,
-    pendingFeedback: meta.pendingFeedback ?? [], injected: meta.injected ?? [],
+    pendingFeedback: meta.pendingFeedback ?? [], injected: meta.injected ?? [], appliedFeedback: applied,
     tasks, issues,
     skipped: skipped.map((r) => ({ id: r.id, title: r.title, reason: r.reason })),
     warnings: warned.map((r) => ({ id: r.id, title: r.title, warnings: r.warnings })),
@@ -450,7 +452,7 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
     acceptedSkips: cfg.acceptedSkips,
   };
   writeFileSync(join(dir, "ai-sheet.json"), JSON.stringify(ai, null, 2));
-  writeFileSync(join(dir, "ai-sheet.md"), renderAiMd(meta, verdict, issues, tasks, { summaryLine, trendLine, diffLine, skipped, warned, notes }));
-  writeFileSync(join(dir, "report.html"), renderHuman(project, meta, verdict, results, cases, issues, tasks, tr, diff));
+  writeFileSync(join(dir, "ai-sheet.md"), renderAiMd(meta, verdict, issues, tasks, { applied, summaryLine, trendLine, diffLine, skipped, warned, notes }));
+  writeFileSync(join(dir, "report.html"), renderHuman(project, meta, verdict, applied, results, cases, issues, tasks, tr, diff));
   return { verdict, files: { human: join(dir, "report.html"), aiMd: join(dir, "ai-sheet.md"), aiJson: join(dir, "ai-sheet.json") } };
 }

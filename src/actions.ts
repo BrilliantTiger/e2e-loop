@@ -350,6 +350,7 @@ export function aStatus(a: { project?: string }) {
   const noSource = p.sources().length === 0;
   let next: string;
   if (!session) next = "e2e_session_start 로 테스터 세션을 정하세요(새 세션 / 여기서)";
+  else if (pending.length && !run) next = `사용자 요청 ${pending.length}건을 먼저 반영하세요(${pending.map((f) => f.id).join(", ")}): 케이스·설정을 고친 뒤 e2e_feedback_resolve 로 표시. 반영 전에는 다음 라운드를 시작할 수 없습니다.`;
   else if (!intakeState.baseUrl || !evidence.length) next = "최소 진행 조건 미충족 — 웹 주소와 근거(기획서·디자인·기능정의서·코드 중 하나 이상)를 사용자에게 받아 e2e_intake 로 등록";
   else if (noSource) next = "근거 자료 등록: 기획서/디자인/기능정의서(e2e_source_add). 없으면 사이트를 live-site 로 등록하고 e2e_discover";
   else if (!cases.length) next = "케이스 만들기: e2e_discover(사이트 전수 탐색) 및/또는 e2e_case_upsert(문서 기반)";

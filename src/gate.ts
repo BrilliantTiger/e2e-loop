@@ -17,6 +17,7 @@ export function completeCheck(project: Project): GateResult {
   if (!last) return { complete: false, reasons: ["끝난 회차가 없음"], next: "e2e_round_start 로 1회차를 시작" };
   if (last.status !== "finished") reasons.push(`${last.id} 회차가 끝까지 돌지 않음(${last.status}${last.error ? ": " + last.error : ""})`);
   if (last.scope !== "full") reasons.push(`${last.id} 회차는 일부 케이스만 실행한 부분 회차. 완료는 전체 회차로만 판정함`);
+  if (last.injected?.length) reasons.push(`${last.id}: “지금 흐름에서 적용”으로 도중에 끼워 넣은 케이스(${last.injected.join(", ")})가 있어 앞서 돈 케이스에는 적용되지 않음 — 새 전체 라운드가 필요`);
   const cfg = project.config();
   const active = project.cases().filter((c) => (c.status ?? "active") === "active");
   if (caseHash(active) !== last.caseHash) reasons.push(`${last.id} 이후 케이스 정의가 바뀜 — 새 전체 회차가 필요`);

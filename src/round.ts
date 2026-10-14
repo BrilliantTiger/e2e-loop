@@ -44,7 +44,8 @@ export interface StartOpts {
 /** 화면이 있는 환경인가. Linux 에서 DISPLAY·WAYLAND_DISPLAY 가 없으면 화면이 없다. macOS·Windows 는 있다고 본다. */
 export const displayAvailable = (env: Record<string, string | undefined> = process.env, platform: string = process.platform) => platform !== "linux" || !!(env.DISPLAY || env.WAYLAND_DISPLAY);
 
-const fullRounds = (project: Project) => project.rounds().filter((r) => r.scope === "full" && r.status !== "running");
+/** 상한·반복 이슈에 세는 라운드: 끝까지 돈 전체 라운드만(중단한 라운드는 세지 않는다) */
+const fullRounds = (project: Project) => project.rounds().filter((r) => r.scope === "full" && r.status === "finished");
 
 /** 같은 이슈가 마지막 3개 전체 라운드에서 연속으로 나왔는지 */
 export function repeatedIssues(project: Project): string[] {
@@ -75,6 +76,10 @@ export function precheck(project: Project, opts: StartOpts): { ok: true; decisio
   const dataOnlyQ = ps.questions.filter((q) => q.id !== "data");
   if (dataOnlyQ.length)
     return { ok: false, decision: { needs_decision: true, question: `라운드를 시작하기 전에 사용자에게 물을 것이 남아 있습니다. 한 번에 묻고 e2e_prestart 로 기록하세요: ${dataOnlyQ.map((q) => q.ask).join(" / ")}`, options: [{ value: "e2e_prestart", meaning: "시작 전 질문(데이터 초기화·라운드 상한·로그인·테스트 계정·화면 노출 안내)을 기록한다" }] } };
+  // 사이에 사용자가 한 말(요청)은 다음 라운드를 시작하기 전에 케이스·설정에 반영하고 done 으로 표시해야 한다
+  const pendingFb = project.feedback().filter((f) => f.status === "pending");
+  if (pendingFb.length)
+    return { ok: false, error: `아직 반영하지 않은 사용자 요청 ${pendingFb.length}건이 있습니다: ${pendingFb.map((f) => `${f.id} “${f.text.slice(0, 50)}”`).join(" / ")}. 요청대로 케이스·설정을 고친 뒤(e2e_case_upsert·e2e_prestart 등) e2e_feedback_resolve 로 표시하고 라운드를 시작하세요. 요청이 E2E 와 무관하거나 바꿀 것이 없으면 그 사유를 note 에 적어 표시하면 됩니다.` };
   const isFull = !opts.only?.length && !opts.onlyFailed;
   if (isFull && fullRounds(project).length >= cfg.maxRounds)
     return { ok: false, decision: { needs_decision: true, question: `라운드 상한 ${cfg.maxRounds}번에 닿았습니다(전체 라운드 ${fullRounds(project).length}번). 사용자에게 올려 더 돌릴지 정하세요.`, options: [{ value: "raise", meaning: "상한을 올린다: e2e_prestart 의 maxRounds 를 더 큰 값으로 기록한 뒤 다시 시작" }, { value: "stop", meaning: "여기서 멈추고 남은 이슈를 사용자에게 보고한다" }] } };
@@ -208,6 +213,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
             meta.injected = [...(meta.injected ?? []), ...fresh.map((a) => a.id)];
             meta.caseCount = selected.length;
             project.writeJson(`rounds/${id}/meta.json`, meta);
+            project.writeJson(`rounds/${id}/cases.json`, selected);
             emit({ type: "inject", ids: fresh.map((a) => a.id), total: selected.length });
           } catch {}
         }
