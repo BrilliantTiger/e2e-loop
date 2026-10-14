@@ -26,11 +26,11 @@ const ok = (c: boolean, m: string) => {
 };
 try {
   console.log("1) 환경 점검");
-  const d = await A.aDoctor({ fix: true });
-  ok(d.playwright.chromium, "playwright chromium 준비됨");
+  const d = await A.aDoctor({ fix: false });
+  ok(d.checks.find((c) => c.id === "playwright-chromium")?.status === "ok", "playwright chromium 준비됨");
 
   console.log("2) 초기화·근거 등록");
-  const init = await A.aInit({ project: root, baseUrl: `http://127.0.0.1:${port}`, driver, dataPolicy: "ask", resetCommand: `curl -s -X POST http://127.0.0.1:${port}/api/reset`, dashboardPort: 7790 });
+  const init = await A.aInit({ project: root, baseUrl: `http://127.0.0.1:${port}`, driver, dataPolicy: "ask", headless: true, resetCommand: `curl -s -X POST http://127.0.0.1:${port}/api/reset`, dashboardPort: 7790 });
   ok(init.ask_user.length > 0, "처음 init 은 사용자에게 물어볼 것을 알려 줌: " + init.ask_user.length + "건");
   let start: any = await A.aRoundStart({ project: root });
   ok(!!start.error, "근거가 없으면 회차 시작 거부: " + start.error?.slice(0, 40));

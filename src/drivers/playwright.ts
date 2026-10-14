@@ -81,13 +81,13 @@ export class PwDriver implements Driver {
   name: string;
   capabilities = { video: true, network: true };
   private browser?: Browser;
-  constructor(private cfg: Config, private pick: "chrome" | "chromium") {
-    this.name = pick === "chrome" ? "playwright+chrome" : "playwright+chromium";
+  constructor(private cfg: Config, private pick: "chrome" | "edge" | "chromium") {
+    this.name = `playwright+${pick}`;
   }
   async open() {
     this.browser = await chromium.launch({
       headless: this.cfg.headless,
-      channel: this.pick === "chrome" ? "chrome" : undefined,
+      channel: this.pick === "chrome" ? "chrome" : this.pick === "edge" ? "msedge" : undefined,
     });
   }
   async newSession(evidenceDir: string): Promise<Session> {

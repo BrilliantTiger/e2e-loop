@@ -23,16 +23,16 @@ const caseShape = z.object({
 }).passthrough();
 
 server.registerTool("e2e_doctor", {
-  title: "환경 점검·자동 설치",
-  description: "E2E 에 필요한 도구(bun·playwright chromium·Chrome·ego-browser)를 점검한다. fix=true 면 빠진 playwright chromium 을 자동 설치한다. ego-browser 는 GUI 온보딩이 필요해 설치 방법만 안내한다. 사용 가능한 브라우저 선택지(driver_choices)도 돌려준다.",
-  inputSchema: { fix: z.boolean().optional() },
+  title: "환경 점검·설치·등록",
+  description: "E2E 에 필요한 도구를 점검한다(bun·Playwright 브라우저·Chrome·Edge·Ego·ffmpeg·git·Orca·macOS 권한). fix=true 면 빠진 Playwright 브라우저를 자동 설치하고 e2e-loop MCP 를 설치된 모든 클라이언트(Claude·Codex 등)에 등록한다. ffmpeg 처럼 설치 전에 사용자에게 물어야 하는 것은 needs_confirmation 으로 돌려주니, 사용자가 승인하면 confirm=['ffmpeg'] 로 다시 호출한다. Ego 설치·OS 권한 허용은 manual 로 안내만 한다. dryRun=true 면 실행하지 않고 할 일만 보여 준다.",
+  inputSchema: { fix: z.boolean().optional(), confirm: z.array(z.string()).optional().describe("사용자가 설치를 승인한 항목 id"), dryRun: z.boolean().optional() },
 }, wrap(A.aDoctor));
 
 server.registerTool("e2e_init", {
   title: "프로젝트 E2E 설정",
   description: "대상 프로젝트에 .e2e/ 설정을 만들거나 갱신한다. 처음 호출하면 ask_user 에 사용자에게 물어봐야 할 것(브라우저 선택·데이터 정책·근거 자료)이 나온다. 브라우저: auto(ego 있으면 ego → Chrome → chromium) / ego / chrome / chromium. 데이터 정책: ask(회차마다 묻기) / reset / keep.",
   inputSchema: {
-    project, baseUrl: z.string().optional(), driver: z.enum(["auto", "ego", "chrome", "chromium"]).optional(), headless: z.boolean().optional(),
+    project, baseUrl: z.string().optional(), driver: z.enum(["auto", "ego", "chrome", "edge", "chromium"]).optional(), headless: z.boolean().optional(),
     dataPolicy: z.enum(["ask", "reset", "keep"]).optional(), resetCommand: z.string().optional().describe("데이터 초기화 셸 명령. 빈 문자열이면 제거"),
     resetCwd: z.string().optional(), resetScope: z.enum(["round", "case"]).optional(), codeRoot: z.string().optional().describe("회차 도중 코드 변경 감지용 git 저장소 경로(기본: 프로젝트 루트)"),
     authLocalStorage: z.record(z.string(), z.string()).optional().describe("로그인 토큰 등 미리 심을 localStorage. 값에 ${ENV} 사용 가능"),
@@ -52,7 +52,7 @@ server.registerTool("e2e_source_add", {
 server.registerTool("e2e_discover", {
   title: "사이트 전수 탐색",
   description: "개발된 사이트를 돌며 링크·버튼·입력·선택·토글·탭·폼·모달(눌러서 열어 안쪽 요소까지)을 모두 수집하고, 요소마다 자동 점검 케이스(probe)를 만든다. 삭제·로그아웃 같은 파괴적 요소는 눌러 보지 않고 표시만 한다. 기획서 기반 spec 케이스는 건드리지 않는다.",
-  inputSchema: { project, seeds: z.array(z.string()).optional(), maxPages: z.number().optional(), reveal: z.boolean().optional(), driver: z.enum(["auto", "ego", "chrome", "chromium"]).optional() },
+  inputSchema: { project, seeds: z.array(z.string()).optional(), maxPages: z.number().optional(), reveal: z.boolean().optional(), driver: z.enum(["auto", "ego", "chrome", "edge", "chromium"]).optional() },
 }, wrap(A.aDiscover));
 
 server.registerTool("e2e_case_upsert", {
@@ -82,7 +82,7 @@ server.registerTool("e2e_coverage", {
 server.registerTool("e2e_round_start", {
   title: "회차 시작",
   description: "전체 케이스를 처음부터 한 회차 실행한다(백그라운드). 시작 전에 데이터를 초기화할지 그대로 갈지 반드시 사용자에게 확인해야 한다 — data 를 주지 않고 정책이 ask 면 질문 선택지(needs_decision)가 돌아온다. data: reset(초기화 후 시작, 파괴적 동작도 점검) / keep(그대로, 파괴적 동작은 SKIP) / manual-reset-done(사용자가 직접 초기화 완료). 실시간 대시보드 주소가 함께 돌아온다. 회차가 도는 동안에는 코드·케이스를 고치지 않는다.",
-  inputSchema: { project, data: z.enum(["reset", "keep", "manual-reset-done"]).optional(), driver: z.enum(["auto", "ego", "chrome", "chromium"]).optional(), headless: z.boolean().optional(), only: z.array(z.string()).optional().describe("지정한 케이스만(부분 회차 — 완료 판정에는 쓸 수 없음)"), onlyFailed: z.boolean().optional().describe("직전 회차 실패 케이스만 다시(부분 회차)"), open: z.boolean().optional().describe("대시보드를 브라우저로 열기") },
+  inputSchema: { project, data: z.enum(["reset", "keep", "manual-reset-done"]).optional(), driver: z.enum(["auto", "ego", "chrome", "edge", "chromium"]).optional(), headless: z.boolean().optional(), only: z.array(z.string()).optional().describe("지정한 케이스만(부분 회차 — 완료 판정에는 쓸 수 없음)"), onlyFailed: z.boolean().optional().describe("직전 회차 실패 케이스만 다시(부분 회차)"), open: z.boolean().optional().describe("대시보드를 브라우저로 열기") },
 }, wrap(A.aRoundStart as any));
 
 server.registerTool("e2e_round_status", {

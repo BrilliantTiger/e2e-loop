@@ -27,7 +27,8 @@ const project = flags.project;
 const print = (v: unknown) => console.log(typeof v === "string" ? v : JSON.stringify(v, null, 2));
 
 const HELP = `e2e-loop — 웹 E2E 회차 루프
-  doctor [--fix]                         환경 점검(--fix: 빠진 도구 설치)
+  doctor [--fix] [--confirm ffmpeg] [--dry-run]   환경 점검(--fix: 자동 설치+MCP 등록, --confirm: 승인한 설치)
+  setup [--confirm ffmpeg] [--dry-run]   doctor --fix 와 같음
   init --baseUrl URL [--driver ego|chrome|chromium|auto] [--dataPolicy ask|reset|keep] [--resetCommand CMD]
   source --kind plan|design|feature-spec|live-site --title T --location L [--sections '["3.1","3.2"]']
   discover                               사이트 전수 탐색 + 자동 점검 케이스 생성
@@ -43,7 +44,8 @@ const HELP = `e2e-loop — 웹 E2E 회차 루프
 공통: --project <대상 프로젝트 경로>(기본: 현재 폴더)`;
 
 switch (cmd) {
-  case "doctor": print(await A.aDoctor({ fix: !!flags.fix })); break;
+  case "doctor": print(await A.aDoctor({ fix: !!flags.fix, dryRun: !!flags["dry-run"], confirm: typeof flags.confirm === "string" ? String(flags.confirm).split(",") : undefined })); break;
+  case "setup": print(await A.aDoctor({ fix: true, dryRun: !!flags["dry-run"], confirm: typeof flags.confirm === "string" ? String(flags.confirm).split(",") : undefined })); break;
   case "init": print(await A.aInit({ ...flags, project } as any)); break;
   case "source": print(A.aSourceAdd({ ...flags, project } as any)); break;
   case "discover": print(await A.aDiscover({ ...flags, project })); break;

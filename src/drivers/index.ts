@@ -43,36 +43,25 @@ export interface Driver {
 }
 
 export async function detectEnv() {
-  const which = async (c: string) => {
-    const p = Bun.spawn(["/bin/sh", "-lc", `command -v ${c}`], { stdout: "pipe", stderr: "ignore" });
-    const out = (await new Response(p.stdout).text()).trim();
-    await p.exited;
-    return out || null;
-  };
-  const ego = (await which("ego-browser")) ?? (Bun.file(`${process.env.HOME}/.local/bin/ego-browser`).size ? `${process.env.HOME}/.local/bin/ego-browser` : null);
-  const chromeApp = [
-    "/Applications/Google Chrome.app",
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "C:/Program Files/Google/Chrome/Application/chrome.exe",
-  ].find((p) => {
-    try {
-      return require("node:fs").existsSync(p);
-    } catch {
-      return false;
-    }
-  });
-  return { ego, chrome: chromeApp ?? null };
+  const { existsSync } = await import("node:fs");
+  const which = (c: string) => Bun.which(c) ?? null;
+  const home = process.env.HOME ?? "";
+  const ego = which("ego-browser") ?? (existsSync(`${home}/.local/bin/ego-browser`) ? `${home}/.local/bin/ego-browser` : null);
+  const first = (ps: string[]) => ps.find((p) => existsSync(p)) ?? null;
+  const chrome = first(["/Applications/Google Chrome.app", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "C:/Program Files/Google/Chrome/Application/chrome.exe"]);
+  const edge = first(["/Applications/Microsoft Edge.app", "/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"]);
+  return { ego, chrome, edge };
 }
 
 export async function resolveDriver(cfg: Config, want?: DriverName): Promise<Driver> {
   const name = want ?? cfg.driver;
   const env = await detectEnv();
-  let pick: "ego" | "chrome" | "chromium";
-  if (name === "auto") pick = env.ego ? "ego" : env.chrome ? "chrome" : "chromium";
+  let pick: "ego" | "chrome" | "edge" | "chromium";
+  if (name === "auto") pick = env.ego ? "ego" : env.chrome ? "chrome" : env.edge ? "edge" : "chromium";
   else pick = name;
-  if (pick === "ego" && !env.ego) throw new Error("ego-browser 가 설치돼 있지 않습니다. driver 를 chrome/chromium 으로 바꾸거나 ego lite 를 설치하세요.");
-  if (pick === "chrome" && !env.chrome) throw new Error("Google Chrome 이 설치돼 있지 않습니다. driver 를 chromium 으로 바꾸세요(playwright 가 내려받음).");
+  if (pick === "ego" && !env.ego) throw new Error("ego-browser 가 설치돼 있지 않습니다. driver 를 chrome/edge/chromium 으로 바꾸거나 ego lite 를 설치하세요(e2e_doctor 참고).");
+  if (pick === "chrome" && !env.chrome) throw new Error("Google Chrome 이 설치돼 있지 않습니다. driver 를 chromium 으로 바꾸세요(e2e_doctor fix 로 설치).");
+  if (pick === "edge" && !env.edge) throw new Error("Microsoft Edge 가 설치돼 있지 않습니다. driver 를 chrome/chromium 으로 바꾸세요.");
   if (pick === "ego") {
     const { EgoDriver } = await import("./ego.ts");
     return new EgoDriver(cfg, env.ego!);

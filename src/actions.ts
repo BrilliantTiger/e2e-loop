@@ -28,8 +28,8 @@ export function ensureDashboard(p: Project) {
   return d;
 }
 
-export async function aDoctor(a: { fix?: boolean }) {
-  return doctor(!!a.fix);
+export async function aDoctor(a: { fix?: boolean; confirm?: string[]; dryRun?: boolean }) {
+  return doctor({ fix: a.fix, confirm: a.confirm, dryRun: a.dryRun });
 }
 
 export async function aInit(a: {
@@ -59,7 +59,7 @@ export async function aInit(a: {
   if (a.viewport) c.viewport = a.viewport;
   p.ensure();
   p.saveConfig(c);
-  const d = await doctor(false);
+  const d = await doctor();
   const ask: string[] = [];
   if (first && !a.driver && d.driver_choices.filter((x) => x.available).length > 1)
     ask.push(`브라우저를 고르게 하세요: ${d.driver_choices.filter((x) => x.available).map((x) => x.value).join(" / ")} (현재 auto → ${d.auto_would_use}). 바꾸려면 e2e_init 의 driver 로 지정.`);

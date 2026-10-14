@@ -23,7 +23,7 @@ export interface Case {
   tags?: string[];
 }
 
-export type DriverName = "auto" | "ego" | "chrome" | "chromium";
+export type DriverName = "auto" | "ego" | "chrome" | "edge" | "chromium";
 export type DataPolicy = "ask" | "reset" | "keep";
 
 export interface Config {

@@ -6,7 +6,7 @@ import type { Case, Config, Feedback, Inventory, RoundMeta, Source } from "./typ
 export const DEFAULT_CONFIG: Config = {
   baseUrl: "http://localhost:3000",
   driver: "auto",
-  headless: true,
+  headless: false, // 기본 Headed. Headless 는 사용자가 요구할 때만
   viewport: { width: 1440, height: 900 },
   data: { policy: "ask", resetScope: "round" },
   crawl: {
