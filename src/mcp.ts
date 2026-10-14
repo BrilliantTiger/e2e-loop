@@ -22,6 +22,28 @@ const caseShape = z.object({
   risk: z.enum(["safe", "mutating", "destructive"]).optional(), tags: z.array(z.string()).optional(),
 }).passthrough();
 
+const materialShape = z.object({
+  kind: z.enum(["plan", "design", "feature-spec", "code"]).describe("plan=기획서 design=디자인(Figma 등) feature-spec=기능정의서 code=코드"),
+  location: z.string().describe("파일·폴더 경로 또는 URL"),
+  title: z.string().optional(), sections: z.array(z.string()).optional().describe("문서의 절·프레임 이름(절 단위 커버리지용)"),
+});
+
+server.registerTool("e2e_session_start", {
+  title: "테스터 세션 시작",
+  description: "E2E 를 진행할 테스터 세션을 정한다. 코드를 고치는 개발 에이전트와 분리된 새 세션의 AI 가 테스터를 맡는다. mode 를 안 주면: Orca 가 있으면 Orca 새 터미널에서 AI(claude/codex)를 자동으로 띄우고, 없으면 '새 세션 / 여기서'를 묻는 needs_decision 이 돌아온다. mode=here 면 이 세션이 바로 테스터다. mode=new 이고 Orca 가 없으면 새 터미널에서 실행할 명령을 돌려준다. 이미 세션이 있으면 그 세션을 유지하며(한 세션 유지), 사용자가 새 세션을 명시했을 때만 new_session=true 로 다시 띄운다. baseUrl·materials 를 같이 주면 최소 진행 조건 검사(intake)까지 한다. 상태는 .e2e/session.json.",
+  inputSchema: {
+    project, mode: z.enum(["here", "new"]).optional(), agent: z.enum(["claude", "codex"]).optional().describe("새 세션에서 실행할 AI. 생략하면 설치된 것(claude 우선)"),
+    new_session: z.boolean().optional().describe("사용자가 새 세션을 명시했을 때만 true"), baseUrl: z.string().optional(), materials: z.array(materialShape).optional(),
+    dryRun: z.boolean().optional().describe("Orca 를 실제로 실행하지 않고 명령만 만든다"),
+  },
+}, wrap(A.aSessionStart as any));
+
+server.registerTool("e2e_intake", {
+  title: "웹 주소·근거 받기, 최소 진행 조건 검사",
+  description: "사용자에게 받은 웹 주소(필수)와 기획서·디자인·기능정의서·코드를 등록하고 최소 진행 조건(실제로 열리는 웹 주소 + 근거 하나 이상)을 검사한다. 못 채우면 can_start=false 와 사용자에게 물을 것(ask_user)이 돌아온다 — 이때는 분석·시트 작성·라운드를 시작하지 않고 사용자에게 요청한다. 웹 주소는 실제로 접속해 열리는지 확인한다. 자료를 더 받을 때마다 다시 호출한다.",
+  inputSchema: { project, baseUrl: z.string().optional(), materials: z.array(materialShape).optional() },
+}, wrap(A.aIntake as any));
+
 server.registerTool("e2e_doctor", {
   title: "환경 점검·설치·등록",
   description: "E2E 에 필요한 도구를 점검한다(bun·Playwright 브라우저·Chrome·Edge·Ego·ffmpeg·git·Orca·macOS 권한). fix=true 면 빠진 Playwright 브라우저를 자동 설치하고 e2e-loop MCP 를 설치된 모든 클라이언트(Claude·Codex 등)에 등록한다. ffmpeg 처럼 설치 전에 사용자에게 물어야 하는 것은 needs_confirmation 으로 돌려주니, 사용자가 승인하면 confirm=['ffmpeg'] 로 다시 호출한다. Ego 설치·OS 권한 허용은 manual 로 안내만 한다. dryRun=true 면 실행하지 않고 할 일만 보여 준다.",
@@ -46,7 +68,7 @@ server.registerTool("e2e_init", {
 server.registerTool("e2e_source_add", {
   title: "근거 자료 등록",
   description: "E2E 의 기대값 근거를 등록한다. 우선순위: plan/design(기획서·디자인) > feature-spec(기능정의서) > live-site(개발된 사이트 전수 탐색). 근거가 하나도 없으면 회차를 시작할 수 없다. sections 에 문서의 절/프레임 이름을 넣으면 e2e_coverage 가 케이스 없는 절을 알려 준다.",
-  inputSchema: { project, kind: z.enum(["plan", "design", "feature-spec", "live-site"]), title: z.string(), location: z.string().describe("파일 경로 또는 URL(Figma 등)"), sections: z.array(z.string()).optional() },
+  inputSchema: { project, kind: z.enum(["plan", "design", "feature-spec", "code", "live-site"]), title: z.string(), location: z.string().describe("파일 경로 또는 URL(Figma 등)"), sections: z.array(z.string()).optional() },
 }, wrap(A.aSourceAdd));
 
 server.registerTool("e2e_discover", {

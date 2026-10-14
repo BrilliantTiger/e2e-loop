@@ -66,7 +66,7 @@ export interface Config {
 
 export interface Source {
   id: string;
-  kind: "plan" | "design" | "feature-spec" | "live-site";
+  kind: "plan" | "design" | "feature-spec" | "code" | "live-site";
   title: string;
   location: string; // 파일 경로 / URL
   sections?: string[]; // 근거 절 목록(커버리지 확인용)

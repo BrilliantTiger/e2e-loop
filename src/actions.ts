@@ -10,6 +10,7 @@ import { completeCheck } from "./gate.ts";
 import { startDashboard } from "./dashboard.ts";
 import { addFeedback, resolveFeedback } from "./feedback.ts";
 import { trend } from "./report.ts";
+import { evidenceSources, intake, readIntake, readSession, sessionStart, type Material, type SessionStartOpts } from "./session.ts";
 
 export const proj = (p?: string) => new Project(p ?? process.env.E2E_PROJECT ?? process.cwd());
 
@@ -27,6 +28,9 @@ export function ensureDashboard(p: Project) {
   }
   return d;
 }
+
+export const aSessionStart = (a: Omit<SessionStartOpts, "env" | "urlTimeoutMs"> & { project?: string }) => sessionStart(proj(a.project), a);
+export const aIntake = (a: { project?: string; baseUrl?: string; materials?: Material[] }) => intake(proj(a.project), a);
 
 export async function aDoctor(a: { fix?: boolean; confirm?: string[]; dryRun?: boolean }) {
   return doctor({ fix: a.fix, confirm: a.confirm, dryRun: a.dryRun });
@@ -76,7 +80,7 @@ export function aSourceAdd(a: { project?: string; kind: Source["kind"]; title: s
   if (a.kind !== "live-site" && !/^https?:\/\//.test(a.location) && !existsSync(a.location)) warn.push(`파일이 이 경로에 없습니다: ${a.location}`);
   const s: Source = { id, kind: a.kind, title: a.title, location: a.location, sections: a.sections, addedAt: nowIso() };
   p.writeJson("sources.json", [...list, s]);
-  const order = { plan: 1, design: 1, "feature-spec": 2, "live-site": 3 } as const;
+  const order = { plan: 1, design: 1, "feature-spec": 2, code: 3, "live-site": 3 } as const;
   return { added: s, sources: list.length + 1, basis_priority: "기획서/디자인 > 기능정의서 > 라이브 사이트(요소 전수 탐색)", lowest_basis_only: order[a.kind] === 3 && list.every((x) => x.kind === "live-site"), warn };
 }
 
@@ -224,8 +228,11 @@ export function aDashboard(a: { project?: string; open?: boolean }) {
 
 export function aStatus(a: { project?: string }) {
   const p = proj(a.project);
-  if (!p.initialized) return { initialized: false, next: "e2e_doctor → e2e_init 부터 시작" };
+  const session = readSession(p);
+  if (!p.initialized) return { initialized: false, session, next: "e2e_session_start 로 시작(테스터 세션 → 웹 주소와 근거 받기)" };
   const cfg = p.config();
+  const intakeState = readIntake(p);
+  const evidence = evidenceSources(p);
   const cases = p.cases();
   const run = runningRound(p);
   const rounds = p.rounds();
@@ -233,14 +240,18 @@ export function aStatus(a: { project?: string }) {
   const pending = p.feedback().filter((f) => f.status === "pending");
   const noSource = p.sources().length === 0;
   let next: string;
-  if (noSource) next = "근거 자료 등록: 기획서/디자인/기능정의서(e2e_source_add). 없으면 사이트를 live-site 로 등록하고 e2e_discover";
+  if (!session) next = "e2e_session_start 로 테스터 세션을 정하세요(새 세션 / 여기서)";
+  else if (!intakeState.baseUrl || !evidence.length) next = "최소 진행 조건 미충족 — 웹 주소와 근거(기획서·디자인·기능정의서·코드 중 하나 이상)를 사용자에게 받아 e2e_intake 로 등록";
+  else if (noSource) next = "근거 자료 등록: 기획서/디자인/기능정의서(e2e_source_add). 없으면 사이트를 live-site 로 등록하고 e2e_discover";
   else if (!cases.length) next = "케이스 만들기: e2e_discover(사이트 전수 탐색) 및/또는 e2e_case_upsert(문서 기반)";
   else if (run) next = `${run.id} 진행 중 — e2e_round_status. 수정 금지`;
   else if (!rounds.length) next = "e2e_round_start 로 1회차 시작(데이터 초기화 여부를 사용자에게 먼저 확인)";
   else if (gate.complete) next = "완료 — 모든 이슈 0";
   else next = gate.next;
   return {
-    initialized: true, baseUrl: cfg.baseUrl, driver: cfg.driver, dataPolicy: cfg.data.policy,
+    initialized: true, session: session ? { mode: session.mode, via: session.launch?.via, agent: session.launch?.agent, terminal: session.launch?.terminal } : null,
+    intake: { baseUrl: intakeState.baseUrl ?? null, evidence: evidence.map((s) => `${s.id} ${s.kind} ${s.title}`) },
+    baseUrl: cfg.baseUrl, driver: cfg.driver, dataPolicy: cfg.data.policy,
     sources: p.sources().map((s) => `${s.id} ${s.kind} ${s.title}`),
     cases: { total: cases.length, spec: cases.filter((c) => c.type === "spec").length, probe: cases.filter((c) => c.type === "probe").length },
     rounds: rounds.length, running: run?.id ?? null, trend: trend(p).map((t) => `${t.round}:${t.issues}`).join(" → "),

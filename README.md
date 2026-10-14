@@ -25,9 +25,19 @@ sh install.sh
 4. 빠진 **Playwright 브라우저는 자동 설치**한다.
 5. **ffmpeg 처럼 설치 전에 물어야 하는 것**은 설치하지 않고 질문으로 돌려준다. 승인하면 `sh install.sh --confirm ffmpeg`.
 6. e2e-loop MCP 를 **설치된 모든 클라이언트**(Claude Code, Codex)에 등록한다. 이미 있으면 건너뛴다.
-7. 직접 해야 하는 것(Ego 앱 설치, macOS 권한 허용)은 안내만 한다.
+7. 테스터 스킬(`skills/e2e-loop`)을 Claude Code(`~/.claude/skills`)와 Codex(`~/.agents/skills`)에 링크한다. 저장소를 `git pull` 하면 스킬도 함께 갱신된다. 같은 이름의 실제 폴더가 있으면 덮어쓰지 않고 알린다.
+8. 직접 해야 하는 것(Ego 앱 설치, macOS 권한 허용)은 안내만 한다.
 
 점검만 하려면 `bun src/cli.ts doctor`, 실행 계획만 보려면 `--dry-run`.
+
+### 테스터 세션
+
+E2E 는 코드를 고치는 에이전트가 아니라 **새 세션의 AI(테스터)** 가 진행한다.
+
+- `e2e_session_start`: Orca 가 있으면 새 터미널에서 AI 를 띄운다. 없으면 "새 세션 / 여기서"를 묻고, "새 세션"이면 실행할 명령을 준다. 세션이 이미 있으면 그대로 유지한다(사용자가 새 세션을 명시할 때만 `new_session`).
+- `e2e_intake`: 웹 주소와 기획서·디자인·기능정의서·코드를 받아 **최소 진행 조건**(실제로 열리는 웹 주소 + 근거 하나 이상)을 검사한다. 못 채우면 시작하지 않고 사용자에게 요청한다.
+- 상태는 대상 프로젝트의 `.e2e/session.json`, `.e2e/intake.json`, `.e2e/sources.json` 에 있다.
+- 터미널에서: `bun src/cli.ts session --mode new`, `bun src/cli.ts intake --baseUrl URL --materials '[{"kind":"plan","location":"docs/plan.md"}]'`
 
 ### Ego 에 대해
 

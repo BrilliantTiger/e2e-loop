@@ -1,6 +1,7 @@
 // 설치 실행. auto 항목은 바로, ask 항목은 사용자가 승인(confirm)한 것만 실행한다.
 import { run, runChecks, type Check, type Env } from "./detect.ts";
 import { registerE2eLoop, detectClients, type RegisterResult, type ClientState } from "./clients.ts";
+import { installSkills, type SkillInstallResult } from "./skills.ts";
 
 export interface InstallAction {
   id: string;
@@ -20,6 +21,7 @@ export interface EnvReport {
   manual: { id: string; why: string; steps: string }[];
   actions: InstallAction[];
   registration: RegisterResult[];
+  skills: SkillInstallResult[];
   driver_choices: { value: string; available: boolean; note: string }[];
   auto_would_use: string;
   next: string;
@@ -35,6 +37,8 @@ export interface DoctorOpts {
   /** 실행하지 않고 할 일만 보여 줌 */
   dryRun?: boolean;
   env?: Env;
+  /** 스킬 설치 위치의 홈 폴더(시험용). 기본은 실제 홈 */
+  home?: string;
 }
 
 export async function doctor(opts: DoctorOpts = {}): Promise<EnvReport> {
@@ -63,6 +67,7 @@ export async function doctor(opts: DoctorOpts = {}): Promise<EnvReport> {
 
   let registration: RegisterResult[] = [];
   if (opts.fix) registration = await registerE2eLoop({ env, dryRun: opts.dryRun });
+  const skills = opts.fix ? installSkills({ env, home: opts.home, dryRun: opts.dryRun }) : [];
   const clients = await detectClients(env);
 
   const needs = checks
@@ -104,5 +109,5 @@ export async function doctor(opts: DoctorOpts = {}): Promise<EnvReport> {
   else if (!ok) next = "e2e_doctor(fix=true) 로 Playwright 브라우저를 설치하세요.";
   else if (manual.length) next = "사용자에게 manual 항목(앱 설치·권한 허용)을 안내하세요. 쓰지 않을 브라우저 관련 항목은 무시해도 됩니다.";
   else next = "환경이 준비됐습니다. e2e_init 으로 프로젝트를 설정하세요.";
-  return { ok, platform: process.platform, checks, clients, needs_confirmation: needs, manual, actions, registration, driver_choices, auto_would_use: auto, next };
+  return { ok, platform: process.platform, checks, clients, needs_confirmation: needs, manual, actions, registration, skills, driver_choices, auto_would_use: auto, next };
 }

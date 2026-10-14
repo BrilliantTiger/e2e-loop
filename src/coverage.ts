@@ -32,8 +32,8 @@ export function coverage(project: Project): Coverage {
     const sections = (s.sections ?? []).map((name) => ({ name, cases: spec.filter((c) => (c.source_ref ?? "").includes(name)).length }));
     return { id: s.id, title: s.title, kind: s.kind, sections, uncoveredSections: sections.filter((x) => x.cases === 0).map((x) => x.name) };
   });
-  for (const s of sources) if (s.kind !== "live-site" && s.sections.length === 0) notes.push(`근거 “${s.title}” 에 sections 가 없어 절 단위 커버리지를 못 셉니다. e2e_source_add 에 sections 를 넣으세요.`);
-  if (sources.some((s) => s.kind !== "live-site") && !spec.length) notes.push("기획서/디자인/기능정의서가 등록돼 있는데 spec 케이스가 0건입니다. 문서의 기대 동작을 e2e_case_upsert 로 옮기세요.");
+  for (const s of sources) if (s.kind !== "live-site" && s.kind !== "code" && s.sections.length === 0) notes.push(`근거 “${s.title}” 에 sections 가 없어 절 단위 커버리지를 못 셉니다. e2e_source_add 에 sections 를 넣으세요.`);
+  if (sources.some((s) => s.kind !== "live-site" && s.kind !== "code") && !spec.length) notes.push("기획서/디자인/기능정의서가 등록돼 있는데 spec 케이스가 0건입니다. 문서의 기대 동작을 e2e_case_upsert 로 옮기세요.");
   return {
     elements: { total: els.length, coveredBySpec: bySpec.length, coveredByProbe: byProbe.length, uncovered: uncovered.length, uncoveredList: uncovered.slice(0, 60).map((e) => ({ id: e.id, page: e.page, kind: e.kind, label: e.label, selector: e.selector, risk: e.risk })) },
     sources,

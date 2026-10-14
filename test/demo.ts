@@ -43,6 +43,9 @@ try {
   ok(disc.risky.destructive.length >= 1, "파괴적 요소 표시: " + disc.risky.destructive.join(", "));
 
   console.log("4) 기획서 기반 케이스 등록");
+  writeFileSync(join(root, "PLAN.md"), "# 기획서\n1.1 홈 대시보드\n2.3 가입\n3.1 통계\n");
+  const src = A.aSourceAdd({ project: root, kind: "plan", title: "데모 기획서", location: join(root, "PLAN.md"), sections: ["1.1", "2.3", "3.1"] });
+  ok(src.added.kind === "plan", "기획서를 근거로 등록");
   const up = A.aCaseUpsert({
     project: root,
     cases: [

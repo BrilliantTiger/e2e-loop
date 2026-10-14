@@ -6,6 +6,7 @@ import { Project, caseHash, nowIso } from "./store.ts";
 import { resolveDriver } from "./drivers/index.ts";
 import { runCase } from "./runner.ts";
 import { writeReports } from "./report.ts";
+import { evidenceSources } from "./session.ts";
 
 async function sh(cmd: string, cwd: string, timeoutMs = 600000): Promise<{ code: number; out: string }> {
   const p = Bun.spawn(["/bin/sh", "-lc", cmd], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -46,7 +47,7 @@ export function precheck(project: Project, opts: StartOpts): { ok: true; decisio
   if (!project.initialized) return { ok: false, error: "프로젝트가 초기화되지 않았습니다. e2e_init 먼저." };
   const sources = project.sources();
   const cases = project.cases().filter((c) => (c.status ?? "active") === "active");
-  if (!sources.length) return { ok: false, error: "근거 자료가 없습니다. 기획서·디자인·기능정의서 중 하나를 e2e_source_add 로 등록하세요. 아무것도 없으면 개발된 사이트를 live-site 로 등록하고 e2e_discover 를 실행합니다." };
+  if (!sources.length || !evidenceSources(project).length) return { ok: false, error: "최소 진행 조건을 못 채웠습니다. 기획서·디자인·기능정의서·코드 중 하나 이상이 근거로 필요합니다. 사용자에게 받아 e2e_intake 로 등록하세요." };
   if (!cases.length) return { ok: false, error: "실행할 케이스가 없습니다. e2e_discover 로 자동 점검 케이스를 만들거나 e2e_case_upsert 로 기획서의 케이스를 등록하세요." };
   let d = opts.data;
   if (!d && cfg.data.policy !== "ask") d = cfg.data.policy;
