@@ -130,8 +130,16 @@ class EgoPage implements DPage {
   async title() {
     return this.call({ op: "title" });
   }
+  /** 작업 탭이 가려져 있으면 화면 캡처가 응답하지 않는다. 한 번 실패하면 이 세션에서는 더 시도하지 않는다(매 스텝 기다리지 않게). */
+  shotBroken = false;
   async screenshot(path: string) {
-    await this.call({ op: "shot", path }, 20000);
+    if (this.shotBroken) throw new Error("Ego 화면 캡처를 건너뜀(앞서 응답 없음)");
+    try {
+      await this.call({ op: "shot", path }, 8000);
+    } catch (e) {
+      this.shotBroken = true;
+      throw e;
+    }
   }
   async drainNet(): Promise<NetEntry[]> {
     return this.evaluate<NetEntry[]>(`(() => { const h = window.__e2eHooks; const r = h.net.slice(); h.net.length = 0; return r; })()`).catch(() => []);
@@ -208,8 +216,10 @@ export class EgoDriver implements Driver {
     return {
       page,
       finish: async () => {
-        if ("warn" in rec) return { warn: rec.warn };
-        return rec.stop();
+        const shotWarn = page.shotBroken ? "Ego 화면 캡처가 응답하지 않아(작업 탭이 가려져 있을 수 있음) 이 케이스는 스크린샷을 남기지 못했습니다." : undefined;
+        if ("warn" in rec) return { warn: [rec.warn, shotWarn].filter(Boolean).join(" ") };
+        const r = await rec.stop();
+        return shotWarn ? { ...r, warn: [r.warn, shotWarn].filter(Boolean).join(" ") } : r;
       },
     };
   }

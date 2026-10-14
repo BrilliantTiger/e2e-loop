@@ -16,7 +16,7 @@ import { repeatedIssues } from "./round.ts";
 import { coverage } from "./coverage.ts";
 import { precheck, runningRound, startRound, stopRound, type StartOpts } from "./round.ts";
 import { completeCheck } from "./gate.ts";
-import { startDashboard } from "./dashboard.ts";
+import { startDashboard, type DashboardInfo } from "./dashboard.ts";
 import { addFeedback, resolveFeedback } from "./feedback.ts";
 import { trend } from "./report.ts";
 import { evidenceSources, intake, readIntake, readSession, sessionStart, type Material, type SessionStartOpts } from "./session.ts";
@@ -26,7 +26,7 @@ export const proj = (p?: string) => new Project(p ?? process.env.E2E_PROJECT ?? 
 const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe"]);
 const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check"]);
 
-const dashboards = new Map<string, { url: string; stop: () => void }>();
+const dashboards = new Map<string, DashboardInfo>();
 const liveRounds = new Map<string, Promise<unknown>>();
 
 export function ensureDashboard(p: Project) {
@@ -246,14 +246,17 @@ export async function aRoundStart(a: StartOpts & { project?: string; open?: bool
   const usage = evidenceUsage(p);
   const { id, done } = await startRound(p, a);
   liveRounds.set(p.root + id, done.catch(() => {}));
-  if (a.open) Bun.spawn(["open", dash.url], { stdout: "ignore", stderr: "ignore" });
+  if (a.open) Bun.spawn(["open", dash.access_url], { stdout: "ignore", stderr: "ignore" });
   const m = p.rounds().find((r) => r.id === id)!;
   return {
     round: id, started: true, scope: m.scope, cases: m.caseCount, driver: m.driver, data: m.data.decision,
-    dashboard: dash.url,
+    dashboard: dash.access_url,
+    dashboard_base: dash.url,
+    dashboard_token: dash.token,
+    dashboard_warn: dash.warn,
     pending_feedback: m.pendingFeedback ?? [],
     evidence_usage: usage.level === "warn" ? { ...usage, warn: `증거 보관 용량이 상한의 ${usage.percent}% 입니다. 상한에 닿기 전에 사용자에게 알리고 정리(e2e_evidence prune)나 상한 조정을 정하세요.` } : undefined,
-    message: `${id} 시작. 진행은 e2e_round_status 로 확인(실시간 화면: ${dash.url}). 회차가 끝나기 전에는 앱 코드·테스트 케이스를 고치지 마세요 — 사용자 요청은 e2e_feedback 으로 받아 다음 회차에 적용합니다.`,
+    message: `${id} 시작. 진행은 e2e_round_status 로 확인(실시간 화면, 같은 내부망에서 토큰이 붙은 이 주소로만 접속됨: ${dash.access_url}). 회차가 끝나기 전에는 앱 코드·테스트 케이스를 고치지 마세요 — 사용자 요청은 e2e_feedback 으로 받아 다음 회차에 적용합니다.`,
   };
 }
 
@@ -279,7 +282,7 @@ export async function aRoundStatus(a: { project?: string; wait_seconds?: number 
     round: cur.id, status: cur.status, running: !!run, done: results.length, total: cur.caseCount, counts: cnt,
     failing_so_far: results.filter((r) => r.status === "FAIL").slice(0, 8).map((r) => `${r.id}: ${String(r.reason).slice(0, 100)}`),
     last_events: events.map((e) => `${e.type}${e.case ? " " + e.case : ""}${e.status ? " " + e.status : ""}`),
-    dashboard: dashboards.get(p.root)?.url,
+    dashboard: dashboards.get(p.root)?.access_url,
     error: cur.error,
     next: run ? "진행 중 — 회차가 끝날 때까지 코드/케이스 수정 금지" : "끝났습니다 → e2e_round_report 로 결과 확인",
   };
@@ -297,7 +300,7 @@ export function aRoundReport(a: { project?: string; round?: string; format?: "md
   const rounds = p.rounds().filter((r) => r.status !== "running");
   const r = a.round ? rounds.find((x) => x.id === a.round) : rounds[rounds.length - 1];
   if (!r) return { error: "끝난 회차가 없습니다." };
-  const paths = { human: p.p("rounds", r.id, "report.html"), ai_md: p.p("rounds", r.id, "ai-sheet.md"), ai_json: p.p("rounds", r.id, "ai-sheet.json"), dashboard: dashboards.get(p.root)?.url };
+  const paths = { human: p.p("rounds", r.id, "report.html"), ai_md: p.p("rounds", r.id, "ai-sheet.md"), ai_json: p.p("rounds", r.id, "ai-sheet.json"), dashboard: dashboards.get(p.root)?.access_url };
   if (a.format === "paths") return { round: r.id, ...paths, sheets: "사람용: report.html (영상·스크린샷·이슈 추이, 브라우저로 열기) / AI용: ai-sheet.md(읽기용)·ai-sheet.json(구조) — 이슈별 재현 단계·기대값·실제값·API·콘솔·증거 위치·의심 코드와 개발 작업 단위" };
   if (a.format === "json") return JSON.parse(readFileSync(paths.ai_json, "utf8"));
   return { round: r.id, markdown: readFileSync(paths.ai_md, "utf8"), human_report: paths.human };
@@ -313,11 +316,23 @@ export function aCompleteCheck(a: { project?: string }) {
 export const aFeedback = (a: { project?: string; text: string; apply?: "next" | "now"; mode?: "restart" | "in-flow"; cases?: Case[] }) => addFeedback(proj(a.project), a);
 export const aFeedbackResolve = (a: { project?: string; ids: string[]; note?: string }) => ({ resolved: resolveFeedback(proj(a.project), a.ids, a.note).map((f) => f.id) });
 
-export function aDashboard(a: { project?: string; open?: boolean }) {
+export function aDashboard(a: { project?: string; open?: boolean; rotate_token?: boolean; host?: string }) {
   const p = proj(a.project);
-  const d = ensureDashboard(p);
-  if (a.open) Bun.spawn(["open", d.url], { stdout: "ignore", stderr: "ignore" });
-  return { url: d.url };
+  let d = dashboards.get(p.root);
+  if (d && (a.rotate_token || (a.host && a.host !== d.host))) {
+    d.stop();
+    dashboards.delete(p.root);
+    d = undefined;
+  }
+  if (!d) {
+    d = startDashboard(p, undefined, { host: a.host, rotateToken: a.rotate_token });
+    dashboards.set(p.root, d);
+  }
+  if (a.open) Bun.spawn(["open", d.access_url], { stdout: "ignore", stderr: "ignore" });
+  return {
+    access_url: d.access_url, url: d.url, host: d.host, lan: d.lan, alternatives: d.alternatives, warn: d.warn,
+    notice: "access_url 의 토큰은 비밀번호와 같습니다. 같은 내부망의 사람에게만 알려 주세요. 토큰이 없는 접속은 막힙니다. 화면에 입력값이 그대로 보이니 테스트 데이터와 테스트 계정만 입력하세요.",
+  };
 }
 
 export function aStatus(a: { project?: string }) {

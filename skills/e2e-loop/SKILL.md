@@ -94,7 +94,8 @@ Ask before starting the first round. Use `e2e_prestart` to record the answers.
 
 - Start with `e2e_round_start`. The default is Headed. Use Headless only when the user asks. If the machine has no display, do not switch automatically; ask the user.
 - Wait with `e2e_round_status` and `wait_seconds`. Do not poll in short intervals.
-- Tell the user the dashboard address. Report each time all cases of a feature unit pass.
+- Tell the user the dashboard address: the `dashboard` value from `e2e_round_start` (or `access_url` from `e2e_dashboard`). It is an internal-network address (192.168.x.x or 10.x.x.x) with an access token, so anyone on the same network can open it, and a visit without the token is refused. Treat the token like a password. The dashboard shows progress, the current screen, the issue trend, and video links.
+- Report each time all cases of a feature unit pass.
 - While a round runs, **do not change cases or code.**
 - Rules you do not need to handle yourself: a failing case is retried 3 times (all pass = pass, some pass = flaky issue); logout is tested and the session is logged in again; delete is tested only on data the tester registered; other destructive actions are skipped (not issues).
 

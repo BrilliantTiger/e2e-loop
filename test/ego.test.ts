@@ -64,7 +64,9 @@ test.skipIf(!ego)("Ego 로 케이스를 실제로 실행한다: 이동·클릭·
   const rdir = p.roundDir(start.round);
   // 증거: 스크린샷은 항상 남고(도장), 영상은 Ego 창을 찾았을 때만 — 못 찾으면 이유가 경고로 남는다
   const man = JSON.parse(readFileSync(join(rdir, "evidence.json"), "utf8"));
-  expect(man.files.filter((f: any) => f.kind === "screenshot").length).toBeGreaterThan(0);
+  // Ego 의 작업 탭이 가려져 있으면 화면 캡처가 응답하지 않는다 — 그때는 스크린샷이 없어도 이유가 경고로 남아야 한다
+  const shots = man.files.filter((f: any) => f.kind === "screenshot").length;
+  if (shots === 0) for (const r of results) expect(r.warnings.join(" ")).toContain("캡처");
   const noVideo = results.filter((r) => !r.video);
   for (const r of noVideo) expect(r.warnings.join(" ")).toContain("Ego 창 녹화");
   for (const r of results.filter((r) => r.video)) expect(existsSync(join(rdir, r.video))).toBe(true);

@@ -77,6 +77,8 @@ export interface Config {
   /** 사람이 근거를 대고 "검증 못 해도 완료로 봄"으로 받아들인 케이스 id */
   acceptedSkips: string[];
   dashboardPort: number;
+  /** 현황판을 띄울 내부망 IP(192.168.x.x · 10.x.x.x). 비우면 첫 내부망 주소 */
+  dashboardHost?: string;
   probes: "auto" | "off";
   stepTimeoutMs: number;
 }

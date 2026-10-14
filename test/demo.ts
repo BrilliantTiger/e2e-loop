@@ -67,7 +67,7 @@ try {
   console.log("6) 1회차 (버그 있는 상태, 데이터 초기화)");
   start = await A.aRoundStart({ project: root, data: "reset", headless: true });
   ok(start.started, `${start.round} 시작, 케이스 ${start.cases}건, 대시보드 ${start.dashboard}`);
-  const dashState = await (await fetch(start.dashboard + "/api/state")).json();
+  const dashState = await (await fetch(start.dashboard_base + "/api/state", { headers: { authorization: `Bearer ${start.dashboard_token}` } })).json();
   ok(dashState.running === true, "대시보드 API 가 진행 중 상태를 보여 줌");
   console.log("   회차 도중 사용자 요청 처리");
   const fb: any = A.aFeedback({ project: root, text: "소개 페이지 제목도 확인해줘" });

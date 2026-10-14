@@ -186,7 +186,11 @@ server.registerTool("e2e_feedback_resolve", {
   inputSchema: { project, ids: z.array(z.string()).min(1), note: z.string().optional() },
 }, wrap(A.aFeedbackResolve));
 
-server.registerTool("e2e_dashboard", { title: "실시간 대시보드 주소", description: "실시간 대시보드(진행·지금 화면·로그·이슈 추이)를 띄우고 주소를 돌려준다. open=true 면 브라우저로 연다.", inputSchema: { project, open: z.boolean().optional() } }, wrap(A.aDashboard));
+server.registerTool("e2e_dashboard", {
+  title: "현황판 접속 주소",
+  description: "현황판(진행·지금 화면·이슈 추이·영상 링크)을 내부망 IP(192.168.x.x · 10.x.x.x)로 띄우고 접속 주소를 돌려준다. localhost 가 아니라 같은 망의 다른 기기에서도 접속된다. 접속 토큰이 붙은 주소(access_url)로만 들어갈 수 있고 토큰 없는 접속은 막힌다. 토큰은 비밀번호처럼 다룬다. rotate_token=true 면 토큰을 새로 만든다. open=true 면 이 컴퓨터의 브라우저로 연다.",
+  inputSchema: { project, open: z.boolean().optional(), rotate_token: z.boolean().optional(), host: z.string().optional().describe("쓸 내부망 IP(여러 개일 때 고르기)") },
+}, wrap(A.aDashboard));
 
 server.registerTool("e2e_status", { title: "현재 상태와 다음 행동", description: "근거·케이스·회차·이슈 추이·미반영 요청을 한 번에 보고, 다음에 할 일을 알려 준다. 세션을 이어받았을 때 가장 먼저 호출한다.", inputSchema: { project } }, wrap(A.aStatus));
 
