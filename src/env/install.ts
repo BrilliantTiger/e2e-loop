@@ -24,6 +24,8 @@ export interface EnvReport {
   skills: SkillInstallResult[];
   driver_choices: { value: string; available: boolean; note: string }[];
   auto_would_use: string;
+  /** 지원하지 않는 브라우저 안내 */
+  unsupported: string;
   next: string;
 }
 
@@ -109,5 +111,5 @@ export async function doctor(opts: DoctorOpts = {}): Promise<EnvReport> {
   else if (!ok) next = "e2e_doctor(fix=true) 로 Playwright 브라우저를 설치하세요.";
   else if (manual.length) next = "사용자에게 manual 항목(앱 설치·권한 허용)을 안내하세요. 쓰지 않을 브라우저 관련 항목은 무시해도 됩니다.";
   else next = "환경이 준비됐습니다. e2e_init 으로 프로젝트를 설정하세요.";
-  return { ok, platform: process.platform, checks, clients, needs_confirmation: needs, manual, actions, registration, skills, driver_choices, auto_would_use: auto, next };
+  return { ok, platform: process.platform, checks, clients, needs_confirmation: needs, manual, actions, registration, skills, driver_choices, auto_would_use: auto, unsupported: "Safari 는 지원하지 않습니다(Chrome 기반 브라우저 — Chrome·Chromium·Edge — 와 Ego 만 지원).", next };
 }

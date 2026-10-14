@@ -281,11 +281,24 @@ export async function aRoundStatus(a: { project?: string; wait_seconds?: number 
   return {
     round: cur.id, status: cur.status, running: !!run, done: results.length, total: cur.caseCount, counts: cnt,
     failing_so_far: results.filter((r) => r.status === "FAIL").slice(0, 8).map((r) => `${r.id}: ${String(r.reason).slice(0, 100)}`),
+    feature_reports: takeFeatureReports(p, cur.id),
     last_events: events.map((e) => `${e.type}${e.case ? " " + e.case : ""}${e.status ? " " + e.status : ""}`),
     dashboard: dashboards.get(p.root)?.access_url,
     error: cur.error,
     next: run ? "진행 중 — 회차가 끝날 때까지 코드/케이스 수정 금지" : "끝났습니다 → e2e_round_report 로 결과 확인",
   };
+}
+
+/** 아직 사용자에게 알리지 않은 "기능 단위 모두 통과"를 한 번씩만 돌려준다 */
+function takeFeatureReports(p: Project, roundId: string): { report_to_user: string[]; total_features_done: number } | undefined {
+  const list = p.readJson<{ screen: string; feature: string; cases: number; reported: boolean }[]>(`rounds/${roundId}/features.json`, []);
+  const fresh = list.filter((x) => !x.reported);
+  if (!list.length) return undefined;
+  if (fresh.length) {
+    for (const x of fresh) x.reported = true;
+    p.writeJson(`rounds/${roundId}/features.json`, list);
+  }
+  return { report_to_user: fresh.map((x) => `기능 “${x.feature}” (화면 ${x.screen}) 의 케이스 ${x.cases}건이 모두 통과했습니다`), total_features_done: list.length };
 }
 
 export function aRoundStop(a: { project?: string }) {

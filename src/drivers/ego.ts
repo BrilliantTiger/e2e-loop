@@ -69,8 +69,16 @@ export function toEgoSel(sel: string): string {
   return sel;
 }
 
+/** 드라이버 하나(= 한 번의 라운드) 안에서 공유하는 상태: 화면 캡처가 한 번 응답하지 않으면 이후 세션에서는 시도하지 않는다 */
+export interface EgoShared {
+  shotBroken: boolean;
+}
+
 class EgoPage implements DPage {
-  constructor(private call: (m: any, ms?: number) => Promise<any>, private timeout: number) {}
+  constructor(private call: (m: any, ms?: number) => Promise<any>, private timeout: number, private shared: EgoShared) {}
+  get shotBroken() {
+    return this.shared.shotBroken;
+  }
   private async hooks() {
     await this.call({ op: "eval", expr: `(() => { ${LIB}; ${HOOKS}; return true; })()` }).catch(() => {});
   }
@@ -131,13 +139,12 @@ class EgoPage implements DPage {
     return this.call({ op: "title" });
   }
   /** 작업 탭이 가려져 있으면 화면 캡처가 응답하지 않는다. 한 번 실패하면 이 세션에서는 더 시도하지 않는다(매 스텝 기다리지 않게). */
-  shotBroken = false;
   async screenshot(path: string) {
-    if (this.shotBroken) throw new Error("Ego 화면 캡처를 건너뜀(앞서 응답 없음)");
+    if (this.shared.shotBroken) throw new Error("Ego 화면 캡처를 건너뜀(앞서 응답 없음)");
     try {
       await this.call({ op: "shot", path }, 8000);
     } catch (e) {
-      this.shotBroken = true;
+      this.shared.shotBroken = true;
       throw e;
     }
   }
@@ -163,6 +170,7 @@ export class EgoDriver implements Driver {
   capabilities = { video: true, network: true, files: true };
   private proc?: ReturnType<typeof Bun.spawn>;
   private port = 0;
+  private shared: EgoShared = { shotBroken: false };
   constructor(private cfg: Config, private bin: string) {}
   private async call(m: any, ms = 20000): Promise<any> {
     const r = await fetch(`http://127.0.0.1:${this.port}`, { method: "POST", body: JSON.stringify(m), signal: AbortSignal.timeout(ms) });
@@ -205,7 +213,7 @@ export class EgoDriver implements Driver {
   }
   async newSession(evidenceDir: string): Promise<Session> {
     mkdirSync(evidenceDir, { recursive: true });
-    const page = new EgoPage((m, ms) => this.call(m, ms), this.cfg.stepTimeoutMs);
+    const page = new EgoPage((m, ms) => this.call(m, ms), this.cfg.stepTimeoutMs, this.shared);
     // 이전 케이스의 상태를 비운다(localStorage/sessionStorage 만. 쿠키는 프로필 전체에 닿아서 건드리지 않는다)
     await page.goto(this.cfg.baseUrl);
     const kv = Object.fromEntries(Object.entries(this.cfg.auth?.localStorage ?? {}).map(([k, v]) => [k, expandEnv(v)]));

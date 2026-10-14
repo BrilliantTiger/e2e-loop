@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Case, CaseResult, DriverName, RoundMeta, Verdict } from "./types.ts";
 import { Project, caseHash, nowIso } from "./store.ts";
 import { resolveDriver } from "./drivers/index.ts";
-import { runCase } from "./runner.ts";
+import { browserGone, runCase } from "./runner.ts";
 import { writeReports } from "./report.ts";
 import { evidenceSources } from "./session.ts";
 import { sheetGate } from "./sheet.ts";
@@ -161,6 +161,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
   const codeFp = await codeFingerprint(cfg.codeRoot ?? project.root);
   const kit = new EvidenceKit({ project, roundId: id, commit: codeFp.head });
   const createdSet = new Set(project.readJson<string[]>("created.json", []));
+  const reportedFeatures = new Set<string>();
   const meta: RoundMeta = {
     id, n, status: "running", startedAt: nowIso(), driver: driver.name, headless: cfg.headless,
     data: { decision: pre.decision, scope: cfg.data.resetScope },
@@ -219,17 +220,37 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         }
         const c = selected[i]!;
         emit({ type: "case-start", case: c.id, title: c.title, index: i + 1, total: selected.length });
-        const mk = (attempt: number) => runCase({ project, cfg, driver, roundId: id, decision: pre.decision, emit, resetBeforeCase, attempt, kit, created: [...createdSet], onCreated: (v) => createdSet.add(v) }, c);
+        const runOne = (attempt: number) => runCase({ project, cfg, driver, roundId: id, decision: pre.decision, emit, resetBeforeCase, attempt, kit, created: [...createdSet], onCreated: (v) => createdSet.add(v) }, c);
+        // 브라우저가 중간에 죽으면(충돌·강제 종료) 새로 띄워 한 번 더 시도한다. 도구의 문제를 사이트의 결함으로 세지 않기 위해서다.
+        const mk = async (attempt: number) => {
+          try {
+            return await runOne(attempt);
+          } catch (e: any) {
+            if (!browserGone(e)) throw e;
+            emit({ type: "browser-relaunch", case: c.id, why: String(e?.message ?? e).slice(0, 120) });
+            await driver.close().catch(() => {});
+            await driver.open();
+            return await runOne(attempt);
+          }
+        };
         let r: CaseResult;
         try {
           r = await mk(0);
           if (r.status === "FAIL" && !r.promoted) r = await retryFailed(r, mk, emit, c.id);
         } catch (e: any) {
-          r = { id: c.id, title: c.title, type: c.type, status: "FAIL", reason: `실행기 오류: ${String(e?.message ?? e).slice(0, 300)}`, warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(), priority: "P1" };
+          const gone = browserGone(e);
+          // 브라우저를 다시 띄워도 안 되면 사이트의 결함이 아니라 환경 문제 → 검증 못 한 것(BLOCKED)
+          r = { id: c.id, title: c.title, type: c.type, status: gone ? "BLOCKED" : "FAIL", reason: gone ? `브라우저가 죽어 판정하지 못함(다시 띄웠지만 실패): ${String(e?.message ?? e).slice(0, 200)}` : `실행기 오류: ${String(e?.message ?? e).slice(0, 300)}`, warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(), ...(gone ? {} : { priority: "P1" as const }) };
         }
         results.push(r);
         project.writeJson(`rounds/${id}/results.json`, results);
         emit({ type: "case-end", case: c.id, status: r.status, reason: r.reason, warnings: r.warnings.length, ms: r.durationMs, video: r.video });
+        // 기능 단위의 케이스가 모두 통과하면 그때그때 보고한다(보고할 것은 e2e_round_status 가 한 번씩 돌려준다)
+        const done = featureDone(selected, results, reportedFeatures);
+        if (done) {
+          emit({ type: "feature-pass", screen: done.screen, feature: done.feature, cases: done.cases, titles: done.titles });
+          project.writeJson(`rounds/${id}/features.json`, [...project.readJson<any[]>(`rounds/${id}/features.json`, []), { ...done, at: nowIso(), reported: false }]);
+        }
       }
       if (meta.status === "running") meta.status = "finished";
     } catch (e: any) {
@@ -266,6 +287,34 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
 }
 
 const probesOff = (p: string) => p === "off";
+
+const featureKey = (c: Case) => `${c.screen ?? screenFromSteps(c)}|${c.feature ?? c.source_ref ?? "(기능 미지정)"}`;
+const screenFromSteps = (c: Case) => {
+  const g = c.steps.find((x) => x.op === "goto" && typeof x.url === "string");
+  try {
+    return g ? new URL(g.url, "http://x").pathname : "(화면 미지정)";
+  } catch {
+    return "(화면 미지정)";
+  }
+};
+
+/** 방금 끝난 케이스로 어떤 기능 단위가 "모두 통과"가 됐으면 그 기능을 돌려준다(한 기능은 한 번만). 스킵·해당 없음은 통과를 막지 않는다. */
+export function featureDone(selected: Case[], results: CaseResult[], reported: Set<string>): { screen: string; feature: string; cases: number; titles: string[] } | null {
+  const last = results[results.length - 1];
+  const lastCase = last && selected.find((c) => c.id === last.id);
+  if (!lastCase) return null;
+  const key = featureKey(lastCase);
+  if (reported.has(key)) return null;
+  const group = selected.filter((c) => featureKey(c) === key);
+  const res = group.map((c) => results.find((r) => r.id === c.id));
+  if (res.some((r) => !r)) return null; // 아직 안 돈 케이스가 있다
+  if (!res.some((r) => r!.status === "PASS")) return null;
+  if (res.some((r) => !["PASS", "SKIP", "NA"].includes(r!.status))) return null;
+  reported.add(key);
+  const [screen, feature] = key.split("|") as [string, string];
+  return { screen, feature, cases: group.length, titles: group.slice(0, 5).map((c) => c.title) };
+}
+
 
 /** 실패한 케이스를 3번 다시 돌려 불안정(flaky)인지 가린다: 모두 통과=통과, 일부만=불안정, 모두 실패=실패 */
 async function retryFailed(first: CaseResult, mk: (attempt: number) => Promise<CaseResult>, emit: (ev: Record<string, unknown>) => void, caseId: string): Promise<CaseResult> {

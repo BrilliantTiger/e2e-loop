@@ -226,6 +226,7 @@ if(s.round){$('live').src='/files/'+s.round.id+'/live.png?t='+Date.now()}
 const mx=Math.max(1,...s.trend.map(t=>t.issues));$('tr').innerHTML=s.trend.map(t=>'<div class="tb"><b>'+t.issues+'</b><i style="height:'+(4+t.issues/mx*60)+'px;background:'+(t.issues?'var(--fail)':'var(--pass)')+'"></i>'+t.round+(t.scope==='partial'?'·부분':'')+'</div>').join('')||'<span style="color:var(--mut)">아직 끝난 회차 없음</span>';
 $('feed').innerHTML=s.events.slice().reverse().map(e=>{const t=new Date(e.t).toLocaleTimeString();
 if(e.type==='step')return '<div class="'+(e.status==='ok'?'ok':'fail')+'">'+t+' '+esc(e.case)+' · '+esc(e.desc)+(e.error?' ✗ '+esc(e.error):'')+'</div>';
+if(e.type==='feature-pass')return '<div class="ok"><b>'+t+' ✔ 기능 완료</b> '+esc(e.feature)+' ('+esc(e.screen)+') · 케이스 '+e.cases+'건 모두 통과</div>';
 if(e.type==='case-start')return '<div><b>'+t+' ▶ '+esc(e.case)+'</b> '+esc(e.title)+'</div>';
 if(e.type==='case-end')return '<div class="'+(e.status==='PASS'?'ok':e.status==='FAIL'?'fail':'skip')+'"><b>'+t+' '+esc(e.status)+'</b> '+esc(e.case)+(e.reason?' — '+esc(e.reason):'')+'</div>';
 return '<div>'+t+' '+esc(e.type)+(e.round?' '+esc(e.round):'')+'</div>'}).join('');

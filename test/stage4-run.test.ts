@@ -126,3 +126,65 @@ test("로그아웃은 테스트한 뒤 다시 로그인하고 로그인 상태�
   expect(descs.some((d: string) => d.includes("점검(relogin-check)"))).toBe(true);
   expect(r.steps.every((s: any) => s.status === "ok")).toBe(true);
 }, 200000);
+
+test("브라우저가 중간에 죽으면 다시 띄워 그 케이스를 한 번 더 돌리고, 그래도 안 되면 사이트 결함이 아니라 검증 못 한 것(BLOCKED)으로 둔다", async () => {
+  const { PwDriver } = await import("../src/drivers/playwright.ts");
+  const orig = PwDriver.prototype.newSession;
+  const opens: number[] = [];
+  const origOpen = PwDriver.prototype.open;
+  PwDriver.prototype.open = async function (this: any) {
+    opens.push(Date.now());
+    return origOpen.call(this);
+  };
+  try {
+    // 1) 한 번만 죽는다 → 다시 띄우고 통과
+    let calls = 0;
+    PwDriver.prototype.newSession = async function (this: any, dir: string) {
+      if (++calls === 2) throw new Error("async newContext: Target page, context or browser has been closed");
+      return orig.call(this, dir);
+    };
+    A.aCaseUpsert({ project: root, cases: [spec("RB-1", [{ op: "goto", url: "/about" }, { op: "expect", sel: "h1", text: "소개" }]), spec("RB-2", [{ op: "goto", url: "/about" }, { op: "expect", sel: "h1", text: "소개" }])] });
+    const a = await round(["RB-1", "RB-2"]);
+    expect(a.results.map((r) => `${r.id}:${r.status}`)).toEqual(["RB-1:PASS", "RB-2:PASS"]);
+    expect(opens.length).toBe(2); // 라운드 시작 + 죽은 뒤 다시 띄움
+    expect(readFileSync(p.p("rounds", a.id, "events.ndjson"), "utf8")).toContain("browser-relaunch");
+
+    // 2) 계속 죽는다 → 사이트 결함(FAIL)이 아니라 BLOCKED
+    PwDriver.prototype.newSession = async function () {
+      throw new Error("async newContext: Target page, context or browser has been closed");
+    };
+    const b = await round(["RB-1"]);
+    expect(b.results[0].status).toBe("BLOCKED");
+    expect(b.results[0].reason).toContain("브라우저가 죽어");
+  } finally {
+    PwDriver.prototype.newSession = orig;
+    PwDriver.prototype.open = origOpen;
+  }
+}, 200000);
+
+test("기능 단위의 케이스가 모두 통과하면 그때그때 보고한다(실패가 섞인 기능은 보고하지 않고, 한 번만 알린다)", async () => {
+  const ok = [{ op: "goto", url: "/about" }, { op: "expect", sel: "h1", text: "소개" }];
+  A.aCaseUpsert({
+    project: root,
+    cases: [
+      spec("FA-1", ok, { feature: "기능 A" }), spec("FA-2", ok, { feature: "기능 A" }),
+      spec("FB-1", ok, { feature: "기능 B" }), spec("FB-2", [{ op: "goto", url: "/about" }, { op: "expect", sel: "h1", text: "없는 글" }], { feature: "기능 B" }),
+      spec("FC-1", ok, { feature: "기능 C" }),
+    ],
+  });
+  const start: any = await A.aRoundStart({ project: root, data: "keep", headless: true, only: ["FA-1", "FA-2", "FB-1", "FB-2", "FC-1"] });
+  const seen: string[] = [];
+  let st: any;
+  do {
+    st = await A.aRoundStatus({ project: root, wait_seconds: 5 });
+    seen.push(...(st.feature_reports?.report_to_user ?? []));
+  } while (st.running);
+  seen.push(...((await A.aRoundStatus({ project: root })) as any).feature_reports.report_to_user); // 이미 알린 것은 다시 나오지 않는다
+  const evs = readFileSync(p.p("rounds", start.round, "events.ndjson"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const order = evs.filter((e) => e.type === "feature-pass" || e.type === "case-end").map((e) => (e.type === "feature-pass" ? `보고:${e.feature}` : e.case));
+  // 기능 A 는 두 번째 케이스가 끝난 직후에 보고된다(첫 케이스 뒤가 아니다)
+  expect(order.indexOf("보고:기능 A")).toBe(order.indexOf("FA-2") + 1);
+  expect(order.filter((x) => x.startsWith("보고:")).sort()).toEqual(["보고:기능 A", "보고:기능 C"]); // B 는 실패가 섞여 보고 없음
+  // 상태 조회가 같은 보고를 두 번 돌려주지 않는다
+  expect(seen.sort()).toEqual(["기능 “기능 A” (화면 /) 의 케이스 2건이 모두 통과했습니다", "기능 “기능 C” (화면 /) 의 케이스 1건이 모두 통과했습니다"]);
+}, 200000);

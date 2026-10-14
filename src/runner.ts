@@ -29,6 +29,9 @@ function abs(url: string, base: string) {
   return /^https?:\/\//.test(url) ? url : new URL(url, base).toString();
 }
 
+/** 브라우저(또는 Ego 연결)가 사라졌을 때의 오류인가 — 사이트의 결함이 아니라 환경 문제다 */
+export const browserGone = (e: any) => /Target page, context or browser has been closed|browser has been closed|Browser closed|Target closed|ECONNREFUSED|fetch failed/i.test(String(e?.message ?? e));
+
 export function describe(s: Step): string {
   const t = (v: unknown) => (v === undefined ? "" : ` ${typeof v === "string" ? v : JSON.stringify(v)}`);
   switch (s.op) {
@@ -254,6 +257,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           throw new Error(`알 수 없는 스텝: ${s.op}`);
       }
     } catch (e: any) {
+      if (browserGone(e)) throw e; // 라운드가 브라우저를 다시 띄워 이 케이스를 한 번 더 돌린다
       sr.status = "fail";
       sr.error = String(e?.message ?? e).replace(/\n\s+/g, " ").slice(0, 600);
       failedAt = i;
