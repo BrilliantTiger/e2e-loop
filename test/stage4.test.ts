@@ -1,4 +1,4 @@
-// 4단계 시험(브라우저 없음): 이슈 정의, 완료 판정, 증거 처리(영상·도장·챕터), 시작 전 질문, 상한·반복 이슈, 테스트 계정, Ego 창 녹화.
+// 4단계 시험(브라우저 없음): 이슈 정의, 완료 판정, 증거 처리(영상·도장·챕터), 시작 전 질문, 상한·반복 이슈, 테스트 계정, Ego 화면 프레임 → 영상.
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +9,7 @@ import { completeCheck } from "../src/gate.ts";
 import { buildChapters, chaptersFile, dropSpans, EvidenceKit, evidenceUsage, mapTime, pruneEvidence, sha256File } from "../src/evidence.ts";
 import { aAccount, aPrestart, prestartStatus } from "../src/prestart.ts";
 import { displayAvailable, precheck, repeatedIssues } from "../src/round.ts";
-import { findEgoWindow, startWindowRecording } from "../src/drivers/egorec.ts";
+import { buildVideoFromFrames, concatList, listFrames } from "../src/drivers/egorec.ts";
 import { run } from "../src/env/detect.ts";
 import type { Case, CaseResult, RoundMeta } from "../src/types.ts";
 
@@ -309,29 +309,39 @@ test("ffmpeg 가 없으면 영상은 원본 그대로 두고 경고를 남긴다
   expect(out!.video).toBe(raw);
 });
 
-// ---------- Ego 창 녹화 ----------
+// ---------- Ego 화면 프레임 → 영상 ----------
 
-test("Ego 창 녹화: 작업 공간 이름이 제목에 든 창만 골라 그 창 하나를 녹화하고, 창이 없으면 이유를 남긴다", async () => {
-  const bin = tmp();
-  const log = join(bin, "sc.log");
-  stub(bin, "osascript", `echo '[{"id":112,"name":"다른 작업","owner":"ego lite","width":1920,"height":1013},{"id":777,"name":"e2e-loop","owner":"ego lite","width":1280,"height":800},{"id":9,"name":"e2e-loop","owner":"ego lite","width":66,"height":20}]'`);
-  // screencapture 가짜: 인자를 기록하고, SIGINT 를 받으면 파일을 마무리한다
-  stub(bin, "screencapture", `echo "$@" >> "${log}"\nfor a in "$@"; do out="$a"; done\ntrap 'echo mov > "$out"; exit 0' INT\nwhile true; do sleep 0.2; done`);
-  const env = { ...process.env, PATH: `${bin}:/usr/bin:/bin` };
-  const w = await findEgoWindow("e2e-loop", { env, waitMs: 500 });
-  expect(w!.id).toBe(777);
-  const out = join(tmp(), "video.mov");
-  const rec: any = await startWindowRecording(out, "e2e-loop", { env, waitMs: 500 });
-  expect(rec.stop).toBeDefined();
-  const done = await rec.stop();
-  expect(done.video).toBe(out);
-  expect(existsSync(out)).toBe(true);
-  expect(readFileSync(log, "utf8")).toContain("-l777");
-  expect(readFileSync(log, "utf8")).toContain("-v");
+test("Ego 프레임: 파일 이름의 시각으로 재생 시간을 정한다(프레임 사이 간격만큼 보여 줌)", () => {
+  const dir = tmp();
+  for (const [seq, at] of [[2, 1200], [1, 1000], [3, 2000]] as const) writeFileSync(join(dir, `f${String(seq).padStart(6, "0")}_${at}.jpg`), "x");
+  writeFileSync(join(dir, "other.txt"), "x");
+  const frames = listFrames(dir);
+  expect(frames.map((f) => f.at)).toEqual([1000, 1200, 2000]); // 번호 순서
+  const list = concatList(frames, 300).split("\n");
+  expect(list.filter((l) => l.startsWith("duration")).map((l) => l.split(" ")[1])).toEqual(["0.200", "0.800", "0.300"]);
+  expect(list.filter((l) => l.startsWith("file")).length).toBe(4); // 마지막 file 을 한 번 더
+});
 
-  const bin2 = tmp();
-  stub(bin2, "osascript", `echo '[{"id":112,"name":"다른 작업","owner":"ego lite","width":1920,"height":1013}]'`);
-  stub(bin2, "screencapture", "exit 0");
-  const none: any = await startWindowRecording(join(tmp(), "v.mov"), "e2e-loop", { env: { ...process.env, PATH: `${bin2}:/usr/bin:/bin` }, waitMs: 300 });
-  expect(none.warn).toContain("창을 찾지 못했습니다");
+test.skipIf(!ffmpeg)("Ego 프레임을 mp4(h264)로 만들고 프레임을 지운다. 프레임이 없으면 이유를 돌려준다", async () => {
+  const dir = tmp();
+  // 가짜 프레임: 색이 바뀌는 jpg 6장(0.2초 간격 → 재생 시간 약 1.4초)
+  const t0 = 1_700_000_000_000;
+  for (let i = 0; i < 6; i++) {
+    const r = await run([ffmpeg!, "-y", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=0x${(i * 40).toString(16).padStart(2, "0")}8040:size=321x241`, "-frames:v", "1", join(dir, `f${String(i + 1).padStart(6, "0")}_${t0 + i * 200}.jpg`)]);
+    expect(r.code).toBe(0);
+  }
+  const out = join(dir, "video.mp4");
+  const r = await buildVideoFromFrames(dir, out);
+  expect(r.warn).toBeUndefined();
+  expect(r.video).toBe(out);
+  expect(r.frames).toBe(6);
+  const pr = await run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,width,height:format=duration", "-of", "default=nw=1", out]);
+  expect(pr.out).toContain("codec_name=h264");
+  expect(pr.out).toContain("width=320"); // 홀수 크기는 짝수로 맞춘다
+  expect(parseFloat(pr.out.match(/duration=([\d.]+)/)![1]!)).toBeGreaterThan(1.1);
+  expect(parseFloat(pr.out.match(/duration=([\d.]+)/)![1]!)).toBeLessThan(1.8);
+  expect(listFrames(dir).length).toBe(0); // 프레임은 지운다
+  const none = await buildVideoFromFrames(tmp(), join(tmp(), "v.mp4"));
+  expect(none.video).toBeUndefined();
+  expect(none.warn).toContain("프레임을 하나도 받지 못해");
 });

@@ -127,7 +127,7 @@ export async function runChecks(env: Env = process.env): Promise<Check[]> {
     fix: ff ? "none" : ffCommand ? "ask" : "manual",
     command: ffCommand,
     manual: ffManual,
-    neededFor: "영상을 mp4(h264) + 챕터 파일로 만들 때(Chrome 계열 webm 변환, Ego 창 녹화 후처리)",
+    neededFor: "영상을 mp4(h264) + 챕터 파일로 만들 때(Chrome 계열 webm 변환, Ego 화면 프레임을 영상으로 만들기)",
   });
 
   const git = which("git", env);
@@ -157,15 +157,6 @@ export async function runChecks(env: Env = process.env): Promise<Check[]> {
 
   if (platform === "darwin") {
     const perm = await macPermissions(env);
-    checks.push({
-      id: "mac-screen-recording",
-      name: "macOS 화면 녹화 권한 (Ego 창 녹화)",
-      status: perm.screenRecording === true ? "ok" : perm.screenRecording === false ? "warn" : "na",
-      detail: perm.screenRecording === true ? "허용됨" : perm.screenRecording === false ? "허용되지 않음 — 시스템 설정 → 개인정보 보호 및 보안 → 화면 및 시스템 오디오 녹음에서 터미널(또는 이 도구를 실행하는 앱)을 켜세요" : "확인하지 못함",
-      fix: "manual",
-      manual: "시스템 설정 → 개인정보 보호 및 보안 → 화면 및 시스템 오디오 녹음 → 이 도구를 실행하는 앱 허용. 테스트 전 한 번만 하면 되는 설정 단계다.",
-      neededFor: "Ego 선택 시 영상 녹화",
-    });
     checks.push({
       id: "mac-accessibility",
       name: "macOS 접근성 권한 (컴퓨터 제어 도구)",

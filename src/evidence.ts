@@ -144,7 +144,7 @@ export class EvidenceKit {
     const rawSha = sha256File(rawPath);
     if (!this.ffmpeg || !this.ffprobe) return { video: rawPath };
     const base = rawPath.replace(/\.[^.]+$/, "");
-    const mp4 = base + ".mp4";
+    const mp4 = rawPath.endsWith(".mp4") ? base + ".out.mp4" : base + ".mp4"; // 입력과 같은 이름으로는 쓸 수 없다
     const meta = base + ".chapters.txt";
     try {
       const dur = parseFloat((await run([this.ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", rawPath], { timeoutMs: 30000 })).out);

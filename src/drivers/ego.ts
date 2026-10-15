@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { startWindowRecording } from "./egorec.ts";
+import { buildVideoFromFrames } from "./egorec.ts";
 import type { Config } from "../types.ts";
 import { expandEnv } from "../store.ts";
 import { type DPage, type Drained, type Driver, type NetEntry, type Session } from "./index.ts";
@@ -13,6 +13,7 @@ const BRIDGE = (port: number) => String.raw`
 const http = await import("node:http");
 const task = await taskSpace(${JSON.stringify(SPACE_NAME)});
 const page = task.page("p1");
+const rec = { timer: null, n: 0, busy: false, err: null };
 const call = async (m) => {
   switch (m.op) {
     case "ping": return "pong";
@@ -41,7 +42,33 @@ const call = async (m) => {
     case "eval": return await page.evaluate(m.expr);
     case "url": return await page.url();
     case "title": return await page.title();
-    case "shot": await page.screenshot({ path: m.path }); return m.path;
+    case "shot": {
+      // 브라우저 안쪽(CDP)에서 직접 캡처 — 탭이 가려져 있어도 된다. 안 되면 Ego 의 screenshot 으로 한 번 더 시도
+      const fs = await import("node:fs");
+      try { const r = await page.cdp("Page.captureScreenshot", { format: "png" }); fs.writeFileSync(m.path, Buffer.from(r.data, "base64")); return m.path; }
+      catch (e) { await page.screenshot({ path: m.path }); return m.path; }
+    }
+    case "recStart": {
+      // 작업 공간의 페이지 화면을 일정 간격으로 받아 파일로 쓴다(영상 재료). 이전 요청이 안 끝났으면 그 프레임은 건너뛴다.
+      const fs = await import("node:fs");
+      fs.mkdirSync(m.dir, { recursive: true });
+      if (rec.timer) clearInterval(rec.timer);
+      rec.n = 0; rec.busy = false; rec.err = null;
+      const grab = async () => {
+        if (rec.busy) return; rec.busy = true;
+        try { const r = await page.cdp("Page.captureScreenshot", { format: "jpeg", quality: m.quality || 60 }); rec.n++; fs.writeFileSync(m.dir + "/f" + String(rec.n).padStart(6, "0") + "_" + Date.now() + ".jpg", Buffer.from(r.data, "base64")); }
+        catch (e) { rec.err = String((e && e.message) || e).slice(0, 120); }
+        finally { rec.busy = false; }
+      };
+      await grab();
+      rec.timer = setInterval(grab, m.intervalMs || 200);
+      return { first: rec.n };
+    }
+    case "recStop": {
+      if (rec.timer) { clearInterval(rec.timer); rec.timer = null; }
+      for (let i = 0; i < 40 && rec.busy; i++) await new Promise((r) => setTimeout(r, 50));
+      return { frames: rec.n, err: rec.err };
+    }
     case "cdp": return await page.cdp(m.method, m.params || {});
   }
   throw new Error("unknown op " + m.op);
@@ -219,15 +246,27 @@ export class EgoDriver implements Driver {
     const kv = Object.fromEntries(Object.entries(this.cfg.auth?.localStorage ?? {}).map(([k, v]) => [k, expandEnv(v)]));
     await page.evaluate(`(() => { try { localStorage.clear(); sessionStorage.clear(); const kv = ${JSON.stringify(kv)}; for (const k of Object.keys(kv)) localStorage.setItem(k, kv[k]); } catch (e) {} return true; })()`);
     await page.drain();
-    // 창 하나만 녹화한다(macOS). 못 하면 이유를 남기고 스크린샷으로만 증거를 남긴다.
-    const rec = await startWindowRecording(join(evidenceDir, "video.mov"), SPACE_NAME);
+    // 작업 공간의 페이지 화면을 CDP 로 직접 받아 영상으로 만든다(창이 가려져도 된다)
+    const frames = join(evidenceDir, "_frames");
+    let recErr: string | undefined;
+    try {
+      await this.call({ op: "recStart", dir: frames, intervalMs: 200, quality: 60 }, 15000);
+    } catch (e: any) {
+      recErr = `Ego 화면 프레임 받기를 시작하지 못했습니다: ${String(e?.message ?? e).slice(0, 120)}`;
+    }
     return {
       page,
       finish: async () => {
-        const shotWarn = page.shotBroken ? "Ego 화면 캡처가 응답하지 않아(작업 탭이 가려져 있을 수 있음) 이 케이스는 스크린샷을 남기지 못했습니다." : undefined;
-        if ("warn" in rec) return { warn: [rec.warn, shotWarn].filter(Boolean).join(" ") };
-        const r = await rec.stop();
-        return shotWarn ? { ...r, warn: [r.warn, shotWarn].filter(Boolean).join(" ") } : r;
+        if (recErr) return { warn: recErr };
+        let stop: { frames: number; err: string | null } = { frames: 0, err: null };
+        try {
+          stop = await this.call({ op: "recStop" }, 15000);
+        } catch (e: any) {
+          return { warn: `Ego 화면 프레임 받기를 마치지 못했습니다: ${String(e?.message ?? e).slice(0, 120)}` };
+        }
+        const out = await buildVideoFromFrames(frames, join(evidenceDir, "video.mkv"));
+        const warns = [out.warn, stop.err && !out.video ? `프레임 캡처 오류: ${stop.err}` : undefined, page.shotBroken ? "Ego 스크린샷을 남기지 못했습니다." : undefined].filter(Boolean);
+        return { video: out.video, warn: warns.length ? warns.join(" ") : undefined };
       },
     };
   }

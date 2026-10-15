@@ -99,25 +99,19 @@ async function scenario(driver: DriverName, port: number, dash: number, opts: { 
     expect(meta1.code.head).toMatch(/^[0-9a-f]{7,}/); // 증거에 커밋
     const results1 = p.readJson<any[]>(`rounds/${r1.round}/results.json`, []);
     const withVideo = results1.filter((r) => r.video);
-    const evidenceNotes = (meta1.evidenceWarnings ?? []).join(" ") + results1.flatMap((r) => r.warnings).join(" ");
-    if (driver !== "ego") {
-      // Chrome 계열: 모든 케이스가 mp4(h264)+챕터, 스크린샷에 도장
-      expect(withVideo.length).toBe(results1.length);
-      for (const r of withVideo) {
-        expect(r.video).toMatch(/\.mp4$/);
-        expect(existsSync(join(rdir1, r.video))).toBe(true);
-        expect(existsSync(join(rdir1, r.chapters))).toBe(true);
-      }
-      const codec = await run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name", "-of", "csv=p=0", join(rdir1, withVideo[0].video)]);
-      expect(codec.out).toContain("h264");
-      const man = JSON.parse(readFileSync(join(rdir1, "evidence.json"), "utf8"));
-      expect(man.commit).toBe(meta1.code.head);
-      expect(man.files.some((f: any) => f.kind === "screenshot" && f.sha256 !== f.rawSha256)).toBe(true);
-      expect(html1).toContain("<video");
-    } else {
-      // Ego: 창을 찾으면 영상, 못 찾으면 이유가 적혀야 한다
-      if (withVideo.length === 0) expect(evidenceNotes).toContain("Ego 창 녹화");
+    // 모든 케이스가 mp4(h264)+챕터, 스크린샷에 도장(Chrome 계열은 Playwright 녹화, Ego 는 작업 공간 화면을 브라우저 안쪽에서 받아 만든다)
+    expect(withVideo.length).toBe(results1.length);
+    for (const r of withVideo) {
+      expect(r.video).toMatch(/\.mp4$/);
+      expect(existsSync(join(rdir1, r.video))).toBe(true);
+      expect(existsSync(join(rdir1, r.chapters))).toBe(true);
     }
+    const codec = await run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name", "-of", "csv=p=0", join(rdir1, withVideo[0].video)]);
+    expect(codec.out).toContain("h264");
+    const man = JSON.parse(readFileSync(join(rdir1, "evidence.json"), "utf8"));
+    expect(man.commit).toBe(meta1.code.head);
+    expect(man.files.some((f: any) => f.kind === "screenshot" && f.sha256 !== f.rawSha256)).toBe(true);
+    expect(html1).toContain("<video");
 
     // 5) 수정(회차가 끝난 뒤) → 커밋
     setBugs({});

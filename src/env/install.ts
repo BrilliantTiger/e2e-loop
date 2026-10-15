@@ -97,7 +97,7 @@ export async function doctor(opts: DoctorOpts = {}): Promise<EnvReport> {
   const edgeOk = has("edge");
   const chromiumOk = has("playwright-chromium");
   const driver_choices = [
-    { value: "ego", available: egoOk, note: egoOk ? "Ego Browser — 영상은 macOS 창 녹화(ffmpeg 후처리)" : "Ego 미설치/미동작" },
+    { value: "ego", available: egoOk, note: egoOk ? "Ego Browser — 영상은 작업 공간의 화면을 브라우저 안쪽에서 받아 만듦(창이 가려져도 됨, ffmpeg 필요)" : "Ego 미설치/미동작" },
     { value: "chrome", available: chromeOk, note: chromeOk ? "설치된 Google Chrome(Playwright 연결) — 영상·trace" : "Google Chrome 없음" },
     { value: "edge", available: edgeOk, note: edgeOk ? "설치된 Microsoft Edge(Playwright 연결) — 영상·trace" : "Microsoft Edge 없음" },
     { value: "chromium", available: chromiumOk, note: chromiumOk ? "Playwright 내장 Chromium — 영상·trace" : "Chromium 미설치 — fix 로 설치" },
