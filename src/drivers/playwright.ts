@@ -1,10 +1,11 @@
 import { chromium, type Browser, type Page } from "playwright";
-import { mkdirSync, renameSync, existsSync, statSync } from "node:fs";
+import { mkdirSync, existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../types.ts";
 import { expandEnv } from "../store.ts";
 import type { DPage, Drained, Driver, NetEntry, Session } from "./index.ts";
 import { LIB } from "./inpage.ts";
+import { buildVideoFromFrames } from "./egorec.ts";
 
 class PwPage implements DPage {
   constructor(private page: Page, private d: Drained, private timeout: number, private net: { list: NetEntry[]; pending: Promise<unknown>[] }) {}
@@ -114,7 +115,6 @@ export class PwDriver implements Driver {
     const ctx = await this.browser!.newContext({
       viewport: vp,
       ignoreHTTPSErrors: true,
-      recordVideo: { dir: join(evidenceDir, "_video"), size: vp },
     });
     const kv = Object.fromEntries(Object.entries(this.cfg.auth?.localStorage ?? {}).map(([k, v]) => [k, expandEnv(v)]));
     if (Object.keys(kv).length) {
@@ -133,6 +133,35 @@ export class PwDriver implements Driver {
     await ctx.addInitScript(LIB);
     await ctx.tracing.start({ screenshots: true, snapshots: true });
     const page = await ctx.newPage();
+    // 영상: CDP 스크린캐스트 프레임을 받아 mp4 로 만든다(화면이 바뀔 때만 프레임이 오고, videoFps 가 상한).
+    // Playwright 내장 녹화는 25fps 고정이라 쓰지 않는다. Ego 와 같은 방식이라 두 경로의 영상이 같은 형식이다.
+    const framesDir = join(evidenceDir, "_frames");
+    rmSync(framesDir, { recursive: true, force: true }); // 이전 녹화의 프레임이 섞이지 않게
+    mkdirSync(framesDir, { recursive: true });
+    const cdp = await ctx.newCDPSession(page);
+    const minGap = Math.floor(1000 / Math.max(1, this.cfg.videoFps));
+    let seq = 0;
+    let last = 0;
+    let recErr: string | undefined;
+    const writeFrame = (ts: number, b64: string) => {
+      seq++;
+      writeFileSync(join(framesDir, `f${String(seq).padStart(6, "0")}_${ts}.jpg`), Buffer.from(b64, "base64"));
+      last = ts;
+    };
+    // 스크린캐스트 프레임 시각은 벽시계(에포크) 기준이라 그대로 쓴다. 지금과 3초 넘게 차이 나는 프레임은 낡은 것이라 버린다.
+    cdp.on("Page.screencastFrame", (e: any) => {
+      void cdp.send("Page.screencastFrameAck", { sessionId: e.sessionId }).catch(() => {});
+      const ts = Math.round(e.metadata.timestamp * 1000);
+      if (Math.abs(Date.now() - ts) > 3000) return;
+      if (ts - last >= minGap) writeFrame(ts, e.data);
+    });
+    try {
+      const first: any = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 60 });
+      writeFrame(Date.now(), first.data);
+      await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1 });
+    } catch (e: any) {
+      recErr = `영상 프레임 받기를 시작하지 못했습니다: ${String(e?.message ?? e).slice(0, 120)}`;
+    }
     const d: Drained = { console: [], pageErrors: [], failedRequests: [] };
     const uniq = (arr: string[], s: string) => {
       if (!arr.includes(s) && arr.length < 50) arr.push(s);
@@ -177,8 +206,14 @@ export class PwDriver implements Driver {
     return {
       page: wrapped,
       finish: async (passed: boolean) => {
-        const res: { video?: string; trace?: string } = {};
-        const video = page.video();
+        const res: { video?: string; trace?: string; warn?: string } = {};
+        try {
+          if (!recErr) {
+            await cdp.send("Page.stopScreencast").catch(() => {});
+            const lastShot: any = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 60 }).catch(() => null);
+            if (lastShot) writeFrame(Math.max(Date.now(), last + 1), lastShot.data);
+          }
+        } catch {}
         try {
           if (!passed) {
             const tp = join(evidenceDir, "trace.zip");
@@ -187,14 +222,12 @@ export class PwDriver implements Driver {
           } else await ctx.tracing.stop();
         } catch {}
         await page.close().catch(() => {});
-        try {
-          const vp = await video?.path();
-          if (vp && existsSync(vp)) {
-            const dest = join(evidenceDir, "video.webm");
-            renameSync(vp, dest);
-            res.video = dest;
-          }
-        } catch {}
+        if (recErr) res.warn = recErr;
+        else {
+          const out = await buildVideoFromFrames(framesDir, join(evidenceDir, "video.mkv"));
+          if (out.video) res.video = out.video;
+          if (out.warn) res.warn = out.warn;
+        }
         await ctx.close().catch(() => {});
         return res;
       },

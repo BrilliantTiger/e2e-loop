@@ -13,7 +13,7 @@ const BRIDGE = (port: number) => String.raw`
 const http = await import("node:http");
 const task = await taskSpace(${JSON.stringify(SPACE_NAME)});
 const page = task.page("p1");
-const rec = { timer: null, n: 0, busy: false, err: null };
+const rec = { on: false, loop: null, n: 0, last: 0, err: null, dir: "", gap: 16 };
 const call = async (m) => {
   switch (m.op) {
     case "ping": return "pong";
@@ -49,24 +49,39 @@ const call = async (m) => {
       catch (e) { await page.screenshot({ path: m.path }); return m.path; }
     }
     case "recStart": {
-      // 작업 공간의 페이지 화면을 일정 간격으로 받아 파일로 쓴다(영상 재료). 이전 요청이 안 끝났으면 그 프레임은 건너뛴다.
+      // 작업 공간의 페이지 화면을 CDP 스크린캐스트로 받는다(화면이 바뀔 때마다 프레임이 온다 — Playwright 가 쓰는 방식).
+      // 상한(fps)보다 촘촘한 프레임은 건너뛴다. 탭이 가려져 있어도 된다.
       const fs = await import("node:fs");
       fs.mkdirSync(m.dir, { recursive: true });
-      if (rec.timer) clearInterval(rec.timer);
-      rec.n = 0; rec.busy = false; rec.err = null;
-      const grab = async () => {
-        if (rec.busy) return; rec.busy = true;
-        try { const r = await page.cdp("Page.captureScreenshot", { format: "jpeg", quality: m.quality || 60 }); rec.n++; fs.writeFileSync(m.dir + "/f" + String(rec.n).padStart(6, "0") + "_" + Date.now() + ".jpg", Buffer.from(r.data, "base64")); }
-        catch (e) { rec.err = String((e && e.message) || e).slice(0, 120); }
-        finally { rec.busy = false; }
-      };
-      await grab();
-      rec.timer = setInterval(grab, m.intervalMs || 200);
+      for (const n of fs.readdirSync(m.dir)) if (/^f\d+_\d+\.jpg$/.test(n)) fs.rmSync(m.dir + "/" + n); // 이전 녹화의 프레임이 섞이지 않게
+      rec.on = false; if (rec.loop) await rec.loop;
+      rec.n = 0; rec.last = 0; rec.err = null; rec.on = true; rec.dir = m.dir; rec.gap = m.minGapMs || 16;
+      const write = (ts, b64) => { rec.n++; fs.writeFileSync(rec.dir + "/f" + String(rec.n).padStart(6, "0") + "_" + ts + ".jpg", Buffer.from(b64, "base64")); rec.last = ts; };
+      await page.events();
+      try { const r0 = await page.cdp("Page.captureScreenshot", { format: "jpeg", quality: m.quality || 60 }); write(Date.now(), r0.data); } catch (e) { rec.err = String((e && e.message) || e).slice(0, 120); }
+      await page.cdp("Page.startScreencast", { format: "jpeg", quality: m.quality || 60, everyNthFrame: 1 });
+      rec.loop = (async () => {
+        while (rec.on) {
+          let evs = [];
+          try { evs = await page.events(); } catch (e) { rec.err = String((e && e.message) || e).slice(0, 120); }
+          for (const ev of evs) {
+            if (ev.method !== "Page.screencastFrame") continue;
+            // 프레임 시각은 벽시계(에포크) 기준이라 그대로 쓴다. 3초 넘게 차이 나는 프레임은 이전 녹화에서 남은 낡은 것이라 버린다.
+            const ts = Math.round(ev.params.metadata.timestamp * 1000);
+            try { await page.cdp("Page.screencastFrameAck", { sessionId: ev.params.sessionId }); } catch (e) {}
+            if (Math.abs(Date.now() - ts) <= 3000 && ts - rec.last >= rec.gap) write(ts, ev.params.data);
+          }
+          await new Promise((r) => setTimeout(r, 4));
+        }
+      })();
       return { first: rec.n };
     }
     case "recStop": {
-      if (rec.timer) { clearInterval(rec.timer); rec.timer = null; }
-      for (let i = 0; i < 40 && rec.busy; i++) await new Promise((r) => setTimeout(r, 50));
+      rec.on = false;
+      if (rec.loop) await rec.loop;
+      try { await page.cdp("Page.stopScreencast", {}); } catch (e) {}
+      const fs = await import("node:fs");
+      try { const r1 = await page.cdp("Page.captureScreenshot", { format: "jpeg", quality: 60 }); rec.n++; fs.writeFileSync(rec.dir + "/f" + String(rec.n).padStart(6, "0") + "_" + Math.max(Date.now(), rec.last + 1) + ".jpg", Buffer.from(r1.data, "base64")); } catch (e) {}
       return { frames: rec.n, err: rec.err };
     }
     case "cdp": return await page.cdp(m.method, m.params || {});
@@ -250,7 +265,7 @@ export class EgoDriver implements Driver {
     const frames = join(evidenceDir, "_frames");
     let recErr: string | undefined;
     try {
-      await this.call({ op: "recStart", dir: frames, intervalMs: 200, quality: 60 }, 15000);
+      await this.call({ op: "recStart", dir: frames, minGapMs: Math.floor(1000 / Math.max(1, this.cfg.videoFps)), quality: 60 }, 15000);
     } catch (e: any) {
       recErr = `Ego 화면 프레임 받기를 시작하지 못했습니다: ${String(e?.message ?? e).slice(0, 120)}`;
     }

@@ -65,6 +65,8 @@ Bun.serve({
     if (u.pathname === "/items")
       return html(layout("항목", `<h1>항목</h1><ul id="list">${items.map((i) => `<li>${i.name} <button class="del" data-id="${i.id}">삭제</button></li>`).join("")}</ul><p id="count"></p><a href="/">홈으로</a>`, `fetch('/api/items').then(r=>r.json()).then(j=>{document.querySelector('#count').textContent='총 '+j.length+'개';});
 document.querySelectorAll('.del').forEach(b=>b.onclick=async()=>{await fetch('/api/items/'+b.dataset.id,{method:'DELETE'});location.reload();});`));
+    if (u.pathname === "/anim")
+      return html(layout("애니메이션", `<h1>애니메이션</h1><div id="box" style="position:fixed;top:140px;left:0;width:80px;height:80px;background:#c33"></div>`, `let x=0;const b=document.querySelector('#box');const f=()=>{x=(x+9)%1400;b.style.left=x+'px';requestAnimationFrame(f)};requestAnimationFrame(f);`));
     if (u.pathname === "/upload")
       return html(layout("업로드", `<h1>업로드</h1><input id="file" type="file" accept=".csv,text/csv" aria-label="파일 선택"><button id="send">올리기</button><div id="up-out"></div>`, `
 const $=(s)=>document.querySelector(s);

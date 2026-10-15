@@ -26,7 +26,7 @@ export function concatList(frames: Frame[], lastMs = 300): string {
   const lines: string[] = [];
   frames.forEach((f, i) => {
     const next = frames[i + 1];
-    const dur = Math.max(0.04, ((next ? next.at - f.at : lastMs) as number) / 1000);
+    const dur = Math.max(0.001, ((next ? next.at - f.at : lastMs) as number) / 1000);
     lines.push(`file '${f.file.replace(/'/g, "'\\''")}'`, `duration ${dur.toFixed(3)}`);
   });
   if (frames.length) lines.push(`file '${frames[frames.length - 1]!.file.replace(/'/g, "'\\''")}'`); // concat 은 마지막 file 을 한 번 더 요구한다
@@ -41,9 +41,9 @@ export async function buildVideoFromFrames(dir: string, out: string, env: Env = 
   if (!ffmpeg) return { frames: frames.length, warn: "ffmpeg 가 없어 Ego 프레임을 영상으로 만들지 못했습니다(e2e_doctor 로 설치)." };
   const list = join(dir, "frames.txt");
   writeFileSync(list, concatList(frames));
-  const r = await run([ffmpeg, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", list, "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-fps_mode", "vfr", out], { env, timeoutMs: 300000 });
+  const r = await run([ffmpeg, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", list, "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-fps_mode", "passthrough", out], { env, timeoutMs: 300000 });
   if (r.code !== 0 || !existsSync(out)) return { frames: frames.length, warn: `Ego 프레임을 영상으로 만들지 못했습니다: ${r.out.slice(-160)}` };
-  for (const f of frames) rmSync(f.file, { force: true });
+  if (!process.env.E2E_KEEP_FRAMES) for (const f of frames) rmSync(f.file, { force: true });
   rmSync(list, { force: true });
   return { video: out, frames: frames.length };
 }
