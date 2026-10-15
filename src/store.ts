@@ -21,6 +21,7 @@ export const DEFAULT_CONFIG: Config = {
   deletePattern: "(delete|remove|trash|삭제|제거|지우기|휴지통)",
   destructivePattern: "(destroy|purge|drop|reset|withdraw|deactivate|초기화|탈퇴|폐기|비활성)",
   maxRounds: 10,
+  responder: { mode: "off", batchSeconds: 30 },
   evidenceLimitMB: 4096,
   promotedWarnings: [],
   acceptedSkips: [],
@@ -68,6 +69,7 @@ export class Project {
       data: { ...DEFAULT_CONFIG.data, ...(c.data ?? {}) },
       crawl: { ...DEFAULT_CONFIG.crawl, ...(c.crawl ?? {}) },
       viewport: { ...DEFAULT_CONFIG.viewport, ...(c.viewport ?? {}) },
+      responder: { ...DEFAULT_CONFIG.responder, ...(c.responder ?? {}) },
     } as Config;
   }
   saveConfig(c: Config) {

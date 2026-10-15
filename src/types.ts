@@ -77,6 +77,8 @@ export interface Config {
   /** 사람이 근거를 대고 "검증 못 해도 완료로 봄"으로 받아들인 케이스 id */
   acceptedSkips: string[];
   dashboardPort: number;
+  /** 현황판 코멘트에 일회용 AI 로 자동 응답할지: off(기본, 사용자가 켜야 함) / answer(읽기·코드 분석만, 답만 함) / fix(answer + 오너가 수정 지시한 것은 코드까지 고침) */
+  responder: { mode: "off" | "answer" | "fix"; agent?: "claude" | "codex"; /** 연달아 달린 코멘트를 묶어 한 번에 처리하는 대기 시간(초). 호출 횟수 상한은 두지 않는다 */ batchSeconds: number };
   /** 현황판을 띄울 내부망 IP(192.168.x.x · 10.x.x.x). 비우면 첫 내부망 주소 */
   dashboardHost?: string;
   probes: "auto" | "off";

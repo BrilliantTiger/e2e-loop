@@ -44,7 +44,7 @@ const HELP = `e2e-loop — 웹 E2E 회차 루프
   check                                  완료 판정
   feedback --text "요청" [--apply now --mode restart|in-flow]
   status                                 현재 상태와 다음 행동
-  dashboard [--open]                     실시간 대시보드
+  dashboard [--open] [--host IP]         현황판(내부망 IP, 토큰). 이 프로세스가 떠 있는 동안 코멘트를 받고 자동 응답도 맡는다
   mcp                                    MCP 서버 실행(stdio)
 공통: --project <대상 프로젝트 경로>(기본: 현재 폴더)`;
 
@@ -80,7 +80,7 @@ switch (cmd) {
   case "feedback": print(A.aFeedback({ ...flags, project } as any)); break;
   case "status": print(A.aStatus({ project })); break;
   case "dashboard": {
-    print(A.aDashboard({ project, open: !!flags.open }));
+    print(await A.aDashboard({ project, open: !!flags.open, host: typeof flags.host === "string" ? flags.host : undefined }));
     await new Promise(() => {});
     break;
   }

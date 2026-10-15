@@ -137,16 +137,16 @@ test.skipIf(!hasLan)("토큰은 프로젝트에 계속 남고, rotate 하면 옛
 
 test.skipIf(!hasLan)("e2e_dashboard: 토큰이 붙은 내부망 주소와 안내를 돌려주고, 다시 불러도 같은 서버", async () => {
   const root = tmp();
-  const a: any = A.aDashboard({ project: root });
+  const a: any = await A.aDashboard({ project: root });
   stops.push(() => (A as any).aDashboard);
   expect(a.lan).toBe(true);
   expect(a.access_url).toMatch(/^http:\/\/(192\.168\.|10\.)[\d.]+:\d+\/\?token=[0-9a-f]{48}$/);
   expect(a.notice).toContain("토큰");
   expect(a.notice).toContain("테스트 데이터와 테스트 계정만 입력");
-  const b: any = A.aDashboard({ project: root });
+  const b: any = await A.aDashboard({ project: root });
   expect(b.access_url).toBe(a.access_url);
   const r = await fetch(a.url + "/api/state");
   expect(r.status).toBe(401);
-  const rot: any = A.aDashboard({ project: root, rotate_token: true });
+  const rot: any = await A.aDashboard({ project: root, rotate_token: true });
   expect(rot.access_url).not.toBe(a.access_url);
 });

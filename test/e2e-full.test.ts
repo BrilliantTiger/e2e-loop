@@ -70,7 +70,7 @@ async function scenario(driver: DriverName, port: number, dash: number, opts: { 
     const sheet: any = A.aSheet({ project: root });
     expect(sheet.ready_to_start).toBe(true);
     expect(sheet.summary).toContain("화면");
-    const dashInfo: any = A.aDashboard({ project: root });
+    const dashInfo: any = await A.aDashboard({ project: root });
     expect(dashInfo.access_url).toContain("token=");
 
     // 4) 1라운드 (버그 있는 상태)

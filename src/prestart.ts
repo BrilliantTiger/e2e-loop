@@ -17,6 +17,8 @@ export interface Prestart {
   login?: "none" | "provided";
   account?: AccountPlan;
   noticeAcknowledged?: boolean;
+  /** 코멘트 자동 응답 질문에 답했는가(꼭 답해야 하는 질문은 아니다) */
+  responderAnswered?: boolean;
   updatedAt?: string;
 }
 
@@ -44,6 +46,9 @@ export interface PrestartAnswers {
   loginLocalStorage?: Record<string, string>;
   account?: AccountPlan;
   acknowledged?: boolean;
+  /** 현황판 코멘트에 일회용 AI 로 자동 응답할지(기본 off). answer=읽기·코드 분석만, fix=오너가 수정 지시한 것은 코드까지 */
+  commentResponder?: "off" | "answer" | "fix";
+  responderAgent?: "claude" | "codex";
 }
 
 export function prestartStatus(p: Project) {
@@ -58,7 +63,10 @@ export function prestartStatus(p: Project) {
   if (!st.account) questions.push({ id: "account", ask: "테스트 계정이 필요한가요? none(필요 없음) / provided(사용자가 줌) / create(만들어 달라고 함). create 면 먼저 만드는 방법(화면·API·DB 스크립트)을 묻고 method 로 기록하세요." });
   else if (st.account.mode === "create" && !st.account.method) questions.push({ id: "account-method", ask: "계정을 만들라고 했습니다. 만드는 방법을 먼저 물으세요: 화면(ui) · API(api) · DB 스크립트(db-script)." });
   if (!st.noticeAcknowledged) questions.push({ id: "notice", ask: `사용자에게 이 안내를 한 뒤 acknowledged=true 로 기록하세요: “${NOTICE}”` });
-  return { ready: questions.length === 0, questions, notice: NOTICE, answered: { data: cfg.data.policy, resetCommand: cfg.data.resetCommand ?? null, maxRounds: st.maxRoundsAnswered ? cfg.maxRounds : null, login: st.login ?? null, account: st.account ?? null, noticeAcknowledged: !!st.noticeAcknowledged } };
+  // 라운드 시작을 막지는 않지만 시작 전에 한 번 묻는 것(코멘트에 일회용 AI 를 자동으로 실행하는 것이라 켜기 전에 사용자 확인이 필요하다)
+  const optional: { id: string; ask: string }[] = [];
+  if (!st.responderAnswered) optional.push({ id: "comment-responder", ask: "현황판 코멘트에 AI 가 자동으로 응답하게 할까요? off(기본, 꺼짐) / answer(코드를 읽고 분석해 답만 함, 수정 안 함) / fix(answer + 오너가 현황판에서 '수정 지시'로 보낸 것은 코드까지 고침). 켜면 코멘트가 달릴 때마다 일회용 AI(claude/codex)가 실행되어 사용량이 듭니다(호출 횟수 상한은 없음). 사용자가 켜겠다고 한 경우에만 commentResponder 로 기록하세요." });
+  return { ready: questions.length === 0, questions, optional, responder: cfg.responder.mode, notice: NOTICE, answered: { data: cfg.data.policy, resetCommand: cfg.data.resetCommand ?? null, maxRounds: st.maxRoundsAnswered ? cfg.maxRounds : null, login: st.login ?? null, account: st.account ?? null, noticeAcknowledged: !!st.noticeAcknowledged } };
 }
 
 export function aPrestart(p: Project, a: PrestartAnswers) {
@@ -82,6 +90,9 @@ export function aPrestart(p: Project, a: PrestartAnswers) {
   if (a.login === "none") st.login = "none";
   if (a.account) st.account = a.account;
   if (a.acknowledged) st.noticeAcknowledged = true;
+  if (a.commentResponder) cfg.responder = { ...cfg.responder, mode: a.commentResponder };
+  if (a.responderAgent) cfg.responder = { ...cfg.responder, agent: a.responderAgent };
+  if (a.commentResponder) st.responderAnswered = true;
   st.updatedAt = nowIso();
   p.saveConfig(cfg);
   p.writeJson("prestart.json", st);

@@ -8,10 +8,11 @@ import { trend } from "./report.ts";
 import { runningRound } from "./round.ts";
 import { isIssue } from "./issues.ts";
 import { addComment, notifyTester, readComments } from "./comments.ts";
+import { triggerResponder } from "./responder.ts";
 
 const MIME: Record<string, string> = { html: "text/html; charset=utf-8", png: "image/png", jpg: "image/jpeg", webm: "video/webm", mp4: "video/mp4", mov: "video/quicktime", txt: "text/plain; charset=utf-8", json: "application/json", md: "text/plain; charset=utf-8", zip: "application/zip", ndjson: "text/plain" };
 
-function state(project: Project, roundId?: string) {
+function state(project: Project, roundId?: string, role: "owner" | "viewer" = "viewer") {
   const rounds = project.rounds();
   const running = runningRound(project);
   const cur: RoundMeta | undefined = rounds.find((r) => r.id === (roundId ?? running?.id)) ?? rounds[rounds.length - 1];
@@ -35,6 +36,8 @@ function state(project: Project, roundId?: string) {
     project: project.root,
     counts,
     comments: readComments(project),
+    role,
+    responder: project.config().responder.mode,
     rounds: rounds.map((r) => ({ id: r.id, status: r.status, scope: r.scope, summary: r.summary })),
     round: cur ?? null,
     running: !!running && running.id === cur?.id,
@@ -66,8 +69,8 @@ export function lanAddresses(ifaces: ReturnType<typeof networkInterfaces> = netw
 }
 
 /** 접속 토큰: 프로젝트마다 .e2e/dashboard-token 에 두고 계속 쓴다(rotate 하면 새로 만든다). 토큰 없는 접속은 막는다. */
-export function dashboardToken(project: Project, rotate = false): string {
-  const file = project.p("dashboard-token");
+export function dashboardToken(project: Project, rotate = false, kind: "viewer" | "owner" = "viewer"): string {
+  const file = project.p(kind === "owner" ? "dashboard-owner-token" : "dashboard-token");
   if (!rotate) {
     try {
       const t = readFileSync(file, "utf8").trim();
@@ -113,6 +116,10 @@ export interface DashboardInfo {
   /** 토큰이 붙은 접속 주소(비밀로 다룬다) */
   access_url: string;
   token: string;
+  /** 오너 토큰(AI 의 주인만 안다. 수정 지시를 보낼 수 있다) */
+  ownerToken: string;
+  /** 오너 전용 접속 주소 */
+  owner_url: string;
   /** 내부망 IP 로 띄웠는가 */
   lan: boolean;
   alternatives: string[];
@@ -120,7 +127,7 @@ export interface DashboardInfo {
   stop: () => void;
 }
 
-export function startDashboard(project: Project, preferred?: number, opts: { host?: string; ifaces?: ReturnType<typeof networkInterfaces>; rotateToken?: boolean } = {}): DashboardInfo {
+export function startDashboard(project: Project, preferred?: number, opts: { host?: string; ifaces?: ReturnType<typeof networkInterfaces>; rotateToken?: boolean; rotateOwnerToken?: boolean } = {}): DashboardInfo {
   const base = preferred ?? project.config().dashboardPort;
   const lans = lanAddresses(opts.ifaces);
   const want = opts.host ?? project.config().dashboardHost;
@@ -128,6 +135,7 @@ export function startDashboard(project: Project, preferred?: number, opts: { hos
   const host = want ?? lans[0]?.address ?? "127.0.0.1";
   const lan = host !== "127.0.0.1";
   const token = dashboardToken(project, opts.rotateToken);
+  const ownerToken = dashboardToken(project, opts.rotateOwnerToken, "owner");
   const fails = new Map<string, number[]>();
   const commentHits = new Map<string, number[]>();
   let server: ReturnType<typeof Bun.serve> | undefined;
@@ -143,14 +151,16 @@ export function startDashboard(project: Project, preferred?: number, opts: { hos
           const recent = (fails.get(ip) ?? []).filter((t) => now - t < 60000);
           if (recent.length >= 20) return new Response("too many attempts", { status: 429 });
           const given = u.searchParams.get("token") ?? req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? cookieOf(req, "e2e_token") ?? "";
-          if (!given || !safeEq(given, token)) {
+          // 역할은 어느 토큰으로 들어왔는지로 서버가 정한다(오너 토큰은 AI 의 주인만 안다)
+          const role: "owner" | "viewer" | null = !given ? null : safeEq(given, ownerToken) ? "owner" : safeEq(given, token) ? "viewer" : null;
+          if (!role) {
             fails.set(ip, [...recent, now]);
             return new Response(DENY, { status: 401, headers: { "content-type": MIME.html!, "cache-control": "no-store" } });
           }
           // 토큰이 주소에 실려 왔으면 쿠키로 바꿔 심고 주소에서 지운다(영상·이미지 요청도 쿠키로 통과)
           if (u.searchParams.has("token")) {
             u.searchParams.delete("token");
-            return new Response(null, { status: 302, headers: { location: u.pathname + (u.search || ""), "set-cookie": `e2e_token=${token}; Path=/; HttpOnly; SameSite=Strict`, "cache-control": "no-store" } });
+            return new Response(null, { status: 302, headers: { location: u.pathname + (u.search || ""), "set-cookie": `e2e_token=${role === "owner" ? ownerToken : token}; Path=/; HttpOnly; SameSite=Strict`, "cache-control": "no-store" } });
           }
           if (u.pathname === "/") return new Response(PAGE, { headers: { "content-type": MIME.html!, "cache-control": "no-store" } });
           if (u.pathname === "/api/comments" && req.method === "POST") {
@@ -171,16 +181,18 @@ export function startDashboard(project: Project, preferred?: number, opts: { hos
               if (raw.length > 6000) return Response.json({ error: "너무 깁니다" }, { status: 413 });
               try {
                 const b = JSON.parse(raw);
-                const c = addComment(project, { case: String(b.case ?? ""), text: String(b.text ?? ""), author: String(b.author ?? ""), round: typeof b.round === "string" ? b.round : undefined });
+                const c = addComment(project, { case: String(b.case ?? ""), text: String(b.text ?? ""), author: String(b.author ?? ""), round: typeof b.round === "string" ? b.round : undefined, role, instruct: b.instruct === true });
                 commentHits.set(ip, [...recentC, Date.now()]);
-                void notifyTester(project).catch(() => {});
+                // 자동 응답이 켜져 있으면 일회용 AI 가, 꺼져 있으면 테스터 세션 터미널 알림이 맡는다
+                if (project.config().responder.mode === "off") void notifyTester(project).catch(() => {});
+                else triggerResponder(project);
                 return Response.json(c, { status: 201 });
               } catch (e: any) {
                 return Response.json({ error: String(e?.message ?? e) }, { status: 400 });
               }
             });
           }
-          if (u.pathname === "/api/state") return Response.json(state(project, u.searchParams.get("round") ?? undefined), { headers: { "cache-control": "no-store" } });
+          if (u.pathname === "/api/state") return Response.json(state(project, u.searchParams.get("round") ?? undefined, role), { headers: { "cache-control": "no-store" } });
           if (u.pathname.startsWith("/files/")) {
             const rel = decodeURIComponent(u.pathname.slice(7));
             const root = resolve(project.p("rounds"));
@@ -199,7 +211,7 @@ export function startDashboard(project: Project, preferred?: number, opts: { hos
   const access_url = `${url}/?token=${token}`;
   project.writeJson("dashboard.json", { port: server.port, host, pid: process.pid, url, lan });
   return {
-    port: server.port!, host, url, access_url, token, lan,
+    port: server.port!, host, url, access_url, token, ownerToken, owner_url: `${url}/?token=${ownerToken}`, lan,
     alternatives: lans.filter((l) => l.address !== host).map((l) => `http://${l.address}:${server!.port}`),
     warn: lan ? undefined : "내부망 IP(192.168.x.x · 10.x.x.x)를 찾지 못해 이 컴퓨터에서만 접속됩니다. 같은 망의 다른 기기에서 보려면 네트워크에 연결한 뒤 다시 띄우세요.",
     stop: () => server!.stop(true),
@@ -225,10 +237,10 @@ main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;p
 .s{font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;color:#fff}.s.PASS{background:var(--pass)}.s.FAIL{background:var(--fail)}.s.SKIP,.s.NA,.s.BLOCKED{background:var(--skip)}
 .tr{display:flex;gap:10px;align-items:flex-end;height:90px}.tb{display:flex;flex-direction:column;align-items:center;font-size:11px;gap:2px}.tb i{width:22px;border-radius:3px 3px 0 0;display:block}
 .fb{background:#fff3cd;color:#664d03;border-radius:6px;padding:6px 10px;margin-top:6px;font-size:12px}a{color:var(--acc)}
-.wide{grid-column:1/-1}.tabs button.on{background:var(--acc);color:#fff}.cmrow td{background:var(--card)}.cm{border-left:3px solid var(--line);padding:2px 10px;margin:6px 0}.cm .rp{margin:4px 0 4px 14px;border-left:3px solid var(--acc);padding-left:8px}.cm .txt{white-space:pre-wrap}.mut{color:var(--mut);font-size:12px}.cf{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;margin-top:6px}.cf textarea{flex:1;min-width:240px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:inherit}.cf input{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;width:120px}.note{background:#fff3cd;color:#664d03;padding:6px 16px;font-size:12px}.s.FLAKY{background:var(--warn)}.s.BLOCKED{background:var(--fail)}
+.wide{grid-column:1/-1}.tabs button.on{background:var(--acc);color:#fff}.badge{background:var(--acc);color:#fff;border-radius:99px;padding:1px 8px;font-size:11px;font-weight:700}.badge.ins{background:var(--warn)}.cm.own{border-left-color:var(--acc)}.inst{display:flex;align-items:center;gap:4px;font-size:12px;margin:4px 0;white-space:nowrap}.cf input[type=checkbox]{width:auto}.cmrow td{background:var(--card)}.cm{border-left:3px solid var(--line);padding:2px 10px;margin:6px 0}.cm .rp{margin:4px 0 4px 14px;border-left:3px solid var(--acc);padding-left:8px}.cm .txt{white-space:pre-wrap}.mut{color:var(--mut);font-size:12px}.cf{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;margin-top:6px}.cf textarea{flex:1;min-width:240px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:inherit}.cf input{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;width:120px}.note{background:#fff3cd;color:#664d03;padding:6px 16px;font-size:12px}.s.FLAKY{background:var(--warn)}.s.BLOCKED{background:var(--fail)}
 </style></head><body>
 <div class="note" id="notice"></div>
-<header><h1>E2E 실시간 대시보드</h1><span id="proj" style="color:var(--mut)"></span><select id="sel"></select><span id="st" class="pill"></span><a id="rep" style="display:none" target="_blank">결과 보고서 열기</a></header>
+<header><h1>E2E 실시간 대시보드</h1><span id="who" class="badge" style="display:none"></span><span id="proj" style="color:var(--mut)"></span><select id="sel"></select><span id="st" class="pill"></span><a id="rep" style="display:none" target="_blank">결과 보고서 열기</a></header>
 <main>
 <section class="card"><h2>진행</h2><div class="bar"><i id="bar" style="width:0"></i></div><div id="prog" style="margin:6px 0"></div>
 <div class="cnt"><div><b id="cp" class="ok">0</b>통과</div><div><b id="cf" class="fail">0</b>이슈</div><div><b id="cs">0</b>스킵·해당 없음</div><div><b id="cw" style="color:var(--warn)">0</b>경고</div></div>
@@ -248,7 +260,7 @@ function draw(){const s=last;if(!s)return;$('proj').textContent=s.project;
 const sel=$('sel');if(sel.options.length!==s.rounds.length){sel.innerHTML=s.rounds.map(r=>'<option>'+r.id+'</option>').join('')}if(s.round&&!round)sel.value=s.round.id;
 const st=$('st');const rs=s.round?s.round.status:'';st.textContent=rs==='running'?'진행 중':rs==='finished'?'완료':rs==='aborted'?'중단':'대기';st.className='pill '+rs;
 const rep=$('rep');if(s.hasReport){rep.style.display='';rep.href='/files/'+s.round.id+'/report.html'}else rep.style.display='none';
-$('notice').textContent=s.notice;$('cp').textContent=s.counts.pass;$('cf').textContent=s.counts.issue;$('cs').textContent=s.counts.skip;$('cw').textContent=s.counts.warn;
+$('notice').textContent=s.notice;$('who').textContent=s.role==='owner'?'🔑 오너 모드':'';$('who').style.display=s.role==='owner'?'':'none';$('cp').textContent=s.counts.pass;$('cf').textContent=s.counts.issue;$('cs').textContent=s.counts.skip;$('cw').textContent=s.counts.warn;
 const pr=s.progress;$('bar').style.width=pr.total?Math.round(pr.done/pr.total*100)+'%':'0';$('prog').textContent=pr.done+' / '+pr.total+' 케이스'+(s.round?' · '+s.round.driver+' · 데이터 '+s.round.data.decision:'');
 $('cur').textContent=s.running&&pr.current?'▶ '+pr.current.id+' '+pr.current.title:'';
 $('fbs').innerHTML=(s.feedback||[]).map(f=>'<div class="fb">다음 회차에 적용할 요청 '+esc(f.id)+': '+esc(f.text)+'</div>').join('');
@@ -266,15 +278,15 @@ const keep=document.activeElement&&document.activeElement.dataset&&document.acti
 $('rows').innerHTML=rows.slice().reverse().map(r=>{const list=byCase[r.id]||[];const open=openPanels.has(r.id);const canC=isI(r)||list.length;
 const wait=list.filter(c=>c.status==='open').length;
 let h='<tr><td><span class="s '+r.status+'">'+r.status+'</span></td><td><b>'+esc(r.id)+'</b> '+esc(r.title)+(r.priority?' <b class="fail">'+r.priority+'</b>':'')+'</td><td>'+esc(r.reason||'')+(r.warnings?' <span style="color:var(--warn)">경고 '+r.warnings+'</span>':'')+'</td><td>'+(r.video?'<a target="_blank" href="/files/'+s.round.id+'/'+r.video+'">▶ 영상</a> ':'')+(canC?'<button data-toggle="'+esc(r.id)+'">💬 '+list.length+(wait?' · 답 대기 '+wait:'')+'</button>':'')+'</td></tr>';
-if(open&&canC){h+='<tr class="cmrow"><td colspan="4">'+list.map(c=>'<div class="cm"><b>'+esc(c.author)+'</b> <span class="mut">'+new Date(c.createdAt).toLocaleString()+' · '+({open:'답 대기',answered:'AI 답변함',resolved:'정리됨'}[c.status])+'</span><div class="txt">'+esc(c.text)+'</div>'+c.replies.map(x=>'<div class="rp"><b>'+(x.by==='ai'?'AI':'사용자')+'</b> <span class="mut">'+new Date(x.at).toLocaleString()+'</span><div class="txt">'+esc(x.text)+'</div></div>').join('')+'</div>').join('')+'<div class="cf"><input data-draft="a-'+esc(r.id)+'" placeholder="이름(선택)" maxlength="40" value="'+esc(drafts['a-'+r.id]??localStorage.getItem('e2e_author')??'')+'"><textarea data-draft="t-'+esc(r.id)+'" rows="2" maxlength="2000" placeholder="이 이슈에 코멘트를 남기면 AI 가 읽고 대응합니다">'+esc(drafts['t-'+r.id]??'')+'</textarea><button data-send="'+esc(r.id)+'">코멘트 달기</button> <span class="mut" id="msg-'+esc(r.id)+'"></span></div></td></tr>'}
+if(open&&canC){h+='<tr class="cmrow"><td colspan="4">'+list.map(c=>'<div class="cm'+(c.role==='owner'?' own':'')+'"><b>'+(c.role==='owner'?'🔑 ':'')+esc(c.author)+'</b>'+(c.role==='owner'?' <span class="badge">오너</span>':'')+(c.instruct?' <span class="badge ins">🔧 수정 지시</span>':'')+' <span class="mut">'+new Date(c.createdAt).toLocaleString()+' · '+({open:'답 대기',answered:'AI 답변함',resolved:'정리됨'}[c.status])+'</span><div class="txt">'+esc(c.text)+'</div>'+c.replies.map(x=>'<div class="rp"><b>'+(x.by==='ai'?'AI':'사용자')+'</b> <span class="mut">'+new Date(x.at).toLocaleString()+'</span><div class="txt">'+esc(x.text)+'</div></div>').join('')+'</div>').join('')+'<div class="cf"><input data-draft="a-'+esc(r.id)+'" placeholder="이름(선택)" maxlength="40" value="'+esc(drafts['a-'+r.id]??localStorage.getItem('e2e_author')??'')+'"><textarea data-draft="t-'+esc(r.id)+'" rows="2" maxlength="2000" placeholder="'+(s.role==='owner'?'오너로 코멘트합니다. 아래 “수정 지시”를 체크하면 AI 가 코드를 고칩니다':'이 이슈에 코멘트를 남기면 AI 가 읽고 대응합니다')+'">'+esc(drafts['t-'+r.id]??'')+'</textarea>'+(s.role==='owner'?'<label class="inst"><input type="checkbox" data-inst="'+esc(r.id)+'"'+(drafts['i-'+r.id]?' checked':'')+'> 🔧 수정 지시(AI 가 코드를 고침)</label>':'')+'<button data-send="'+esc(r.id)+'">코멘트 달기</button> <span class="mut" id="msg-'+esc(r.id)+'"></span></div></td></tr>'}
 return h}).join('');
 if(keep){const el=document.querySelector('[data-draft="'+keep+'"]');if(el){el.focus();try{el.setSelectionRange(el.value.length,el.value.length)}catch(e){}}}}
 const openPanels=new Set(),drafts={};
-$('rows').addEventListener('input',e=>{const d=e.target.dataset&&e.target.dataset.draft;if(d)drafts[d]=e.target.value});
+$('rows').addEventListener('input',e=>{const d=e.target.dataset&&e.target.dataset.draft;if(d)drafts[d]=e.target.value;if(e.target.dataset&&e.target.dataset.inst)drafts['i-'+e.target.dataset.inst]=e.target.checked});
 $('rows').addEventListener('click',async e=>{const t=e.target;if(t.dataset&&t.dataset.toggle){const id=t.dataset.toggle;openPanels.has(id)?openPanels.delete(id):openPanels.add(id);draw();return}
 if(t.dataset&&t.dataset.send){const id=t.dataset.send;const text=(drafts['t-'+id]||'').trim();const author=(drafts['a-'+id]??localStorage.getItem('e2e_author')??'').trim();const msg=document.getElementById('msg-'+id);
 if(!text){msg.textContent='내용을 적어 주세요';return}
-try{const r=await fetch('/api/comments',{method:'POST',headers:{'content-type':'application/json','x-e2e-comment':'1'},body:JSON.stringify({case:id,text,author,round:last&&last.round?last.round.id:undefined})});const j=await r.json();if(!r.ok){msg.textContent=j.error||'실패';return}
-if(author)localStorage.setItem('e2e_author',author);drafts['t-'+id]='';await tick()}catch(err){msg.textContent='보내지 못했습니다'}}});
+try{const r=await fetch('/api/comments',{method:'POST',headers:{'content-type':'application/json','x-e2e-comment':'1'},body:JSON.stringify({case:id,text,author,round:last&&last.round?last.round.id:undefined,instruct:!!drafts['i-'+id]})});const j=await r.json();if(!r.ok){msg.textContent=j.error||'실패';return}
+if(author)localStorage.setItem('e2e_author',author);drafts['t-'+id]='';drafts['i-'+id]=false;await tick()}catch(err){msg.textContent='보내지 못했습니다'}}});
 tick();setInterval(tick,1200);
 </script></body></html>`;

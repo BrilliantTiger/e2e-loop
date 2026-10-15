@@ -1,5 +1,6 @@
 // MCP 와 CLI 가 함께 쓰는 동작 모음. 반환값은 JSON 으로 직렬화되는 평범한 객체.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import type { Case, Config, DriverName, Source, Step } from "./types.ts";
 import { Project, nowIso } from "./store.ts";
 import { doctor } from "./doctor.ts";
@@ -17,7 +18,7 @@ import { listComments, openCount, replyComment, resolveComments, UNTRUSTED_NOTIC
 import { coverage } from "./coverage.ts";
 import { precheck, runningRound, startRound, stopRound, type StartOpts } from "./round.ts";
 import { completeCheck } from "./gate.ts";
-import { startDashboard, type DashboardInfo } from "./dashboard.ts";
+import { dashboardToken, startDashboard, type DashboardInfo } from "./dashboard.ts";
 import { addFeedback, resolveFeedback } from "./feedback.ts";
 import { trend } from "./report.ts";
 import { evidenceSources, intake, readIntake, readSession, sessionStart, type Material, type SessionStartOpts } from "./session.ts";
@@ -183,8 +184,8 @@ export function aComments(a: { project?: string; action?: "list" | "reply" | "re
   return {
     notice: UNTRUSTED_NOTICE,
     open: openCount(p),
-    comments: list.map((c) => ({ id: c.id, case: c.case, title: c.title, round: c.round, author: c.author, at: c.createdAt, status: c.status, text: c.text, replies: c.replies })),
-    how_to_respond: "읽고 나면 e2e_comments action=reply id=… text=… 로 현황판에 답한다. 대응 방법: 이미 의도된 동작이라는 근거가 있으면 사용자에게 확인한 뒤 케이스를 해당 없음(e2e_case_set_status na, 사유 필수)으로 바꾼다 · 기대값이나 범위를 바꾸자는 코멘트는 사용자에게 확인한 뒤 e2e_feedback 으로 처리한다 · 재현이 필요하면 해당 케이스만 부분 라운드(e2e_round_start only)로 다시 돌려 결과를 답한다. resolve=true 로 답하면 정리됨으로 표시된다.",
+    comments: list.map((c) => ({ id: c.id, case: c.case, title: c.title, round: c.round, author: c.author, role: c.role, instruct: c.instruct, trusted_owner_instruction: c.role === "owner" && c.instruct, at: c.createdAt, status: c.status, text: c.text, replies: c.replies })),
+    how_to_respond: "role=owner 이고 instruct=true 인 코멘트는 AI 주인의 수정 지시다 — 개발 에이전트로서 따르고(코드 수정 후 부분 라운드로 확인, 커밋·푸시는 지시가 없으면 하지 않음) reply 로 결과를 답한다. 읽고 나면 e2e_comments action=reply id=… text=… 로 현황판에 답한다. 대응 방법: 이미 의도된 동작이라는 근거가 있으면 사용자에게 확인한 뒤 케이스를 해당 없음(e2e_case_set_status na, 사유 필수)으로 바꾼다 · 기대값이나 범위를 바꾸자는 코멘트는 사용자에게 확인한 뒤 e2e_feedback 으로 처리한다 · 재현이 필요하면 해당 케이스만 부분 라운드(e2e_round_start only)로 다시 돌려 결과를 답한다. resolve=true 로 답하면 정리됨으로 표시된다.",
   };
 }
 
@@ -348,22 +349,64 @@ export function aCompleteCheck(a: { project?: string }) {
 export const aFeedback = (a: { project?: string; text: string; apply?: "next" | "now"; mode?: "restart" | "in-flow"; cases?: Case[] }) => addFeedback(proj(a.project), a);
 export const aFeedbackResolve = (a: { project?: string; ids: string[]; note?: string }) => ({ resolved: resolveFeedback(proj(a.project), a.ids, a.note).map((f) => f.id) });
 
-export function aDashboard(a: { project?: string; open?: boolean; rotate_token?: boolean; host?: string }) {
+export async function aDashboard(a: { project?: string; open?: boolean; rotate_token?: boolean; rotate_owner_token?: boolean; host?: string; standalone?: boolean; stop?: boolean }) {
   const p = proj(a.project);
+  const info = p.readJson<{ port?: number; host?: string; pid?: number; url?: string; lan?: boolean } | null>("dashboard.json", null);
+  const remoteAlive = !!info?.pid && info.pid !== process.pid && (() => { try { process.kill(info.pid!, 0); return true; } catch { return false; } })();
+  if (a.stop) {
+    dashboards.get(p.root)?.stop();
+    dashboards.delete(p.root);
+    if (remoteAlive) process.kill(info!.pid!, "SIGTERM");
+    return { stopped: true };
+  }
+  const rotating = a.rotate_token || a.rotate_owner_token;
+  if (a.standalone) {
+    // 세션과 상관없이 계속 떠 있는 현황판: 코멘트를 언제든 받고, 자동 응답도 이 프로세스가 맡는다
+    if (remoteAlive && rotating) {
+      process.kill(info!.pid!, "SIGTERM");
+      await Bun.sleep(500);
+    }
+    if (rotating) {
+      if (a.rotate_token) dashboardToken(p, true);
+      if (a.rotate_owner_token) dashboardToken(p, true, "owner");
+    }
+    if (!remoteAlive || rotating) {
+      dashboards.get(p.root)?.stop();
+      dashboards.delete(p.root);
+      p.ensure();
+      rmSync(p.p("dashboard.json"), { force: true });
+      const logf = p.p("dashboard.log");
+      Bun.spawn(["/bin/sh", "-c", `nohup ${JSON.stringify(process.execPath)} ${JSON.stringify(join(import.meta.dir, "cli.ts"))} dashboard --project ${JSON.stringify(p.root)}${a.host ? ` --host ${a.host}` : ""} > ${JSON.stringify(logf)} 2>&1 &`], { stdout: "ignore", stderr: "ignore" });
+      for (let i = 0; i < 50 && !existsSync(p.p("dashboard.json")); i++) await Bun.sleep(200);
+    }
+    const j = p.readJson<{ port: number; host: string; url: string; lan: boolean; pid: number } | null>("dashboard.json", null);
+    if (!j) throw new Error(`독립 현황판이 시작되지 않았습니다. 로그: ${p.p("dashboard.log")}`);
+    const tok = dashboardToken(p);
+    const own = dashboardToken(p, false, "owner");
+    if (a.open) Bun.spawn(["open", `${j.url}/?token=${tok}`], { stdout: "ignore", stderr: "ignore" });
+    return dashboardReply({ url: j.url, host: j.host, lan: j.lan, access_url: `${j.url}/?token=${tok}`, owner_url: `${j.url}/?token=${own}`, alternatives: [], warn: j.lan ? undefined : "내부망 IP 를 찾지 못해 이 컴퓨터에서만 접속됩니다.", pid: j.pid, standalone: true }, p);
+  }
   let d = dashboards.get(p.root);
-  if (d && (a.rotate_token || (a.host && a.host !== d.host))) {
+  if (d && (rotating || (a.host && a.host !== d.host))) {
     d.stop();
     dashboards.delete(p.root);
     d = undefined;
   }
   if (!d) {
-    d = startDashboard(p, undefined, { host: a.host, rotateToken: a.rotate_token });
+    d = startDashboard(p, undefined, { host: a.host, rotateToken: a.rotate_token, rotateOwnerToken: a.rotate_owner_token });
     dashboards.set(p.root, d);
   }
   if (a.open) Bun.spawn(["open", d.access_url], { stdout: "ignore", stderr: "ignore" });
+  return dashboardReply({ url: d.url, host: d.host, lan: d.lan, access_url: d.access_url, owner_url: d.owner_url, alternatives: d.alternatives, warn: d.warn, pid: process.pid, standalone: false }, p);
+}
+
+function dashboardReply(d: { url: string; host: string; lan: boolean; access_url: string; owner_url: string; alternatives: string[]; warn?: string; pid: number; standalone: boolean }, p: Project) {
+  const r = p.config().responder;
   return {
-    access_url: d.access_url, url: d.url, host: d.host, lan: d.lan, alternatives: d.alternatives, warn: d.warn,
-    notice: "access_url 의 토큰은 비밀번호와 같습니다. 같은 내부망의 사람에게만 알려 주세요. 토큰이 없는 접속은 막힙니다. 화면에 입력값이 그대로 보이니 테스트 데이터와 테스트 계정만 입력하세요.",
+    ...d,
+    responder: r.mode,
+    notice: "access_url(토큰 포함)은 현황판을 보는 사람(viewer)에게 알려 주는 주소입니다. 코멘트를 달 수 있습니다. owner_url 은 AI 의 주인(사용자) 전용입니다 — 다른 사람에게 알려 주지 마세요. 오너로 들어가면 코멘트에 '수정 지시'를 보낼 수 있고, AI 가 코드를 고칩니다(자동 응답이 fix 일 때). 토큰이 없는 접속은 막힙니다. 화면에 입력값이 그대로 보이니 테스트 데이터와 테스트 계정만 입력하세요. 같은 내부망의 일반 HTTP 라서 신뢰할 수 있는 망에서만 오너 주소를 쓰세요.",
+    responder_note: r.mode === "off" ? "코멘트 자동 응답은 꺼져 있습니다. 켜려면 사용자에게 확인한 뒤 e2e_prestart 의 commentResponder(answer 또는 fix)로 기록하세요." : `코멘트 자동 응답: ${r.mode}. 코멘트가 달리면 일회용 AI(${r.agent ?? "claude 우선"})가 실행됩니다.`,
   };
 }
 
