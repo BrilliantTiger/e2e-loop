@@ -7,6 +7,7 @@ import type { CaseResult, RoundMeta } from "./types.ts";
 import { trend } from "./report.ts";
 import { runningRound } from "./round.ts";
 import { isIssue } from "./issues.ts";
+import { addComment, notifyTester, readComments } from "./comments.ts";
 
 const MIME: Record<string, string> = { html: "text/html; charset=utf-8", png: "image/png", jpg: "image/jpeg", webm: "video/webm", mp4: "video/mp4", mov: "video/quicktime", txt: "text/plain; charset=utf-8", json: "application/json", md: "text/plain; charset=utf-8", zip: "application/zip", ndjson: "text/plain" };
 
@@ -33,6 +34,7 @@ function state(project: Project, roundId?: string) {
   return {
     project: project.root,
     counts,
+    comments: readComments(project),
     rounds: rounds.map((r) => ({ id: r.id, status: r.status, scope: r.scope, summary: r.summary })),
     round: cur ?? null,
     running: !!running && running.id === cur?.id,
@@ -127,6 +129,7 @@ export function startDashboard(project: Project, preferred?: number, opts: { hos
   const lan = host !== "127.0.0.1";
   const token = dashboardToken(project, opts.rotateToken);
   const fails = new Map<string, number[]>();
+  const commentHits = new Map<string, number[]>();
   let server: ReturnType<typeof Bun.serve> | undefined;
   for (let port = base; port < base + 30 && !server; port++) {
     try {
@@ -150,6 +153,33 @@ export function startDashboard(project: Project, preferred?: number, opts: { hos
             return new Response(null, { status: 302, headers: { location: u.pathname + (u.search || ""), "set-cookie": `e2e_token=${token}; Path=/; HttpOnly; SameSite=Strict`, "cache-control": "no-store" } });
           }
           if (u.pathname === "/") return new Response(PAGE, { headers: { "content-type": MIME.html!, "cache-control": "no-store" } });
+          if (u.pathname === "/api/comments" && req.method === "POST") {
+            // 코멘트: JSON 만 받고, 우리 페이지가 붙이는 헤더가 있어야 하며, 다른 사이트에서 온 요청은 막는다
+            if (!/^application\/json/i.test(req.headers.get("content-type") ?? "")) return Response.json({ error: "JSON 만 받습니다" }, { status: 415 });
+            if (req.headers.get("x-e2e-comment") !== "1") return Response.json({ error: "허용되지 않은 요청" }, { status: 403 });
+            const origin = req.headers.get("origin");
+            if (origin) {
+              try {
+                if (new URL(origin).host !== u.host) return Response.json({ error: "다른 출처의 요청" }, { status: 403 });
+              } catch {
+                return Response.json({ error: "잘못된 출처" }, { status: 403 });
+              }
+            }
+            const recentC = (commentHits.get(ip) ?? []).filter((t) => now - t < 60000);
+            if (recentC.length >= 10) return Response.json({ error: "코멘트를 너무 자주 달고 있습니다. 잠시 뒤에 다시 하세요" }, { status: 429 });
+            return req.text().then((raw) => {
+              if (raw.length > 6000) return Response.json({ error: "너무 깁니다" }, { status: 413 });
+              try {
+                const b = JSON.parse(raw);
+                const c = addComment(project, { case: String(b.case ?? ""), text: String(b.text ?? ""), author: String(b.author ?? ""), round: typeof b.round === "string" ? b.round : undefined });
+                commentHits.set(ip, [...recentC, Date.now()]);
+                void notifyTester(project).catch(() => {});
+                return Response.json(c, { status: 201 });
+              } catch (e: any) {
+                return Response.json({ error: String(e?.message ?? e) }, { status: 400 });
+              }
+            });
+          }
           if (u.pathname === "/api/state") return Response.json(state(project, u.searchParams.get("round") ?? undefined), { headers: { "cache-control": "no-store" } });
           if (u.pathname.startsWith("/files/")) {
             const rel = decodeURIComponent(u.pathname.slice(7));
@@ -195,7 +225,7 @@ main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;p
 .s{font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;color:#fff}.s.PASS{background:var(--pass)}.s.FAIL{background:var(--fail)}.s.SKIP,.s.NA,.s.BLOCKED{background:var(--skip)}
 .tr{display:flex;gap:10px;align-items:flex-end;height:90px}.tb{display:flex;flex-direction:column;align-items:center;font-size:11px;gap:2px}.tb i{width:22px;border-radius:3px 3px 0 0;display:block}
 .fb{background:#fff3cd;color:#664d03;border-radius:6px;padding:6px 10px;margin-top:6px;font-size:12px}a{color:var(--acc)}
-.wide{grid-column:1/-1}.tabs button.on{background:var(--acc);color:#fff}.note{background:#fff3cd;color:#664d03;padding:6px 16px;font-size:12px}.s.FLAKY{background:var(--warn)}.s.BLOCKED{background:var(--fail)}
+.wide{grid-column:1/-1}.tabs button.on{background:var(--acc);color:#fff}.cmrow td{background:var(--card)}.cm{border-left:3px solid var(--line);padding:2px 10px;margin:6px 0}.cm .rp{margin:4px 0 4px 14px;border-left:3px solid var(--acc);padding-left:8px}.cm .txt{white-space:pre-wrap}.mut{color:var(--mut);font-size:12px}.cf{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;margin-top:6px}.cf textarea{flex:1;min-width:240px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:inherit}.cf input{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;width:120px}.note{background:#fff3cd;color:#664d03;padding:6px 16px;font-size:12px}.s.FLAKY{background:var(--warn)}.s.BLOCKED{background:var(--fail)}
 </style></head><body>
 <div class="note" id="notice"></div>
 <header><h1>E2E 실시간 대시보드</h1><span id="proj" style="color:var(--mut)"></span><select id="sel"></select><span id="st" class="pill"></span><a id="rep" style="display:none" target="_blank">결과 보고서 열기</a></header>
@@ -213,7 +243,7 @@ let round=null,filter='all',last=null;const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 $('sel').onchange=e=>{round=e.target.value;tick()};
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{filter=b.dataset.f;document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));draw()});
-async function tick(){try{const r=await fetch('/api/state'+(round?'?round='+round:''));last=await r.json();draw()}catch(e){}}
+let sig='';async function tick(){try{const r=await fetch('/api/state'+(round?'?round='+round:''));const j=await r.json();const sg=JSON.stringify(j);if(sg===sig)return;sig=sg;last=j;draw()}catch(e){}}
 function draw(){const s=last;if(!s)return;$('proj').textContent=s.project;
 const sel=$('sel');if(sel.options.length!==s.rounds.length){sel.innerHTML=s.rounds.map(r=>'<option>'+r.id+'</option>').join('')}if(s.round&&!round)sel.value=s.round.id;
 const st=$('st');const rs=s.round?s.round.status:'';st.textContent=rs==='running'?'진행 중':rs==='finished'?'완료':rs==='aborted'?'중단':'대기';st.className='pill '+rs;
@@ -231,6 +261,20 @@ if(e.type==='case-start')return '<div><b>'+t+' ▶ '+esc(e.case)+'</b> '+esc(e.t
 if(e.type==='case-end')return '<div class="'+(e.status==='PASS'?'ok':e.status==='FAIL'?'fail':'skip')+'"><b>'+t+' '+esc(e.status)+'</b> '+esc(e.case)+(e.reason?' — '+esc(e.reason):'')+'</div>';
 return '<div>'+t+' '+esc(e.type)+(e.round?' '+esc(e.round):'')+'</div>'}).join('');
 const isI=r=>['FAIL','FLAKY','BLOCKED'].includes(r.status);const rows=s.results.filter(r=>filter==='all'||(filter==='issue'?isI(r):filter==='other'?(!isI(r)&&r.status!=='PASS'):r.status===filter));
-$('rows').innerHTML=rows.slice().reverse().map(r=>'<tr><td><span class="s '+r.status+'">'+r.status+'</span></td><td><b>'+esc(r.id)+'</b> '+esc(r.title)+(r.priority?' <b class="fail">'+r.priority+'</b>':'')+'</td><td>'+esc(r.reason||'')+(r.warnings?' <span style="color:var(--warn)">경고 '+r.warnings+'</span>':'')+'</td><td>'+(r.video?'<a target="_blank" href="/files/'+s.round.id+'/'+r.video+'">▶ 영상</a>':'')+'</td></tr>').join('')}
+const cm=s.comments||[];const byCase={};cm.forEach(c=>{(byCase[c.case]=byCase[c.case]||[]).push(c)});
+const keep=document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.draft;
+$('rows').innerHTML=rows.slice().reverse().map(r=>{const list=byCase[r.id]||[];const open=openPanels.has(r.id);const canC=isI(r)||list.length;
+const wait=list.filter(c=>c.status==='open').length;
+let h='<tr><td><span class="s '+r.status+'">'+r.status+'</span></td><td><b>'+esc(r.id)+'</b> '+esc(r.title)+(r.priority?' <b class="fail">'+r.priority+'</b>':'')+'</td><td>'+esc(r.reason||'')+(r.warnings?' <span style="color:var(--warn)">경고 '+r.warnings+'</span>':'')+'</td><td>'+(r.video?'<a target="_blank" href="/files/'+s.round.id+'/'+r.video+'">▶ 영상</a> ':'')+(canC?'<button data-toggle="'+esc(r.id)+'">💬 '+list.length+(wait?' · 답 대기 '+wait:'')+'</button>':'')+'</td></tr>';
+if(open&&canC){h+='<tr class="cmrow"><td colspan="4">'+list.map(c=>'<div class="cm"><b>'+esc(c.author)+'</b> <span class="mut">'+new Date(c.createdAt).toLocaleString()+' · '+({open:'답 대기',answered:'AI 답변함',resolved:'정리됨'}[c.status])+'</span><div class="txt">'+esc(c.text)+'</div>'+c.replies.map(x=>'<div class="rp"><b>'+(x.by==='ai'?'AI':'사용자')+'</b> <span class="mut">'+new Date(x.at).toLocaleString()+'</span><div class="txt">'+esc(x.text)+'</div></div>').join('')+'</div>').join('')+'<div class="cf"><input data-draft="a-'+esc(r.id)+'" placeholder="이름(선택)" maxlength="40" value="'+esc(drafts['a-'+r.id]??localStorage.getItem('e2e_author')??'')+'"><textarea data-draft="t-'+esc(r.id)+'" rows="2" maxlength="2000" placeholder="이 이슈에 코멘트를 남기면 AI 가 읽고 대응합니다">'+esc(drafts['t-'+r.id]??'')+'</textarea><button data-send="'+esc(r.id)+'">코멘트 달기</button> <span class="mut" id="msg-'+esc(r.id)+'"></span></div></td></tr>'}
+return h}).join('');
+if(keep){const el=document.querySelector('[data-draft="'+keep+'"]');if(el){el.focus();try{el.setSelectionRange(el.value.length,el.value.length)}catch(e){}}}}
+const openPanels=new Set(),drafts={};
+$('rows').addEventListener('input',e=>{const d=e.target.dataset&&e.target.dataset.draft;if(d)drafts[d]=e.target.value});
+$('rows').addEventListener('click',async e=>{const t=e.target;if(t.dataset&&t.dataset.toggle){const id=t.dataset.toggle;openPanels.has(id)?openPanels.delete(id):openPanels.add(id);draw();return}
+if(t.dataset&&t.dataset.send){const id=t.dataset.send;const text=(drafts['t-'+id]||'').trim();const author=(drafts['a-'+id]??localStorage.getItem('e2e_author')??'').trim();const msg=document.getElementById('msg-'+id);
+if(!text){msg.textContent='내용을 적어 주세요';return}
+try{const r=await fetch('/api/comments',{method:'POST',headers:{'content-type':'application/json','x-e2e-comment':'1'},body:JSON.stringify({case:id,text,author,round:last&&last.round?last.round.id:undefined})});const j=await r.json();if(!r.ok){msg.textContent=j.error||'실패';return}
+if(author)localStorage.setItem('e2e_author',author);drafts['t-'+id]='';await tick()}catch(err){msg.textContent='보내지 못했습니다'}}});
 tick();setInterval(tick,1200);
 </script></body></html>`;
