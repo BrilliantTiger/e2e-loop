@@ -26,6 +26,7 @@ import { evidenceSources, intake, readIntake, readSession, sessionStart, type Ma
 export const proj = (p?: string) => new Project(p ?? process.env.E2E_PROJECT ?? process.cwd());
 
 import { SINGLE_STATE_WARNING, singleEndState } from "./waits.ts";
+import { ROW_BY_NUMBER_HELP, rowByNumber, translateSel } from "./rows.ts";
 const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe"]);
 const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check"]);
 
@@ -225,6 +226,21 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
     const badWait = c.steps.map((s, i) => ({ s, i })).filter(({ s }) => s.op === "wait" && s.endStates !== undefined && !(s.endStates && typeof s.endStates === "object" && !Array.isArray(s.endStates) && Object.values(s.endStates).every((v) => typeof v === "string" || (Array.isArray(v) && v.every((x) => typeof x === "string")))));
     if (badWait.length) {
       errors.push(`${c.id}: 잘못된 끝 상태 대기 ${badWait.map(({ i }) => `#${i + 1}`).join(", ")} — wait.endStates 는 { "상태 이름": "선택자" } 모양이어야 함`);
+      continue;
+    }
+    const badSel = c.steps.flatMap((s, i) => {
+      if (typeof s.sel !== "string") return [];
+      const why = rowByNumber(s.sel);
+      if (why) return [`#${i + 1} ${s.sel} — ${why}`];
+      try {
+        translateSel(s.sel);
+      } catch (e: any) {
+        return [`#${i + 1} ${s.sel} — ${e.message}`];
+      }
+      return [];
+    });
+    if (badSel.length) {
+      errors.push(`${c.id}: 줄 선택자 오류 ${badSel.join("; ")}. ${ROW_BY_NUMBER_HELP}`);
       continue;
     }
     for (const [i, s] of c.steps.entries()) {

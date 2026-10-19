@@ -6,8 +6,9 @@ import { Project, expandEnv, nowIso } from "./store.ts";
 import { judgeErrors, runProbe, sleep, type ProbePolicy } from "./probes.ts";
 import type { EvidenceKit } from "./evidence.ts";
 import { ToolError, isBlankActual } from "./toolerror.ts";
-import { READ_WAIT_MS, waitRendered } from "./reads.ts";
+import { READ_WAIT_MS, settleList, waitRendered } from "./reads.ts";
 import { SINGLE_STATE_WARNING, singleEndState, waitEndState } from "./waits.ts";
+import { isRowSel, translateSel } from "./rows.ts";
 
 export interface RunCtx {
   project: Project;
@@ -61,6 +62,7 @@ async function runExpect(p: DPage, s: Step, base: string) {
   /** 실제 칸이 비었거나 undefined·NaN — 사이트의 결함이 아니라 도구가 화면을 못 읽은 것(D) */
   const blanks: string[] = [];
   const sel: string | undefined = s.sel;
+  const lab: string | undefined = s.selLabel ?? sel;
   const mismatch = (expected: unknown, actual: string, msg: string) => {
     if (isBlankActual(actual) && !isBlankActual(expected)) blanks.push(msg);
     else errs.push(msg);
@@ -78,34 +80,34 @@ async function runExpect(p: DPage, s: Step, base: string) {
     if (s.count !== undefined) await waitRendered(p, sel, s.timeout ?? READ_WAIT_MS, s.count);
     else if (reads) await waitRendered(p, sel, s.timeout ?? READ_WAIT_MS);
     if (s.visible === true) {
-      try { await p.waitFor(sel, "visible", s.timeout ?? 3000); } catch { errs.push(`보여야 하는데 안 보임: ${sel}`); }
+      try { await p.waitFor(sel, "visible", s.timeout ?? 3000); } catch { errs.push(`보여야 하는데 안 보임: ${lab}`); }
     }
     if (s.hidden === true || s.visible === false) {
-      try { await p.waitFor(sel, "hidden", s.timeout ?? 3000); } catch { errs.push(`안 보여야 하는데 보임: ${sel}`); }
+      try { await p.waitFor(sel, "hidden", s.timeout ?? 3000); } catch { errs.push(`안 보여야 하는데 보임: ${lab}`); }
     }
     if (s.count !== undefined) {
       const n = await p.count(sel);
-      if (n !== s.count) errs.push(`개수가 다름: 기대 ${s.count} / 실제 ${n} (${sel})`);
+      if (n !== s.count) errs.push(`개수가 다름: 기대 ${s.count} / 실제 ${n} (${lab})`);
     }
     if (s.text !== undefined) {
       const t = await p.text(sel).catch((e) => `<<${e}>>`);
-      if (t !== s.text) mismatch(s.text, t, `텍스트가 다름: 기대 "${s.text}" / 실제 "${t}" (${sel})`);
+      if (t !== s.text) mismatch(s.text, t, `텍스트가 다름: 기대 "${s.text}" / 실제 "${t}" (${lab})`);
     }
     if (s.textContains !== undefined) {
       const t = await p.text(sel).catch((e) => `<<${e}>>`);
-      if (!t.includes(s.textContains)) mismatch(s.textContains, t, `텍스트에 "${s.textContains}" 없음: "${t.slice(0, 80)}" (${sel})`);
+      if (!t.includes(s.textContains)) mismatch(s.textContains, t, `텍스트에 "${s.textContains}" 없음: "${t.slice(0, 80)}" (${lab})`);
     }
     if (s.value !== undefined) {
       const v = await p.value(sel).catch((e) => `<<${e}>>`);
-      if (v !== s.value) mismatch(s.value, v, `값이 다름: 기대 "${s.value}" / 실제 "${v}" (${sel})`);
+      if (v !== s.value) mismatch(s.value, v, `값이 다름: 기대 "${s.value}" / 실제 "${v}" (${lab})`);
     }
     if (s.checked !== undefined) {
       const c = await p.evaluate<boolean | null>(`(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; return e ? (typeof e.checked === 'boolean' ? e.checked : e.getAttribute('aria-checked') === 'true') : null; })()`);
-      if (c !== s.checked) errs.push(`체크 상태가 다름: 기대 ${s.checked} / 실제 ${c} (${sel})`);
+      if (c !== s.checked) errs.push(`체크 상태가 다름: 기대 ${s.checked} / 실제 ${c} (${lab})`);
     }
     if (s.enabled !== undefined) {
       const d = await p.evaluate<boolean>(`(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; return !!e && !e.disabled && e.getAttribute('aria-disabled') !== 'true'; })()`);
-      if (d !== s.enabled) errs.push(`활성 상태가 다름: 기대 ${s.enabled ? "활성" : "비활성"} (${sel})`);
+      if (d !== s.enabled) errs.push(`활성 상태가 다름: 기대 ${s.enabled ? "활성" : "비활성"} (${lab})`);
     }
   }
   if (s.dialog !== undefined) {
@@ -190,10 +192,14 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   };
 
   for (let i = 0; i < steps.length; i++) {
-    const s = steps[i]!;
-    const sr: StepResult = { i, op: s.op, desc: describe(s), status: "ok", ms: 0, at: Date.now() - t0 };
+    const s0 = steps[i]!;
+    let s: Step = s0;
+    const sr: StepResult = { i, op: s0.op, desc: describe(s0), status: "ok", ms: 0, at: Date.now() - t0 };
     const tStep = Date.now();
+    const rowStep = typeof s0.sel === "string" && isRowSel(s0.sel);
     try {
+      // 줄 도우미(row=… · cell[…])는 번호가 아니라 컬럼 이름·글자로 찾는 xpath 로 바꿔 쓴다
+      if (rowStep) s = { ...s0, sel: translateSel(s0.sel), selLabel: s0.sel };
       switch (s.op) {
         case "goto": await page.goto(abs(s.url, cfg.baseUrl)); break;
         case "click": await page.click(s.sel); break;
@@ -292,6 +298,8 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       if (e?.name === "ToolError") toolErr = { kind: e.kind, detail: String(e.message), evidenceText: e.evidenceText };
       if (e?.name === "SkipCase") skipped = String(e.message);
     }
+    // 줄 하나를 바꾸면 목록이 다시 정렬·다시 그려질 수 있다 — 다음 동작 전에 목록이 가라앉기를 기다려 다시 읽게 한다
+    if (rowStep && sr.status === "ok" && ["click", "dblclick", "fill", "select", "check", "press"].includes(s0.op)) await settleList(page);
     sr.ms = Date.now() - tStep;
     const isLast = i === steps.length - 1;
     if (sr.status === "fail" || keepAllShots || isLast) sr.shot = sr.shot ?? (await shot(`s${String(i).padStart(2, "0")}${sr.status === "fail" ? "_FAIL" : ""}`));
