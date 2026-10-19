@@ -6,6 +6,7 @@ import { loadAnalyses } from "./analysis/store.ts";
 import { reconcile } from "./analysis/reconcile.ts";
 import { coverage } from "./coverage.ts";
 import { readIntake } from "./session.ts";
+import { missingBasis, type MissingBasis } from "./basis.ts";
 
 export interface SheetCase {
   id: string;
@@ -34,6 +35,8 @@ export interface Sheet {
     apisNeedingInput: { method: string; url: string; where: string }[];
     uncoveredElements: number;
     blockedCases: { id: string; reason: string }[];
+    /** 기대 칸에 근거(basis)가 없는 케이스 */
+    expectNoBasis: MissingBasis[];
   };
 }
 
@@ -103,6 +106,7 @@ export function buildSheet(p: Project): Sheet {
       apisNeedingInput: rec.apisNotObserved.filter((a) => a.method !== "GET" || a.dynamic).slice(0, 30).map((a) => ({ method: a.method, url: a.url, where: `${a.file}:${a.line}` })),
       uncoveredElements: cov?.elements.uncovered ?? 0,
       blockedCases: cases.filter((c) => c.status === "blocked").map((c) => ({ id: c.id, reason: c.reason ?? "(사유 없음)" })),
+      expectNoBasis: missingBasis(cases),
     },
   };
   return sheet;
@@ -137,6 +141,7 @@ export function renderSheetMd(s: Sheet, opts: { full?: boolean } = {}): string {
   if (g.eventsNotOnScreen.length) gapLines.push(`- 코드의 이벤트 중 화면에서 요소를 못 찾은 것 ${g.eventsNotOnScreen.length}건(로그인·특정 상태에서만 보일 수 있음): ${g.eventsNotOnScreen.slice(0, 5).map((e) => `${e.kind} ${e.hint} (${e.where})`).join(", ")}`);
   if (g.apisNeedingInput.length) gapLines.push(`- 요청 본문·값이 있어야 점검할 수 있는 API ${g.apisNeedingInput.length}건 — 기능정의서의 요청 예시로 케이스를 만든다: ${g.apisNeedingInput.slice(0, 6).map((a) => `${a.method} ${a.url}`).join(", ")}`);
   if (g.uncoveredElements) gapLines.push(`- 케이스가 없는 화면 요소 ${g.uncoveredElements}개`);
+  if (g.expectNoBasis.length) gapLines.push(`- ⚠ 기대 칸에 근거(basis: 기획서 POL · CCB 번호)가 없는 케이스 ${g.expectNoBasis.length}건(기대 ${g.expectNoBasis.reduce((n, x) => n + x.steps.length, 0)}칸) — 근거 없는 기대는 오류 E(기대가 기획서와 다름)의 원인이 된다: ${g.expectNoBasis.slice(0, 8).map((x) => `${x.id} ${x.steps.map((n) => "#" + n).join("")}`).join(", ")}`);
   if (g.blockedCases.length) gapLines.push(`- 보류 케이스 ${g.blockedCases.length}건: ${g.blockedCases.slice(0, 5).map((b) => `${b.id}(${b.reason})`).join(", ")}`);
   if (gapLines.length) out.push("", "## 빈틈과 주의", ...gapLines);
   return out.join("\n");
@@ -164,6 +169,7 @@ export function aSheet(p: Project, a: { confirm?: boolean; confirm_before_start?
     confirm_before_start: needConfirm,
     confirmed: !!sheet.confirmedAt,
     ready_to_start: ready && hasCases,
+    expect_no_basis: sheet.gaps.expectNoBasis.length ? `기대 칸에 근거(basis)가 없는 케이스 ${sheet.gaps.expectNoBasis.length}건 — 근거를 채우거나 케이스를 blocked 로 두세요(오류 E)` : undefined,
     next: !hasCases
       ? "케이스가 없습니다. e2e_discover 와 e2e_case_upsert 로 시트를 채우세요."
       : needConfirm && !sheet.confirmedAt

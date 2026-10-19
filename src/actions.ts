@@ -28,7 +28,8 @@ export const proj = (p?: string) => new Project(p ?? process.env.E2E_PROJECT ?? 
 import { SINGLE_STATE_WARNING, singleEndState } from "./waits.ts";
 import { ROW_BY_NUMBER_HELP, rowByNumber, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, labelOnly } from "./finders.ts";
-const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe"]);
+import { BASIS_WARNING, missingBasis } from "./basis.ts";
+const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate"]);
 const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check"]);
 
 const dashboards = new Map<string, DashboardInfo>();
@@ -229,6 +230,11 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       errors.push(`${c.id}: 잘못된 끝 상태 대기 ${badWait.map(({ i }) => `#${i + 1}`).join(", ")} — wait.endStates 는 { "상태 이름": "선택자" } 모양이어야 함`);
       continue;
     }
+    const badGate = c.steps.flatMap((s, i) => (s.op === "gate" && !(s.blocked && typeof s.blocked === "object" && s.passed && typeof s.passed === "object" && typeof s.basis === "string" && s.basis.trim()) ? [`#${i + 1}`] : []));
+    if (badGate.length) {
+      errors.push(`${c.id}: Gate ${badGate.join(", ")} 에는 blocked(막힘이 정상일 때의 기대), passed(풀린 뒤 PASS 기준), basis(근거)가 필요함`);
+      continue;
+    }
     const badSel = c.steps.flatMap((s, i) => {
       if (typeof s.sel !== "string") return [];
       const why = rowByNumber(s.sel);
@@ -249,6 +255,10 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       if (s.op !== "wait") continue;
       if (s.endStates && singleEndState(s as any)) warns.push(`${c.id} #${i + 1}: ${SINGLE_STATE_WARNING}`);
       else if (!s.endStates && s.sel) warns.push(`${c.id} #${i + 1}: 끝 상태를 하나만 받는 대기(${s.sel}) — 그 상태가 오지 않으면 실패로 끝남. 화면의 모든 끝 상태(완료 · 확인 필요 · 막힘 · 오류 · 비활성 사유)를 wait.endStates 로 넣을 것(오류 A)`);
+    }
+    if ((c.type ?? "spec") === "spec" && (c.status ?? "active") === "active") {
+      const nb = missingBasis([{ ...(c as Case), type: "spec", status: "active" }])[0];
+      if (nb) warns.push(`${c.id}: ${BASIS_WARNING(nb.steps)}`);
     }
     if (c.steps[0]!.op !== "goto" && !c.steps.some((s) => s.op === "goto")) warns.push(`${c.id}: goto 스텝이 없습니다. 케이스는 매번 새 브라우저에서 시작하므로 첫 스텝에서 이동해야 합니다.`);
     if ((c.type ?? "spec") === "spec" && !c.source_ref) warns.push(`${c.id}: source_ref(근거 위치)가 없습니다. 기획서의 어느 절/디자인의 어느 프레임인지 적어 두세요.`);

@@ -56,6 +56,7 @@ export function describe(s: Step): string {
     case "screenshot": return `스크린샷${t(s.name)}`;
     case "eval": return `스크립트 실행`;
     case "probe": return `점검(${s.kind}) ${s.label ?? s.sel ?? ""}`;
+    case "gate": return `Gate 「${s.name ?? "-"}」 막힘이 정상 → ${s.resolve?.length ? "풀고" : "(사람이 풀기 전)"} 풀린 뒤 PASS 기준 확인`;
     default: return s.op;
   }
 }
@@ -139,6 +140,28 @@ export function statusMatches(status: number, exp: unknown): boolean {
 function jsonPath(obj: any, path: string): any {
   return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
+
+/** Gate 를 푸는 동작(resolve)에 쓰는 단순 스텝 실행기 */
+async function execSimple(p: DPage, st: Step, cfg: Config): Promise<void> {
+  const sel = typeof st.sel === "string" ? translateSel(st.sel) : undefined;
+  switch (st.op) {
+    case "click": await p.click(sel!); break;
+    case "dblclick": await p.dblclick(sel!); break;
+    case "hover": await p.hover(sel!); break;
+    case "fill": await p.fill(sel!, expandEnv(String(st.value ?? ""))); break;
+    case "select": await p.selectOption(sel!, String(st.value)); break;
+    case "check": await p.check(sel!, st.checked ?? true); break;
+    case "press": await p.press(sel ?? null, st.key); break;
+    case "wait":
+      if (sel) await p.waitFor(sel, st.state ?? "visible", st.timeout ?? cfg.stepTimeoutMs);
+      else await sleep(Number(st.ms ?? 500));
+      break;
+    default: throw new Error(`Gate 의 resolve 에서 쓸 수 없는 스텝: ${st.op} (click·dblclick·hover·fill·select·check·press·wait 만 가능)`);
+  }
+}
+
+/** expect 스텝의 선택자가 줄 도우미면 xpath 로 바꾼 사본 */
+const withSel = (st: Step): Step => (typeof st.sel === "string" && isRowSel(st.sel) ? { ...st, sel: translateSel(st.sel), selLabel: st.sel } : st);
 
 export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   const { cfg, project, roundId } = ctx;
@@ -237,6 +260,27 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           } else await sleep(Number(s.ms ?? 500));
           break;
         case "expect": await runExpect(page, s, cfg.baseUrl); break;
+        case "gate": {
+          // 사람 결정이 필요한 Gate: 풀기 전에는 막혀 있는 것이 정상이고, 풀린 뒤가 PASS 기준이다
+          const name = s.name ?? "-";
+          const why = s.basis ? ` (근거 ${s.basis})` : "";
+          try {
+            await runExpect(page, withSel({ op: "expect", ...(s.blocked ?? {}) }), cfg.baseUrl);
+          } catch (e: any) {
+            if (e?.name === "ToolError") throw e;
+            throw new Error(`Gate 「${name}」: 풀기 전에는 막혀 있어야 정상인데${why} 막히지 않음 — ${e?.message ?? e}`);
+          }
+          if (s.resolve?.length) {
+            for (const rs of s.resolve as Step[]) await execSimple(page, rs, cfg);
+            try {
+              await runExpect(page, withSel({ op: "expect", ...(s.passed ?? {}) }), cfg.baseUrl);
+            } catch (e: any) {
+              if (e?.name === "ToolError") throw e;
+              throw new Error(`Gate 「${name}」: 풀린 뒤 PASS 기준과 다름${why} — ${e?.message ?? e}`);
+            }
+          } else res.warnings.push(`Gate 「${name}」: 사람이 풀기 전이라 풀린 뒤 PASS 기준은 확인하지 못함${why}`);
+          break;
+        }
         case "api": {
           const method = String(s.method ?? "GET").toUpperCase();
           const url = abs(s.url, cfg.baseUrl);

@@ -34,6 +34,27 @@ const PROBE_EXPECT: Record<string, string> = {
   delete: "누르면 테스터가 등록한 항목이 지워지고 화면이 바뀌어야 함",
 };
 
+const basisTail = (s: Step) => (typeof s.basis === "string" && s.basis.trim() ? ` (근거: ${s.basis.trim()})` : "");
+
+/** expect 스텝(또는 gate 의 blocked·passed)의 기대를 사람이 읽는 글로 */
+function expectText(step: Record<string, any>): string {
+  const p: string[] = [];
+  if (step.url !== undefined) p.push(`주소에 "${step.url}" 포함`);
+  if (step.title !== undefined) p.push(`제목 = "${step.title}"`);
+  if (step.titleContains !== undefined) p.push(`제목에 "${step.titleContains}" 포함`);
+  const t = step.sel ? `${step.selLabel ?? step.sel} ` : "";
+  if (step.visible === true) p.push(`${t}보임`);
+  if (step.hidden === true || step.visible === false) p.push(`${t}안 보임`);
+  if (step.text !== undefined) p.push(`${t}텍스트 = "${step.text}"`);
+  if (step.textContains !== undefined) p.push(`${t}텍스트에 "${step.textContains}" 포함`);
+  if (step.value !== undefined) p.push(`${t}값 = "${step.value}"`);
+  if (step.count !== undefined) p.push(`${t}개수 = ${step.count}`);
+  if (step.checked !== undefined) p.push(`${t}체크 = ${step.checked}`);
+  if (step.enabled !== undefined) p.push(`${t}${step.enabled ? "활성" : "비활성"}`);
+  if (step.dialog !== undefined) p.push(step.dialog ? "모달이 떠 있음" : "모달이 없음");
+  return p.join(" · ");
+}
+
 export function expectedOf(step: Step | undefined, c: Case | undefined): string {
   if (!step) return c?.title ?? "(기대값 정보 없음)";
   if (step.op === "probe") return PROBE_EXPECT[step.kind] ?? `점검(${step.kind}) 규칙을 만족`;
@@ -42,25 +63,13 @@ export function expectedOf(step: Step | undefined, c: Case | undefined): string 
     if (step.jsonArray !== undefined) parts.push(step.jsonArray ? "배열 응답" : "객체 응답");
     if (step.jsonHas?.length) parts.push(`응답에 ${step.jsonHas.join(", ")} 포함`);
     if (step.json) parts.push(`응답 값 ${JSON.stringify(step.json)}`);
-    return parts.join(" · ");
+    return parts.join(" · ") + basisTail(step);
   }
-  if (step.op === "expect") {
-    const p: string[] = [];
-    if (step.url !== undefined) p.push(`주소에 "${step.url}" 포함`);
-    if (step.title !== undefined) p.push(`제목 = "${step.title}"`);
-    if (step.titleContains !== undefined) p.push(`제목에 "${step.titleContains}" 포함`);
-    const t = step.sel ? `${step.sel} ` : "";
-    if (step.visible === true) p.push(`${t}보임`);
-    if (step.hidden === true || step.visible === false) p.push(`${t}안 보임`);
-    if (step.text !== undefined) p.push(`${t}텍스트 = "${step.text}"`);
-    if (step.textContains !== undefined) p.push(`${t}텍스트에 "${step.textContains}" 포함`);
-    if (step.value !== undefined) p.push(`${t}값 = "${step.value}"`);
-    if (step.count !== undefined) p.push(`${t}개수 = ${step.count}`);
-    if (step.checked !== undefined) p.push(`${t}체크 = ${step.checked}`);
-    if (step.enabled !== undefined) p.push(`${t}${step.enabled ? "활성" : "비활성"}`);
-    if (step.dialog !== undefined) p.push(step.dialog ? "모달이 떠 있음" : "모달이 없음");
-    return p.join(" · ") || "확인 조건 만족";
+  if (step.op === "gate") {
+    const g = step as any;
+    return `Gate 「${g.name ?? "-"}」: 풀기 전에는 막힘이 정상(${expectText(g.blocked ?? {}) || "막힘 확인"}) → 풀린 뒤 PASS 기준: ${expectText(g.passed ?? {}) || "-"}${basisTail(step)}`;
   }
+  if (step.op === "expect") return (expectText(step) || "확인 조건 만족") + basisTail(step);
   if (step.op === "goto") return `${step.url} 화면이 열림`;
   if (step.sel) return `${step.sel} 요소를 찾아 동작이 수행됨`;
   return c?.title ?? "(기대값 정보 없음)";

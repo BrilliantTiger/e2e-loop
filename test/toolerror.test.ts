@@ -287,3 +287,99 @@ test("C: 케이스 등록 때도 라벨 글자만 쓰면 경고한다", () => {
   expect(up.warns.filter((w) => w.startsWith("U-C") && w.includes("라벨 글자만으로")).length).toBe(1);
   expect(up.errors).toEqual([]);
 });
+
+// ---------- E: 기대의 근거, 막힘이 정상인 Gate ----------
+import { isExpectation, missingBasis, hasBasis } from "../src/basis.ts";
+import { buildSheet, renderSheetMd } from "../src/sheet.ts";
+import { expectedOf } from "../src/sheets.ts";
+import { Project } from "../src/store.ts";
+
+test("E: 기대를 가진 스텝만 근거를 요구한다(이동·클릭은 아님)", () => {
+  expect(isExpectation({ op: "expect", sel: "#a", visible: true })).toBe(true);
+  expect(isExpectation({ op: "expect" })).toBe(false);
+  expect(isExpectation({ op: "api", url: "/x", status: 200 })).toBe(true);
+  expect(isExpectation({ op: "api", url: "/x" })).toBe(false);
+  expect(isExpectation({ op: "eval", script: "1", equals: 1 })).toBe(true);
+  expect(isExpectation({ op: "click", sel: "#a" })).toBe(false);
+  expect(isExpectation({ op: "gate" })).toBe(true);
+  expect(hasBasis({ op: "expect", basis: "  " })).toBe(false);
+  expect(hasBasis({ op: "expect", basis: "POL-CCB_033 규칙 7" })).toBe(true);
+});
+
+test("E: spec 활성 케이스의 근거 없는 기대 칸을 번호로 찾는다. probe·blocked·skip 케이스는 제외", () => {
+  const cases: Case[] = [
+    mk("E-1", [{ op: "goto", url: "/" }, { op: "expect", sel: "#a", visible: true, basis: "POL-1" }, { op: "expect", sel: "#b", text: "x" }, { op: "api", url: "/x", status: 200 }]),
+    mk("E-2", [{ op: "goto", url: "/" }, { op: "expect", sel: "#a", visible: true, basis: "CCB-2230_003" }]),
+    mk("E-3", [{ op: "goto", url: "/" }, { op: "expect", sel: "#a", visible: true }], { type: "probe" }),
+    mk("E-4", [{ op: "goto", url: "/" }, { op: "expect", sel: "#a", visible: true }], { status: "blocked", reason: "근거 없음" }),
+    mk("E-5", [{ op: "goto", url: "/" }, { op: "expect", sel: "#a", visible: true }], { skipReason: "사용자 선택" }),
+  ];
+  expect(missingBasis(cases)).toEqual([{ id: "E-1", title: "E-1", steps: [3, 4] }]);
+});
+
+test("E: 케이스 등록 때 근거 없는 기대를 경고하고, 근거가 있으면 경고하지 않는다", () => {
+  const root = mkdtempSync(join(tmpdir(), "e2e-loop-e-"));
+  const up = aCaseUpsert({ project: root, cases: [mk("U-E1", [{ op: "goto", url: "/" }, { op: "expect", sel: '[data-testid="a"]', visible: true }]), mk("U-E2", [{ op: "goto", url: "/" }, { op: "expect", sel: '[data-testid="a"]', visible: true, basis: "POL-CCB_033 규칙 7" }])] });
+  expect(up.warns.filter((w) => w.startsWith("U-E1") && w.includes("오류 E")).length).toBe(1);
+  expect(up.warns.some((w) => w.startsWith("U-E2") && w.includes("오류 E"))).toBe(false);
+});
+
+test("E: 시트의 「빈틈과 주의」에 근거 없는 기대를 경고하고, AI 시트의 기대값에는 근거가 붙는다", () => {
+  const root = mkdtempSync(join(tmpdir(), "e2e-loop-e2-"));
+  const p = new Project(root);
+  p.ensure();
+  p.saveCases([mk("S-1", [{ op: "goto", url: "/" }, { op: "expect", sel: "#a", visible: true }]), mk("S-2", [{ op: "goto", url: "/" }, { op: "expect", sel: "#a", text: "ok", basis: "POL-9" }])]);
+  const sheet = buildSheet(p);
+  expect(sheet.gaps.expectNoBasis.map((x) => x.id)).toEqual(["S-1"]);
+  const md = renderSheetMd(sheet, { full: true });
+  expect(md).toContain("기대 칸에 근거");
+  expect(md).toContain("S-1 #2");
+  expect(md).not.toContain("S-2 #2");
+  expect(expectedOf({ op: "expect", sel: "#a", text: "ok", basis: "POL-9" }, undefined)).toBe('#a 텍스트 = "ok" (근거: POL-9)');
+});
+
+/** 사람이 결정하기 전에는 다음 버튼이 비활성인 가짜 화면 */
+const gatePage = () => {
+  const st = { decided: false };
+  const page = {
+    click: async (sel: string) => { if (sel === "#exclude") st.decided = true; },
+    evaluate: async (expr: string) => (expr.includes("!e.disabled") ? st.decided : undefined) as any,
+  };
+  return { st, page };
+};
+const gateStep = (over: Record<string, unknown> = {}) => ({ op: "gate", name: "PII 결정", basis: "POL-CCB_033 규칙 7", blocked: { sel: "#next", enabled: false }, resolve: [{ op: "click", sel: "#exclude" }], passed: { sel: "#next", enabled: true }, ...over });
+
+test("E: 막힘이 정상인 Gate — 막혀 있고, 사람 결정으로 풀면 PASS 이다", async () => {
+  const { page } = gatePage();
+  const r = await runCase(fakeCtx(page), mk("G-OK", [{ op: "goto", url: "/" }, gateStep()]));
+  expect(r.status).toBe("PASS");
+});
+
+test("E: Gate 가 막혀 있지 않으면 FAIL(Gate 가 안 걸림), 풀었는데 안 풀리면 FAIL", async () => {
+  const open = await runCase(fakeCtx({ evaluate: async (expr: string) => (expr.includes("!e.disabled") ? true : undefined) as any }), mk("G-OPEN", [{ op: "goto", url: "/" }, gateStep()]));
+  expect(open.status).toBe("FAIL");
+  expect(open.reason).toContain("막혀 있어야 정상인데");
+  expect(open.reason).toContain("POL-CCB_033 규칙 7");
+  const stuck = await runCase(fakeCtx({ click: async () => {}, evaluate: async (expr: string) => (expr.includes("!e.disabled") ? false : undefined) as any }), mk("G-STUCK", [{ op: "goto", url: "/" }, gateStep()]));
+  expect(stuck.status).toBe("FAIL");
+  expect(stuck.reason).toContain("풀린 뒤 PASS 기준과 다름");
+});
+
+test("E: resolve 가 없으면 막힘만 확인하고, 풀린 뒤 PASS 기준은 확인 못 했다고 경고한다", async () => {
+  const r = await runCase(fakeCtx({ evaluate: async (expr: string) => (expr.includes("!e.disabled") ? false : undefined) as any }), mk("G-HUMAN", [{ op: "goto", url: "/" }, gateStep({ resolve: undefined })]));
+  expect(r.status).toBe("PASS");
+  expect(r.warnings.some((w) => w.includes("풀린 뒤 PASS 기준은 확인하지 못함"))).toBe(true);
+});
+
+test("E: Gate 등록에는 blocked · passed · basis 가 필요하고, AI 시트 기대값에 막힘이 정상·풀린 뒤 PASS 기준이 적힌다", () => {
+  const root = mkdtempSync(join(tmpdir(), "e2e-loop-g-"));
+  const bad = aCaseUpsert({ project: root, cases: [mk("G-BAD", [{ op: "goto", url: "/" }, { op: "gate", name: "x", blocked: { sel: "#a", enabled: false } }])] });
+  expect(bad.errors.length).toBe(1);
+  const ok = aCaseUpsert({ project: root, cases: [mk("G-OK2", [{ op: "goto", url: "/" }, gateStep() as any])] });
+  expect(ok.errors).toEqual([]);
+  expect(ok.warns.some((w) => w.includes("오류 E"))).toBe(false);
+  const text = expectedOf(gateStep() as any, undefined);
+  expect(text).toContain("풀기 전에는 막힘이 정상");
+  expect(text).toContain("풀린 뒤 PASS 기준: #next 활성");
+  expect(text).toContain("(근거: POL-CCB_033 규칙 7)");
+});
