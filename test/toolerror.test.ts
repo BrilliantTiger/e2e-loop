@@ -383,3 +383,46 @@ test("E: Gate 등록에는 blocked · passed · basis 가 필요하고, AI 시�
   expect(text).toContain("풀린 뒤 PASS 기준: #next 활성");
   expect(text).toContain("(근거: POL-CCB_033 규칙 7)");
 });
+
+// ---------- 예상 못 한 대화상자 ----------
+
+const dialogPage = (texts: string[], inside = false, over: Partial<ReturnType<typeof basePage>> = {}) => ({
+  evaluate: async (expr: string) => (expr.includes("dialogs().map") ? texts : expr.includes("closest(") ? inside : undefined) as any,
+  ...over,
+});
+
+test("예상 못 한 대화상자가 먼저 떠서 단계가 막히면 FAIL 이 아니라 NA(D) 이고 모달 글자가 증거로 남는다", async () => {
+  const ctx = fakeCtx(dialogPage(["일괄 Handoff 하시겠습니까? 확인 취소"], false, { waitFor: async () => { throw new Error("Timeout 3000ms exceeded") } }));
+  const r = await runCase(ctx, mk("T-MODAL", [{ op: "goto", url: "/" }, { op: "click", sel: '[data-testid="bulk"]' }, { op: "wait", sel: '[data-testid="done"]' }]));
+  expect(r.status).toBe("NA");
+  expect(r.toolError?.kind).toBe("D");
+  expect(r.toolError?.evidenceText).toContain("일괄 Handoff 하시겠습니까?");
+  expect(r.steps[2]!.error).toContain("예상 못 한 대화상자");
+  const rows = excludedRows([r], () => "x");
+  expect(rows[0]!.evidence).toContain("대화상자 글자");
+  expect(isIssue(r, { acceptedSkips: [] })).toBe(false);
+});
+
+test("대화상자 안쪽 요소를 다루는 단계가 실패한 것은 예상한 대화상자라 그대로 FAIL 이다", async () => {
+  const ctx = fakeCtx(dialogPage(["공지"], true, { waitFor: async () => { throw new Error("Timeout") } }));
+  const r = await runCase(ctx, mk("T-IN", [{ op: "goto", url: "/" }, { op: "wait", sel: "[role=dialog] .ok" }]));
+  expect(r.status).toBe("FAIL");
+});
+
+test("케이스가 dialog:true 를 기대하면 대화상자가 있어도 그대로 FAIL 이다", async () => {
+  const ctx = fakeCtx(dialogPage(["공지"], false, { waitFor: async () => { throw new Error("Timeout") } }));
+  const r = await runCase(ctx, mk("T-EXP", [{ op: "goto", url: "/" }, { op: "expect", dialog: true, basis: "POL-1" }, { op: "wait", sel: "#x" }]));
+  expect(r.status).toBe("FAIL");
+});
+
+test("대화상자가 없으면 그대로 FAIL 이다", async () => {
+  const ctx = fakeCtx(dialogPage([], false, { waitFor: async () => { throw new Error("Timeout") } }));
+  const r = await runCase(ctx, mk("T-NONE", [{ op: "goto", url: "/" }, { op: "wait", sel: "#x" }]));
+  expect(r.status).toBe("FAIL");
+});
+
+test("점검(probe) 스텝이 모달 때문에 실패한 것은 예상한 대화상자라 그대로 FAIL 이다", async () => {
+  const ctx = fakeCtx(dialogPage(["공지"], false, { click: async () => { throw new Error("click 실패") } }));
+  const r = await runCase(ctx, mk("T-PROBE", [{ op: "goto", url: "/" }, { op: "probe", kind: "click", sel: "#open" }]));
+  expect(r.status).toBe("FAIL");
+});

@@ -141,6 +141,31 @@ function jsonPath(obj: any, path: string): any {
   return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
 
+/** 대화상자 안쪽에 있는 요소인가를 가리는 CSS (inpage dialogs 와 같은 범위) */
+const DIALOG_CLOSEST = "dialog,[role=dialog],[role=alertdialog],[aria-modal=true],.modal,.ant-modal,.MuiDialog-root";
+
+/**
+ * 실패한 단계에서, 케이스가 예상하지 못한 대화상자가 떠 있으면 그 글자를 돌려준다.
+ * 예상한 경우: 케이스가 dialog:true 를 기대하거나, 실패한 단계의 요소가 대화상자 안쪽에 있다.
+ */
+async function unexpectedDialog(p: DPage, failed: Step, all: Step[]): Promise<string | null> {
+  try {
+    if (failed.op === "probe") return null; // 점검(probe)은 모달을 스스로 열고 닫아 보므로 예상한 대화상자다
+    if (failed.op === "expect" && failed.dialog === true) return null;
+    if (all.some((x) => x.op === "expect" && x.dialog === true)) return null;
+    const texts = await p.evaluate<string[]>(`window.__e2e.dialogs().map((d) => window.__e2e.norm(d.el.innerText || d.el.textContent || '').slice(0, 300))`);
+    if (!texts?.length) return null;
+    if (typeof failed.sel === "string") {
+      const sel = isRowSel(failed.sel) ? translateSel(failed.sel) : failed.sel;
+      const inside = await p.evaluate<boolean>(`(() => { try { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; return !!e && !!e.closest(${JSON.stringify(DIALOG_CLOSEST)}); } catch (x) { return false; } })()`).catch(() => false);
+      if (inside) return null;
+    }
+    return texts.filter(Boolean).join(" / ") || "(글자 없는 대화상자)";
+  } catch {
+    return null;
+  }
+}
+
 /** Gate 를 푸는 동작(resolve)에 쓰는 단순 스텝 실행기 */
 async function execSimple(p: DPage, st: Step, cfg: Config): Promise<void> {
   const sel = typeof st.sel === "string" ? translateSel(st.sel) : undefined;
@@ -356,6 +381,14 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       failedAt = i;
       if (e?.name === "OsWindowRequired") osBlocked = String(e.message);
       if (e?.name === "ToolError") toolErr = { kind: e.kind, detail: String(e.message), evidenceText: e.evidenceText };
+      else if (!osBlocked && !skipped) {
+        // 케이스가 예상하지 못한 대화상자가 먼저 떠서 막힌 것(예: 확인 모달)이면 사이트 결함이 아니라 NA — 모달 글자를 증거로 남긴다
+        const dlg = await unexpectedDialog(page, s, steps);
+        if (dlg) {
+          toolErr = { kind: "D", detail: `예상 못 한 대화상자가 떠 있어 이 단계를 판정하지 못함 — 대화상자: 「${dlg}」`, evidenceText: `대화상자 글자: 「${dlg}」` };
+          sr.error = `${sr.error} | 예상 못 한 대화상자: 「${dlg}」`.slice(0, 900);
+        }
+      }
       if (e?.name === "SkipCase") skipped = String(e.message);
     }
     // 줄 하나를 바꾸면 목록이 다시 정렬·다시 그려질 수 있다 — 다음 동작 전에 목록이 가라앉기를 기다려 다시 읽게 한다
