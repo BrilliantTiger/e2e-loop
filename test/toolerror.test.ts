@@ -161,3 +161,87 @@ test("D: eval 의 waitFor 목록이 끝내 안 그려지면 FAIL 이 아니라 N
   expect(r.reason).toContain("tr.row");
   expect(r.reason).toContain("300ms");
 });
+
+// ---------- A: 끝 상태 집합 대기 ----------
+import { waitEndState, singleEndState, SINGLE_STATE_WARNING } from "../src/waits.ts";
+import { aCaseUpsert } from "../src/actions.ts";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basePage } from "./helpers/fake.ts";
+
+const ends = { 완료: "#done", "확인 필요": "#review", 막힘: "#blocked", 오류: "#error", "비활성 사유": "#why" };
+/** 선택자별로 보이기 시작하는 시각이 정해진 가짜 화면 */
+const timed = (showAt: Record<string, number>, text: () => string = () => "처리 중") => {
+  const t0 = Date.now();
+  const on = (sel: string) => showAt[sel] !== undefined && Date.now() - t0 >= showAt[sel]!;
+  return { ...basePage(), count: async (sel: string) => (on(sel) ? 1 : 0), isVisible: async (sel: string) => on(sel), evaluate: async (expr: string) => (expr.includes("location.pathname") ? `sig|${text()}` : text()) as any };
+};
+
+test("A: 오지 않을 「완료」 대신 「확인 필요」가 나타나면 그 상태로 끝난다(끝없이 기다리지 않는다)", async () => {
+  const got = await waitEndState(timed({ "#review": 200 }), { endStates: ends }, { pollMs: 30 });
+  expect(got.state).toBe("확인 필요");
+});
+
+test("A: expectState 와 다른 끝 상태가 오면 실패(기대와 다른 끝 상태)이고 도구 오류가 아니다", async () => {
+  await expect(waitEndState(timed({ "#review": 100 }), { endStates: ends, expectState: "완료" }, { pollMs: 30 })).rejects.toThrow(/「확인 필요」/);
+  const ok = await waitEndState(timed({ "#done": 100 }), { endStates: ends, expectState: ["완료", "확인 필요"] }, { pollMs: 30 });
+  expect(ok.state).toBe("완료");
+});
+
+test("A: 화면이 idleMs 동안 안 바뀌면 현재 상태를 로그에 남기고 대기 실패(NA·A)로 끝난다", async () => {
+  const logs: string[] = [];
+  const err: any = await waitEndState(timed({}), { endStates: ends, idleMs: 250 }, { pollMs: 30, logEveryMs: 100, onLog: (l) => logs.push(l) }).catch((e) => e);
+  expect(err.name).toBe("ToolError");
+  expect(err.kind).toBe("A");
+  expect(err.message).toContain("처리 중");
+  expect(err.message).toContain("완료 · 확인 필요 · 막힘 · 오류 · 비활성 사유");
+  expect(logs.some((l) => l.startsWith("대기 중"))).toBe(true); // 주기 로그
+  expect(logs.at(-1)).toContain("대기 실패(도구 판정 불가)");
+});
+
+test("A: 화면이 계속 바뀌면(진행 중) idleMs 를 넘겨도 기다리고, 끝 상태가 오면 끝난다", async () => {
+  let n = 0;
+  const page = timed({ "#done": 700 }, () => `진행 ${++n}`);
+  const got = await waitEndState(page, { endStates: ends, idleMs: 200 }, { pollMs: 40 });
+  expect(got.state).toBe("완료");
+});
+
+test("A: 전체 상한을 넘기면 도구 판정 불가", async () => {
+  let n = 0;
+  const err: any = await waitEndState(timed({}, () => `진행 ${++n}`), { endStates: ends, idleMs: 99999, timeout: 200 }, { pollMs: 30 }).catch((e) => e);
+  expect(err.kind).toBe("A");
+});
+
+test("A: 러너에서 끝 상태 대기가 NA(A)가 되고 제외 사유에 A 가 표시된다. 끝 상태를 하나만 받으면 경고한다", async () => {
+  const log: string[] = [];
+  const ctx = fakeCtx(timed({}), log);
+  const r = await runCase(ctx, mk("T-A", [{ op: "goto", url: "/h" }, { op: "wait", endStates: { 완료: "#done" }, idleMs: 200 }]));
+  expect(r.status).toBe("NA");
+  expect(r.toolError?.kind).toBe("A");
+  expect(r.warnings).toContain(SINGLE_STATE_WARNING);
+  expect(log.some((l) => l.includes("wait-log"))).toBe(true);
+  const rows = excludedRows([r], () => "x");
+  expect(rows[0]!.reason).toContain("A 오지 않을 상태를 기다림");
+});
+
+test("A: 러너에서 끝 상태가 도착하면 통과하고 도착한 상태를 단계 설명에 남긴다", async () => {
+  const ctx = fakeCtx(timed({ "#blocked": 100 }));
+  const r = await runCase(ctx, mk("T-A2", [{ op: "goto", url: "/h" }, { op: "wait", endStates: ends }]));
+  expect(r.status).toBe("PASS");
+  expect(r.steps[1]!.desc).toContain("도착: 「막힘」");
+  expect(r.warnings.some((w) => w.includes("끝 상태가 하나뿐"))).toBe(false);
+});
+
+test("A: 선택자 하나만 기다리는 wait 는 실행 때도 등록 때도 경고한다", async () => {
+  const ctx = fakeCtx({});
+  const r = await runCase(ctx, mk("T-A3", [{ op: "goto", url: "/h" }, { op: "wait", sel: "#done" }]));
+  expect(r.warnings.some((w) => w.includes("끝 상태를 하나만 받는 대기"))).toBe(true);
+  const root = mkdtempSync(join(tmpdir(), "e2e-loop-up-"));
+  const up = aCaseUpsert({ project: root, cases: [mk("U-1", [{ op: "goto", url: "/" }, { op: "wait", sel: "#done" }, { op: "expect", sel: "#done", visible: true }]), mk("U-2", [{ op: "goto", url: "/" }, { op: "wait", endStates: { 완료: "#a" } }, { op: "expect", sel: "#a", visible: true }]), mk("U-3", [{ op: "goto", url: "/" }, { op: "wait", endStates: ends }, { op: "expect", sel: "#a", visible: true }])] });
+  expect(up.warns.filter((w) => w.startsWith("U-1") && w.includes("끝 상태를 하나만")).length).toBe(1);
+  expect(up.warns.filter((w) => w.startsWith("U-2") && w.includes("끝 상태가 하나뿐")).length).toBe(1);
+  expect(up.warns.some((w) => w.startsWith("U-3") && w.includes("하나"))).toBe(false);
+  const bad = aCaseUpsert({ project: root, cases: [mk("U-4", [{ op: "goto", url: "/" }, { op: "wait", endStates: "#done" }])] });
+  expect(bad.errors.length).toBe(1);
+  expect(singleEndState({ endStates: ends })).toBe(false);
+});

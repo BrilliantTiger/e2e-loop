@@ -7,6 +7,7 @@ import { judgeErrors, runProbe, sleep, type ProbePolicy } from "./probes.ts";
 import type { EvidenceKit } from "./evidence.ts";
 import { ToolError, isBlankActual } from "./toolerror.ts";
 import { READ_WAIT_MS, waitRendered } from "./reads.ts";
+import { SINGLE_STATE_WARNING, singleEndState, waitEndState } from "./waits.ts";
 
 export interface RunCtx {
   project: Project;
@@ -45,7 +46,7 @@ export function describe(s: Step): string {
     case "select": return `선택${t(s.sel)} ← "${s.value}"`;
     case "check": return `체크${t(s.sel)} = ${s.checked ?? true}`;
     case "press": return `키 ${s.key}${s.sel ? " @" + s.sel : ""}`;
-    case "wait": return s.sel ? `대기${t(s.sel)} ${s.state ?? "visible"}` : `대기 ${s.ms}ms`;
+    case "wait": return s.endStates ? `끝 상태 대기 ${Object.keys(s.endStates).join(" · ")}` : s.sel ? `대기${t(s.sel)} ${s.state ?? "visible"}` : `대기 ${s.ms}ms`;
     case "expect": return `확인${t(Object.fromEntries(Object.entries(s).filter(([k]) => k !== "op")))}`;
     case "api": return `API ${s.method ?? "GET"} ${s.url}`;
     case "screenshot": return `스크린샷${t(s.name)}`;
@@ -203,8 +204,15 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
         case "check": await page.check(s.sel, s.checked ?? true); break;
         case "press": await page.press(s.sel ?? null, s.key); break;
         case "wait":
-          if (s.sel) await page.waitFor(s.sel, s.state ?? "visible", s.timeout ?? cfg.stepTimeoutMs);
-          else await sleep(Number(s.ms ?? 500));
+          if (s.endStates) {
+            // 끝 상태 집합 대기: 어느 끝 상태든 도착하면 끝낸다. 15초마다 로그, 60초 무변화면 대기 실패(도구 판정 불가)
+            if (singleEndState(s as any)) res.warnings.push(SINGLE_STATE_WARNING);
+            const got = await waitEndState(page, s as any, { onLog: (line) => ctx.emit({ type: "wait-log", case: c.id, i, line }) });
+            sr.desc += ` — 도착: 「${got.state}」 (${(got.ms / 1000).toFixed(1)}초)`;
+          } else if (s.sel) {
+            res.warnings.push(`끝 상태를 하나만 받는 대기(${s.sel} ${s.state ?? "visible"}): 그 상태가 오지 않으면 실패로 끝남. 화면의 모든 끝 상태를 endStates 로 넣을 것(오류 A)`);
+            await page.waitFor(s.sel, s.state ?? "visible", s.timeout ?? cfg.stepTimeoutMs);
+          } else await sleep(Number(s.ms ?? 500));
           break;
         case "expect": await runExpect(page, s, cfg.baseUrl); break;
         case "api": {

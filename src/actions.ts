@@ -25,6 +25,7 @@ import { evidenceSources, intake, readIntake, readSession, sessionStart, type Ma
 
 export const proj = (p?: string) => new Project(p ?? process.env.E2E_PROJECT ?? process.cwd());
 
+import { SINGLE_STATE_WARNING, singleEndState } from "./waits.ts";
 const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe"]);
 const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check"]);
 
@@ -220,6 +221,16 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
     if (bad.length) {
       errors.push(`${c.id}: 잘못된 스텝 ${bad.map(({ s, i }) => `#${i + 1}(${s.op})`).join(", ")} — 허용: ${[...OPS].join(" ")}, click/fill/select/check 등은 sel 필수, goto 는 url 필수`);
       continue;
+    }
+    const badWait = c.steps.map((s, i) => ({ s, i })).filter(({ s }) => s.op === "wait" && s.endStates !== undefined && !(s.endStates && typeof s.endStates === "object" && !Array.isArray(s.endStates) && Object.values(s.endStates).every((v) => typeof v === "string" || (Array.isArray(v) && v.every((x) => typeof x === "string")))));
+    if (badWait.length) {
+      errors.push(`${c.id}: 잘못된 끝 상태 대기 ${badWait.map(({ i }) => `#${i + 1}`).join(", ")} — wait.endStates 는 { "상태 이름": "선택자" } 모양이어야 함`);
+      continue;
+    }
+    for (const [i, s] of c.steps.entries()) {
+      if (s.op !== "wait") continue;
+      if (s.endStates && singleEndState(s as any)) warns.push(`${c.id} #${i + 1}: ${SINGLE_STATE_WARNING}`);
+      else if (!s.endStates && s.sel) warns.push(`${c.id} #${i + 1}: 끝 상태를 하나만 받는 대기(${s.sel}) — 그 상태가 오지 않으면 실패로 끝남. 화면의 모든 끝 상태(완료 · 확인 필요 · 막힘 · 오류 · 비활성 사유)를 wait.endStates 로 넣을 것(오류 A)`);
     }
     if (c.steps[0]!.op !== "goto" && !c.steps.some((s) => s.op === "goto")) warns.push(`${c.id}: goto 스텝이 없습니다. 케이스는 매번 새 브라우저에서 시작하므로 첫 스텝에서 이동해야 합니다.`);
     if ((c.type ?? "spec") === "spec" && !c.source_ref) warns.push(`${c.id}: source_ref(근거 위치)가 없습니다. 기획서의 어느 절/디자인의 어느 프레임인지 적어 두세요.`);

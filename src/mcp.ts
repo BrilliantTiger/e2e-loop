@@ -133,7 +133,7 @@ server.registerTool("e2e_discover", {
 
 server.registerTool("e2e_case_upsert", {
   title: "케이스 등록·수정",
-  description: "기획서/디자인/기능정의서의 기대 동작을 spec 케이스로 등록한다. 스텝 op: goto{url} click{sel} dblclick hover fill{sel,value} select{sel,value} check{sel,checked} press{key,sel?} wait{ms | sel,state} expect{sel?, visible|hidden|text|textContains|value|count|checked|enabled, url, title, titleContains, dialog} api{method,url,body,headers,status(숫자·배열·'2xx'·'<400'),json{경로:값},jsonHas[경로],jsonArray,via:'page'(브라우저 안에서 보내 로그인 세션이 실림)} screenshot eval{script,equals,waitFor(읽기 전에 그려져 있어야 할 목록·패널 선택자)}. expect 는 text·value·count 등을 읽기 전에 그 요소가 그려질 때까지 먼저 기다린다. 케이스에 screen(화면 경로)·feature(기능 단위 이름)를 적으면 시트가 그 아래로 묶는다. 선택자: CSS · text=\"정확한 글\" · role=button[name=\"저장\"] · xpath=. 케이스는 매번 새 브라우저에서 시작하므로 첫 스텝은 goto. source_ref 에 근거 위치를 적는다.",
+  description: "기획서/디자인/기능정의서의 기대 동작을 spec 케이스로 등록한다. 스텝 op: goto{url} click{sel} dblclick hover fill{sel,value} select{sel,value} check{sel,checked} press{key,sel?} wait{ms | sel,state | endStates{상태 이름:선택자, 완료·확인 필요·막힘·오류·비활성 사유 등 화면의 모든 끝 상태},expectState,idleMs(기본 60000),timeout} expect{sel?, visible|hidden|text|textContains|value|count|checked|enabled, url, title, titleContains, dialog} api{method,url,body,headers,status(숫자·배열·'2xx'·'<400'),json{경로:값},jsonHas[경로],jsonArray,via:'page'(브라우저 안에서 보내 로그인 세션이 실림)} screenshot eval{script,equals,waitFor(읽기 전에 그려져 있어야 할 목록·패널 선택자)}. expect 는 text·value·count 등을 읽기 전에 그 요소가 그려질 때까지 먼저 기다린다. 케이스에 screen(화면 경로)·feature(기능 단위 이름)를 적으면 시트가 그 아래로 묶는다. 선택자: CSS · text=\"정확한 글\" · role=button[name=\"저장\"] · xpath=. 케이스는 매번 새 브라우저에서 시작하므로 첫 스텝은 goto. source_ref 에 근거 위치를 적는다.",
   inputSchema: { project, cases: z.array(caseShape).min(1) },
 }, wrap(A.aCaseUpsert as any));
 
