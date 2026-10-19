@@ -86,7 +86,7 @@ test.skipIf(!hasLan)("토큰 없는 접속은 막고, 토큰이 있으면 허용
   expect(html).not.toContain("\\uC2E4"); // 한글이 유니코드 이스케이프 글자로 깨지지 않는다
   const st: any = await (await get("/api/state", { headers: { authorization: `Bearer ${d.token}` } })).json();
   expect(st.notice).toContain("테스트 데이터와 테스트 계정만 입력");
-  expect(st.counts).toEqual({ pass: 0, issue: 0, skip: 0, warn: 0 });
+  expect(st.counts).toEqual({ pass: 0, issue: 0, skip: 0, toolError: 0, warn: 0 });
   expect(st.trend).toEqual([]);
 });
 
