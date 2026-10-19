@@ -17,7 +17,7 @@ export const basePage = (): DPage => ({
   check: async () => {},
   press: async () => {},
   waitFor: async () => {},
-  count: async () => 0,
+  count: async () => 1,
   isVisible: async () => true,
   text: async () => "",
   value: async () => "",

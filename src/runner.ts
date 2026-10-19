@@ -6,6 +6,7 @@ import { Project, expandEnv, nowIso } from "./store.ts";
 import { judgeErrors, runProbe, sleep, type ProbePolicy } from "./probes.ts";
 import type { EvidenceKit } from "./evidence.ts";
 import { ToolError, isBlankActual } from "./toolerror.ts";
+import { READ_WAIT_MS, waitRendered } from "./reads.ts";
 
 export interface RunCtx {
   project: Project;
@@ -71,6 +72,10 @@ async function runExpect(p: DPage, s: Step, base: string) {
   if (s.title !== undefined && (await p.title()) !== s.title) errs.push(`제목이 다름: 기대 "${s.title}" / 실제 "${await p.title()}"`);
   if (s.titleContains !== undefined && !(await p.title()).includes(s.titleContains)) errs.push(`제목에 "${s.titleContains}" 없음: "${await p.title()}"`);
   if (sel) {
+    // 읽기 전에 목록·패널이 그려졌는지 먼저 기다린다(그리기 전에 읽으면 빈 칸·undefined 가 나온다)
+    const reads = s.text !== undefined || s.textContains !== undefined || s.value !== undefined || s.checked !== undefined || s.enabled !== undefined;
+    if (s.count !== undefined) await waitRendered(p, sel, s.timeout ?? READ_WAIT_MS, s.count);
+    else if (reads) await waitRendered(p, sel, s.timeout ?? READ_WAIT_MS);
     if (s.visible === true) {
       try { await p.waitFor(sel, "visible", s.timeout ?? 3000); } catch { errs.push(`보여야 하는데 안 보임: ${sel}`); }
     }
@@ -243,6 +248,11 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
         }
         case "screenshot": sr.shot = await shot(safe(s.name ?? `step${i}`)); break;
         case "eval": {
+          // waitFor: 스크립트가 읽기 전에 그려져 있어야 하는 목록·패널 선택자(하나 또는 배열)
+          for (const w of ([] as string[]).concat(s.waitFor ?? [])) {
+            const wt = s.timeout ?? READ_WAIT_MS;
+            if (!(await waitRendered(page, w, wt))) throw new ToolError("D", `읽기 전에 그려져 있어야 하는 ${w} 가 ${wt}ms 안에 나타나지 않음`);
+          }
           const v = await page.evaluate(s.script);
           if (s.equals !== undefined && JSON.stringify(v) !== JSON.stringify(s.equals)) throw new Error(`스크립트 결과가 다름: 기대 ${JSON.stringify(s.equals)} / 실제 ${JSON.stringify(v)}`);
           break;

@@ -124,3 +124,40 @@ test("빈 글이 사이트의 JS 오류와 함께 나오면 도구 탓이 아니
   expect(r.status).toBe("FAIL");
   expect(r.toolError).toBeUndefined();
 });
+
+// ---------- D: 읽기 전에 그려졌는지 기다린다 ----------
+
+/** 처음 N번 count 를 부르는 동안은 아직 안 그려진 화면 */
+const lateRender = (after: number, text: string) => {
+  let calls = 0;
+  return { count: async () => (++calls > after ? 1 : 0), text: async () => (calls > after ? text : ""), value: async () => (calls > after ? text : "") };
+};
+
+test("D: 목록이 늦게 그려져도 읽기 전에 등장을 기다려 통과한다(빈 칸으로 읽지 않는다)", async () => {
+  const ctx = fakeCtx(lateRender(4, "3건"));
+  const r = await runCase(ctx, mk("T-LATE", [{ op: "goto", url: "/list" }, { op: "expect", sel: "#total", text: "3건" }]));
+  expect(r.status).toBe("PASS");
+});
+
+test("D: 개수 확인도 그 개수가 될 때까지 기다린다", async () => {
+  let calls = 0;
+  const ctx = fakeCtx({ count: async () => (++calls > 3 ? 17 : 0) });
+  const r = await runCase(ctx, mk("T-CNT", [{ op: "goto", url: "/list" }, { op: "expect", sel: "tr.row", count: 17 }]));
+  expect(r.status).toBe("PASS");
+});
+
+test("D: eval 은 waitFor 로 목록이 그려진 뒤 읽는다", async () => {
+  let calls = 0;
+  const ctx = fakeCtx({ count: async () => (++calls > 3 ? 2 : 0), evaluate: async () => 2 as any });
+  const r = await runCase(ctx, mk("T-EVAL", [{ op: "goto", url: "/list" }, { op: "eval", script: "document.querySelectorAll('tr').length", equals: 2, waitFor: "tr.row" }]));
+  expect(r.status).toBe("PASS");
+});
+
+test("D: eval 의 waitFor 목록이 끝내 안 그려지면 FAIL 이 아니라 NA(D) 로 시간과 선택자를 남긴다", async () => {
+  const ctx = fakeCtx({ count: async () => 0 });
+  const r = await runCase(ctx, mk("T-NEVER", [{ op: "goto", url: "/list" }, { op: "eval", script: "1", waitFor: "tr.row", timeout: 300 }]));
+  expect(r.status).toBe("NA");
+  expect(r.toolError?.kind).toBe("D");
+  expect(r.reason).toContain("tr.row");
+  expect(r.reason).toContain("300ms");
+});
