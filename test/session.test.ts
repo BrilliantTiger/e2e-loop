@@ -232,6 +232,11 @@ test("SKILL.md 가 있고(영어) 이름·설명 머리말과 동작 흐름 9단
   expect(text).toContain("Do not edit code");
   expect(text).toContain("from the next round");
   expect(text).toContain("in the language the user writes in");
+  // 시험 도구 오류 예방: 규칙 A~E, 라운드 전 리허설, 이슈와 도구 오류(NA)를 따로 보고
+  for (const t of ["endStates", "row=<row text>", "cell[col=", "data-testid", "waitFor", "basis", "`gate` step", "Rehearsal", "tool errors are 0", "excluded_issues.tsv", "issues N, tool errors (NA) M", "Do not report a tool error"]) expect(text).toContain(t);
+  for (const t of ["A, waiting for a state that never comes", "B, reusing a row number", "C, finding an element", "D, reading before the screen is drawn", "E, an expectation that differs"]) expect(text).toContain(t);
+  expect(text.indexOf("#### Rehearsal")).toBeGreaterThan(text.indexOf("### 6. "));
+  expect(text.indexOf("#### Rehearsal")).toBeLessThan(text.indexOf("### 7. "));
   for (const t of ["e2e_status", "e2e_session_start", "e2e_intake", "e2e_analyze", "e2e_os_check", "e2e_sheet", "e2e_prestart", "e2e_account", "e2e_comments", "e2e_round_start", "e2e_complete_check", "e2e_feedback"]) expect(text).toContain(t);
 });
 

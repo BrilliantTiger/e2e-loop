@@ -71,6 +71,12 @@ Read the docs, the code, and the result (the web). Find **the events of every sc
    - Put the basis location (doc section, frame, code location) in `source_ref` for every case.
    - Set `screen` (screen path) and `feature` (feature-unit name). The sheet groups by them.
    - For APIs use the `api` step: `status`, `json`, `jsonHas`, `jsonArray`. Add `via: "page"` when the login session is needed.
+   - **Write cases so that the tool does not cause errors.** A failure made by the test script is not a site defect. Five causes are known (A to E). Follow these rules when you write steps:
+     - **A, waiting for a state that never comes.** Use `wait` with `endStates` (every end state of the screen: done, needs check, blocked, error, disabled reason), not a single selector. After 60 seconds without a screen change, the tool logs the current state and ends the wait as a tool error (NA). A wait with one end state gives a warning.
+     - **B, reusing a row number.** Never find a table row by number (`row-3`, `:nth-child(3)`). Registration rejects it. Use `row=<row text>` or `cell[col="<column name>"][row="<row text>"]`. After a row changes, the list is read again.
+     - **C, finding an element in a way that differs from the screen.** Find elements by `data-testid`, role, or value. A selector that uses only label text gives a warning. The first time an element is used, the log shows the text of the element that was found. Read it with your own eyes.
+     - **D, reading before the screen is drawn.** `expect` waits for the list or panel to appear before it reads. In `eval`, set `waitFor` to the list or panel selector.
+     - **E, an expectation that differs from the plan.** Put `basis` (planning doc POL or CCB number) on every step that has an expectation. The sheet warns about expectations without a basis. If a human decision opens the gate, "blocked" is the normal state: use the `gate` step (`blocked`, `resolve`, `passed`), and the state after the gate opens is the PASS criterion.
 4. Call `e2e_coverage` to find gaps and fill them.
 5. **OS window check.** If a case goes through a native OS window outside the browser (for example a print dialog or a file chooser that the browser API cannot intercept) and you tagged it `os-window`, call `e2e_os_check` before testing.
    - If computer control works, the cases are included automatically.
@@ -91,6 +97,15 @@ Ask before starting the first round. Use `e2e_prestart` to record the answers.
 - You must tell the user (in their language): **"Videos and screenshots keep the screen as it is. Enter only test data and test accounts."**
 
 ### 6. Run a round
+
+#### Rehearsal (before the first official full round)
+
+Before the official run, rehearse every chapter (screen or feature unit) once on the test dataset with a partial round (`e2e_round_start` with `only`). Partial rounds are not counted against the round limit.
+
+1. For every case that does not pass, **first classify it: is the tool the cause, or the site?** Read the `reason`, the step error, the screenshot, and the element text in the log.
+2. A tool error is a case that ended as **NA with a tool error** (it appears in `excluded_issues.tsv`, not in the issue list). Mark the cause as A, B, C, D, or E, fix the **case** (never the site code), and rehearse the chapter again.
+3. A real site defect stays a FAIL. Do not hide it. Leave it for the official round.
+4. Go to the official full round **only when the tool errors are 0 in every chapter.** If a tool error remains, do not start the official run.
 
 - Start with `e2e_round_start`. The default is Headed. Use Headless only when the user asks. If the machine has no display, do not switch automatically; ask the user.
 - Wait with `e2e_round_status` and `wait_seconds`. Do not poll in short intervals.
@@ -129,6 +144,8 @@ Every round writes two sheets in `.e2e/rounds/<round>/`:
 What to do:
 
 - Read the result with `e2e_round_report`.
+- Tell the user the counts **separately**: "issues N, tool errors (NA) M". A tool error is not an issue. It goes to the excluded sheet `excluded_issues.tsv` (and `ai-sheet.md`), with the cause A to E. The dashboard shows the two counts separately. The issue text ("symptom") has this form: "On <screen>, for <element>, after <action>, <actual> appeared. Expected <expected>."
+- If M is not 0, fix the cases as in the rehearsal and run again. An unexpected dialog (for example a confirm modal) is also recorded as a tool error, with the dialog text as evidence.
 - Tell the user the human sheet path and the dashboard address.
 - Hand the AI sheet to the development agent. Tell it to work task by task and to confirm each task with a partial round (`verify` in the task).
 
@@ -154,6 +171,8 @@ What to do:
 - **Requests that arrive during a round apply from the next round.** Do not change cases during a round.
 - Do not invent expected values without a basis. If there is no basis, set the case to `blocked` and write the reason.
 - Do not write "pass" for something you did not run.
+- Do not report a tool error (NA) to the user as a site issue, and do not send it to the development agent.
+- Do not start the official full round while the rehearsal still shows tool errors.
 - Do not start when the minimum conditions are not met.
 - Do not open a new session unless the user asks.
 - Do not press destructive actions (delete, logout) on your own. Follow the tool rules.
