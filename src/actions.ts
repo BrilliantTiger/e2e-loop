@@ -27,6 +27,7 @@ export const proj = (p?: string) => new Project(p ?? process.env.E2E_PROJECT ?? 
 
 import { SINGLE_STATE_WARNING, singleEndState } from "./waits.ts";
 import { ROW_BY_NUMBER_HELP, rowByNumber, translateSel } from "./rows.ts";
+import { LABEL_ONLY_WARNING, labelOnly } from "./finders.ts";
 const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe"]);
 const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check"]);
 
@@ -243,6 +244,7 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       errors.push(`${c.id}: 줄 선택자 오류 ${badSel.join("; ")}. ${ROW_BY_NUMBER_HELP}`);
       continue;
     }
+    for (const [i, s] of c.steps.entries()) if (typeof s.sel === "string" && labelOnly(s.sel)) warns.push(`${c.id} #${i + 1}: ${LABEL_ONLY_WARNING(s.sel)}`);
     for (const [i, s] of c.steps.entries()) {
       if (s.op !== "wait") continue;
       if (s.endStates && singleEndState(s as any)) warns.push(`${c.id} #${i + 1}: ${SINGLE_STATE_WARNING}`);

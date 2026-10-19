@@ -9,6 +9,7 @@ import { ToolError, isBlankActual } from "./toolerror.ts";
 import { READ_WAIT_MS, settleList, waitRendered } from "./reads.ts";
 import { SINGLE_STATE_WARNING, singleEndState, waitEndState } from "./waits.ts";
 import { isRowSel, translateSel } from "./rows.ts";
+import { LABEL_ONLY_WARNING, describeFound, labelOnly } from "./finders.ts";
 
 export interface RunCtx {
   project: Project;
@@ -25,6 +26,8 @@ export interface RunCtx {
   /** 테스터가 입력해 등록한 값(삭제 허용 판단용) */
   created?: string[];
   onCreated?: (value: string) => void;
+  /** 이 라운드에서 이미 찾은 요소(선택자). 처음 쓰는 요소만 찾은 요소의 글자를 로그에 남긴다 */
+  seenSels?: Set<string>;
 }
 
 const safe = (s: string) => s.replace(/[^\w.-]+/g, "_").slice(0, 80);
@@ -200,6 +203,19 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     try {
       // 줄 도우미(row=… · cell[…])는 번호가 아니라 컬럼 이름·글자로 찾는 xpath 로 바꿔 쓴다
       if (rowStep) s = { ...s0, sel: translateSel(s0.sel), selLabel: s0.sel };
+      if (typeof s0.sel === "string") {
+        // 사람이 쓴 케이스의 라벨 글자만으로 찾는 호출은 경고한다(자동 점검 케이스는 제외)
+        if (c.type === "spec" && labelOnly(s0.sel)) res.warnings.push(LABEL_ONLY_WARNING(s0.sel));
+        // 처음 쓰는 요소는 찾은 요소의 글자를 남겨 눈으로 확인하게 한다
+        if (ctx.seenSels && !ctx.seenSels.has(s0.sel) && ["click", "dblclick", "hover", "fill", "select", "check", "press", "expect"].includes(s0.op)) {
+          ctx.seenSels.add(s0.sel);
+          const found = await describeFound(page, s.sel);
+          if (found) {
+            sr.found = found;
+            ctx.emit({ type: "element-found", case: c.id, i, sel: s0.sel, found });
+          }
+        }
+      }
       switch (s.op) {
         case "goto": await page.goto(abs(s.url, cfg.baseUrl)); break;
         case "click": await page.click(s.sel); break;
@@ -309,7 +325,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       else await page.screenshot(join(rdir, "live.png"));
     } catch {}
     res.steps.push(sr);
-    ctx.emit({ type: "step", case: c.id, i, status: sr.status, desc: sr.desc, error: sr.error, shot: sr.shot });
+    ctx.emit({ type: "step", case: c.id, i, status: sr.status, desc: sr.desc, error: sr.error, shot: sr.shot, found: sr.found });
     if (sr.status === "fail") {
       for (let j = i + 1; j < steps.length; j++) res.steps.push({ i: j, op: steps[j]!.op, desc: describe(steps[j]!), status: "skip", ms: 0 });
       break;

@@ -245,3 +245,45 @@ test("A: 선택자 하나만 기다리는 wait 는 실행 때도 등록 때도 �
   expect(bad.errors.length).toBe(1);
   expect(singleEndState({ endStates: ends })).toBe(false);
 });
+
+// ---------- C: 요소 찾는 방법 ----------
+import { labelOnly, describeFound } from "../src/finders.ts";
+
+test("C: 라벨 글자만으로 찾는 선택자를 알아보고, testid·id·name·역할·값이 있으면 통과시킨다", () => {
+  for (const s of ['text="트랙"', "text=저장", 'button:text-is("저장")', 'div:has-text("트랙")', 'td:text-is("IRB")']) expect(labelOnly(s)).toBe(true);
+  for (const s of ['[data-testid="track-cell"]', "#save", 'input[name="track"]', 'role=button[name="저장"]', '[role=button]:text-is("저장")', '[data-testid="row"]:has-text("a")', 'xpath=//td', 'row=visit.csv', 'cell[col="상태"][row="a"]', "button.primary", 'a[href="/x"]']) expect(labelOnly(s)).toBe(false);
+});
+
+test("C: 처음 쓰는 요소는 찾은 요소의 글자·값·식별 속성을 남기고, 같은 선택자는 다시 남기지 않는다", async () => {
+  const log: string[] = [];
+  const el = { n: 1, tag: "input", text: "", value: "IRB", testid: "track-cell" };
+  const ctx = { ...fakeCtx({ value: async () => "IRB", evaluate: async (expr: string) => (expr.includes("textOf(e)") ? (el as any) : undefined) }, log), seenSels: new Set<string>() };
+  const r = await runCase(ctx, mk("T-C1", [{ op: "goto", url: "/" }, { op: "expect", sel: '[data-testid="track-cell"]', value: "IRB" }, { op: "expect", sel: '[data-testid="track-cell"]', value: "IRB" }]));
+  expect(r.status).toBe("PASS");
+  expect(r.steps[1]!.found).toContain("<input>");
+  expect(r.steps[1]!.found).toContain("값 「IRB」");
+  expect(r.steps[1]!.found).toContain("data-testid=track-cell");
+  expect(r.steps[2]!.found).toBeUndefined();
+  expect(log.filter((l) => l.includes("element-found")).length).toBe(1);
+});
+
+test("C: 찾은 요소가 여러 개면 개수를 적는다. 없으면 적지 않는다", async () => {
+  const many = await describeFound({ ...basePage(), evaluate: async () => ({ n: 3, tag: "td", text: "트랙" }) as any }, "td");
+  expect(many).toContain("일치 3개 중 첫 번째");
+  expect(await describeFound({ ...basePage(), evaluate: async () => null as any }, "td")).toBeUndefined();
+});
+
+test("C: 사람이 쓴 케이스(spec)가 라벨 글자만으로 찾으면 실행 때 경고하고, 자동 점검(probe)에는 경고하지 않는다", async () => {
+  const steps: Case["steps"] = [{ op: "goto", url: "/" }, { op: "click", sel: 'text="트랙"' }];
+  const spec = await runCase(fakeCtx({}), mk("T-C2", steps));
+  expect(spec.warnings.some((w) => w.includes("라벨 글자만으로 찾는 선택자") && w.includes("오류 C"))).toBe(true);
+  const probe = await runCase(fakeCtx({}), mk("T-C3", steps, { type: "probe" }));
+  expect(probe.warnings.some((w) => w.includes("라벨 글자만으로"))).toBe(false);
+});
+
+test("C: 케이스 등록 때도 라벨 글자만 쓰면 경고한다", () => {
+  const root = mkdtempSync(join(tmpdir(), "e2e-loop-c-"));
+  const up = aCaseUpsert({ project: root, cases: [mk("U-C", [{ op: "goto", url: "/" }, { op: "click", sel: 'button:text-is("저장")' }, { op: "expect", sel: '[data-testid="ok"]', visible: true }])] });
+  expect(up.warns.filter((w) => w.startsWith("U-C") && w.includes("라벨 글자만으로")).length).toBe(1);
+  expect(up.errors).toEqual([]);
+});

@@ -162,6 +162,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
   const codeFp = await codeFingerprint(cfg.codeRoot ?? project.root);
   const kit = new EvidenceKit({ project, roundId: id, commit: codeFp.head });
   const createdSet = new Set(project.readJson<string[]>("created.json", []));
+  const seenSels = new Set<string>();
   const reportedFeatures = new Set<string>();
   const meta: RoundMeta = {
     id, n, status: "running", startedAt: nowIso(), driver: driver.name, headless: cfg.headless,
@@ -221,7 +222,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         }
         const c = selected[i]!;
         emit({ type: "case-start", case: c.id, title: c.title, index: i + 1, total: selected.length });
-        const runOne = (attempt: number) => runCase({ project, cfg, driver, roundId: id, decision: pre.decision, emit, resetBeforeCase, attempt, kit, created: [...createdSet], onCreated: (v) => createdSet.add(v) }, c);
+        const runOne = (attempt: number) => runCase({ project, cfg, driver, roundId: id, decision: pre.decision, emit, resetBeforeCase, attempt, kit, created: [...createdSet], onCreated: (v) => createdSet.add(v), seenSels }, c);
         // 브라우저가 중간에 죽으면(충돌·강제 종료) 새로 띄워 한 번 더 시도한다. 도구의 문제를 사이트의 결함으로 세지 않기 위해서다.
         const mk = async (attempt: number) => {
           try {

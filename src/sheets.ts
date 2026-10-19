@@ -368,7 +368,7 @@ export function renderHuman(project: Project, meta: RoundMeta, verdict: string, 
   let vid = 0;
   const caseBlock = (r: CaseResult) => {
     const steps = r.steps
-      .map((x) => `<tr class="${x.status}"><td>${x.i + 1}</td><td>${esc(x.desc)}</td><td>${x.status === "ok" ? "통과" : x.status === "fail" ? "실패" : "건너뜀"}</td><td>${x.ms}ms</td><td>${x.shot ? `<a href="${esc(x.shot)}" target="_blank"><img loading="lazy" src="${esc(x.shot)}"></a>` : ""}</td></tr>${x.error ? `<tr class="err"><td></td><td colspan="4">${esc(x.error)}</td></tr>` : ""}${x.api ? `<tr class="api"><td></td><td colspan="4">API ${esc(x.api.method)} ${esc(x.api.url)} → ${x.api.status ?? "-"}${x.api.responseBody ? ` · ${esc(clip(x.api.responseBody, 160))}` : ""}</td></tr>` : ""}`)
+      .map((x) => `<tr class="${x.status}"><td>${x.i + 1}</td><td>${esc(x.desc)}${x.found ? `<br><span class="meta">찾은 요소: ${esc(x.found)}</span>` : ""}</td><td>${x.status === "ok" ? "통과" : x.status === "fail" ? "실패" : "건너뜀"}</td><td>${x.ms}ms</td><td>${x.shot ? `<a href="${esc(x.shot)}" target="_blank"><img loading="lazy" src="${esc(x.shot)}"></a>` : ""}</td></tr>${x.error ? `<tr class="err"><td></td><td colspan="4">${esc(x.error)}</td></tr>` : ""}${x.api ? `<tr class="api"><td></td><td colspan="4">API ${esc(x.api.method)} ${esc(x.api.url)} → ${x.api.status ?? "-"}${x.api.responseBody ? ` · ${esc(clip(x.api.responseBody, 160))}` : ""}</td></tr>` : ""}`)
       .join("");
     const sig = [...r.pageErrors.map((e) => `JS 오류: ${e}`), ...r.failedRequests.map((e) => `요청: ${e}`), ...r.console.map((e) => `console.error: ${e}`)];
     const chs = loadChapters(rdir, r);

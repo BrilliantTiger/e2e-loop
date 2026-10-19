@@ -160,6 +160,8 @@ export interface StepResult {
   shot?: string; // evidence 상대 경로
   /** 케이스 시작(세션 시작)으로부터 이 스텝이 시작된 시각(ms) — 영상 챕터에 쓴다 */
   at?: number;
+  /** 이 케이스(라운드)에서 처음 쓰는 요소면, 찾은 요소의 글자·값·식별 속성(눈으로 확인하도록 로그에 남긴다) */
+  found?: string;
   /** api 스텝이면 요청·응답(AI용 시트에 쓴다) */
   api?: { method: string; url: string; status?: number; requestBody?: string; responseBody?: string; via: "server" | "page" };
 }
