@@ -5,6 +5,7 @@ import type { Driver, DPage } from "./drivers/index.ts";
 import { Project, expandEnv, nowIso } from "./store.ts";
 import { judgeErrors, runProbe, sleep, type ProbePolicy } from "./probes.ts";
 import type { EvidenceKit } from "./evidence.ts";
+import { ToolError, isBlankActual } from "./toolerror.ts";
 
 export interface RunCtx {
   project: Project;
@@ -55,7 +56,13 @@ export function describe(s: Step): string {
 
 async function runExpect(p: DPage, s: Step, base: string) {
   const errs: string[] = [];
+  /** 실제 칸이 비었거나 undefined·NaN — 사이트의 결함이 아니라 도구가 화면을 못 읽은 것(D) */
+  const blanks: string[] = [];
   const sel: string | undefined = s.sel;
+  const mismatch = (expected: unknown, actual: string, msg: string) => {
+    if (isBlankActual(actual) && !isBlankActual(expected)) blanks.push(msg);
+    else errs.push(msg);
+  };
   if (s.url !== undefined) {
     const u = await p.url();
     const ok = typeof s.url === "string" && (s.url.startsWith("^") ? new RegExp(s.url).test(u) : u.includes(s.url));
@@ -76,15 +83,15 @@ async function runExpect(p: DPage, s: Step, base: string) {
     }
     if (s.text !== undefined) {
       const t = await p.text(sel).catch((e) => `<<${e}>>`);
-      if (t !== s.text) errs.push(`텍스트가 다름: 기대 "${s.text}" / 실제 "${t}" (${sel})`);
+      if (t !== s.text) mismatch(s.text, t, `텍스트가 다름: 기대 "${s.text}" / 실제 "${t}" (${sel})`);
     }
     if (s.textContains !== undefined) {
       const t = await p.text(sel).catch((e) => `<<${e}>>`);
-      if (!t.includes(s.textContains)) errs.push(`텍스트에 "${s.textContains}" 없음: "${t.slice(0, 80)}" (${sel})`);
+      if (!t.includes(s.textContains)) mismatch(s.textContains, t, `텍스트에 "${s.textContains}" 없음: "${t.slice(0, 80)}" (${sel})`);
     }
     if (s.value !== undefined) {
       const v = await p.value(sel).catch((e) => `<<${e}>>`);
-      if (v !== s.value) errs.push(`값이 다름: 기대 "${s.value}" / 실제 "${v}" (${sel})`);
+      if (v !== s.value) mismatch(s.value, v, `값이 다름: 기대 "${s.value}" / 실제 "${v}" (${sel})`);
     }
     if (s.checked !== undefined) {
       const c = await p.evaluate<boolean | null>(`(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; return e ? (typeof e.checked === 'boolean' ? e.checked : e.getAttribute('aria-checked') === 'true') : null; })()`);
@@ -101,6 +108,7 @@ async function runExpect(p: DPage, s: Step, base: string) {
     if (s.dialog === false && n > 0) errs.push("모달/대화상자가 없어야 하는데 떠 있음");
   }
   if (errs.length) throw new Error(errs.join(" | "));
+  if (blanks.length) throw new ToolError("D", `실제 값을 읽지 못함(빈 칸·undefined·NaN) — ${blanks.join(" | ")}`);
 }
 
 /** 상태코드 기대값: 숫자, 숫자 배열, "2xx" "3xx", "<400" */
@@ -162,6 +170,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   const keepAllShots = !ctx.driver.capabilities.video;
   let failedAt = -1;
   let osBlocked: string | undefined;
+  let toolErr: { kind: ToolError["kind"]; detail: string; evidenceText?: string } | undefined;
   let skipped: string | undefined;
   const shot = async (name: string): Promise<string | undefined> => {
     const p = join(edir, name + ".png");
@@ -262,6 +271,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       sr.error = String(e?.message ?? e).replace(/\n\s+/g, " ").slice(0, 600);
       failedAt = i;
       if (e?.name === "OsWindowRequired") osBlocked = String(e.message);
+      if (e?.name === "ToolError") toolErr = { kind: e.kind, detail: String(e.message), evidenceText: e.evidenceText };
       if (e?.name === "SkipCase") skipped = String(e.message);
     }
     sr.ms = Date.now() - tStep;
@@ -306,6 +316,15 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     res.status = "BLOCKED";
     res.reason = osBlocked;
   }
+  // 화면 글이 빈 것이 사이트의 JS 오류·서버 5xx 와 함께 나왔다면 도구 탓이 아니라 사이트의 결함이다 — FAIL 로 둔다
+  const siteFault = res.pageErrors.length > 0 || res.failedRequests.some((r) => /^(5\d\d|ERR)\b/.test(r));
+  if (toolErr && siteFault) toolErr = undefined;
+  if (toolErr) {
+    // 시험 도구 탓에 판정하지 못한 것이지 사이트의 결함이 아니다 — FAIL 이 아니라 NA, 이슈가 아니라 제외 시트로 간다
+    res.status = "NA";
+    res.toolError = toolErr;
+    res.reason = `도구 판정 불가(${toolErr.kind}): ${toolErr.detail}`;
+  }
   res.warnings = [...new Set(res.warnings)].slice(0, 12);
   if (res.status === "PASS") {
     // 사용자가 이슈로 승격한 경고가 나왔으면 실패로 본다
@@ -316,7 +335,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       res.reason = `사용자가 이슈로 승격한 경고: ${res.warnings.find((w) => w.includes(hit.match))}`;
     }
   }
-  const ev = await session.finish(res.status !== "FAIL");
+  const ev = await session.finish(res.status !== "FAIL" && !res.toolError);
   if (ev.warn) res.warnings.push(ev.warn);
   if (ev.video) res.video = rel(ev.video);
   if (ev.trace) res.trace = rel(ev.trace);

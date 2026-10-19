@@ -10,6 +10,7 @@ import { evidenceSources } from "./session.ts";
 import { sheetGate } from "./sheet.ts";
 import { EvidenceKit, evidenceUsage } from "./evidence.ts";
 import { issuesOf } from "./issues.ts";
+import { toolErrorCount } from "./toolerror.ts";
 import { prestartStatus } from "./prestart.ts";
 
 async function sh(cmd: string, cwd: string, timeoutMs = 600000): Promise<{ code: number; out: string }> {
@@ -261,7 +262,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
       meta.finishedAt = nowIso();
       const cnt: Record<string, number> = { PASS: 0, FAIL: 0, FLAKY: 0, BLOCKED: 0, NA: 0, SKIP: 0 };
       for (const r of results) cnt[r.status] = (cnt[r.status] ?? 0) + 1;
-      meta.summary = { ...(cnt as Record<Verdict, number>), total: results.length };
+      meta.summary = { ...(cnt as Record<Verdict, number>), total: results.length, toolError: toolErrorCount(results) };
       try {
         await finalizeEvidence(project, id, kit, results);
         meta.evidenceWarnings = kit.warnings.length ? kit.warnings : undefined;
@@ -310,6 +311,7 @@ export function featureDone(selected: Case[], results: CaseResult[], reported: S
   if (res.some((r) => !r)) return null; // 아직 안 돈 케이스가 있다
   if (!res.some((r) => r!.status === "PASS")) return null;
   if (res.some((r) => !["PASS", "SKIP", "NA"].includes(r!.status))) return null;
+  if (res.some((r) => r!.toolError)) return null; // 도구 오류로 판정하지 못한 케이스가 있으면 통과로 보고하지 않는다
   reported.add(key);
   const [screen, feature] = key.split("|") as [string, string];
   return { screen, feature, cases: group.length, titles: group.slice(0, 5).map((c) => c.title) };

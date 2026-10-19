@@ -154,7 +154,7 @@ test("사람용 시트: 영상(챕터 버튼)·스크린샷·이슈 추이·화�
 
 // ---------- 단위 ----------
 
-const mkIssue = (id: string, over: Partial<AiIssue>): AiIssue => ({ id, title: id, status: "FAIL", reproduction: [], expected: "", actual: "", api: [], console: { consoleErrors: [], pageErrors: [], failedRequests: [] }, evidence: { screenshots: [] }, suspectCode: [], warnings: [], hint: "", comments: [], ...over });
+const mkIssue = (id: string, over: Partial<AiIssue>): AiIssue => ({ id, title: id, symptom: "", status: "FAIL", reproduction: [], expected: "", actual: "", api: [], console: { consoleErrors: [], pageErrors: [], failedRequests: [] }, evidence: { screenshots: [] }, suspectCode: [], warnings: [], hint: "", comments: [], ...over });
 
 test("작업 의존: 다른 작업의 원인 API 를 쓰는 작업은 그 API 작업 뒤에 오고 선행 작업으로 적힌다", () => {
   const meta = {} as RoundMeta;

@@ -147,6 +147,9 @@ export interface ObservedApi {
 
 export type Verdict = "PASS" | "FAIL" | "FLAKY" | "BLOCKED" | "NA" | "SKIP";
 
+/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 */
+export type ToolErrorKind = "A" | "B" | "C" | "D" | "E";
+
 export interface StepResult {
   i: number;
   op: string;
@@ -184,6 +187,8 @@ export interface CaseResult {
   retries?: { n: number; pass: number; fail: number; reasons: string[] };
   /** 사용자가 이슈로 승격한 경고 때문에 실패로 바뀐 것 */
   promoted?: boolean;
+  /** 시험 도구 탓에 판정하지 못한 것(status 는 NA). 이슈가 아니라 제외 시트로 간다 */
+  toolError?: { kind: ToolErrorKind; detail: string; /** 예상 못 한 대화상자의 글자 같은 증거 */ evidenceText?: string };
   /** 증거 파일의 기록(커밋·시각·케이스 id·해시) */
   evidence?: { file: string; sha256: string; rawSha256?: string }[];
   durationMs: number;
@@ -210,7 +215,7 @@ export interface RoundMeta {
   /** 회차 도중 '지금 흐름에서 적용'으로 끼워 넣은 케이스 */
   injected?: string[];
   baseUrl: string;
-  summary?: Record<Verdict, number> & { total: number };
+  summary?: Record<Verdict, number> & { total: number; /** NA 중 시험 도구 오류인 것(해당 없음과 구분) */ toolError?: number };
   error?: string;
   /** 영상 변환 실패·ffmpeg 없음 같은 증거 관련 경고 */
   evidenceWarnings?: string[];
