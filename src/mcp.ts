@@ -67,7 +67,7 @@ server.registerTool("e2e_prestart", {
   description: "1라운드를 시작하기 전에 사용자에게 한 번에 물어야 할 것을 확인하고 답을 기록한다: ① 데이터 초기화(기본 안 함=keep, 초기화=reset 이면 초기화 명령을 프로젝트마다 한 번 등록) ② 라운드 상한(기본 10, 전체 라운드만 센다) ③ 로그인·테스트 계정(만들라고 하면 만드는 방법 — 화면·API·DB 스크립트 — 을 먼저 묻는다) ④ '영상·스크린샷에 화면이 그대로 남으니 테스트 데이터와 테스트 계정만 입력하라'는 안내. 인자 없이 부르면 남은 질문 목록만 돌려준다. 모두 마쳐야 e2e_round_start 가 시작된다.",
   inputSchema: {
     commentResponder: z.enum(["off", "answer", "fix"]).optional().describe("현황판 코멘트에 일회용 AI 로 자동 응답할지(기본 off). 사용자가 켜겠다고 한 경우에만 기록한다. answer=코드를 읽고 분석해 답만, fix=answer + 오너의 수정 지시는 코드까지"), responderAgent: z.enum(["claude", "codex"]).optional(),
-    project, dataPolicy: z.enum(["ask", "reset", "keep"]).optional(), resetCommand: z.string().optional(), resetCwd: z.string().optional(), maxRounds: z.number().optional(),
+    project, dataPolicy: z.enum(["ask", "reset", "keep"]).optional(), resetCommand: z.string().optional(), resetCwd: z.string().optional(), maxRounds: z.number().optional(), repeatLimit: z.number().optional().describe("같은 이슈가 연속 몇 라운드면 사용자에게 올릴지(기본 3). 사용자가 더 돌리기로 했을 때만 올린다(예: 7)"),
     login: z.enum(["none", "provided"]).optional(), loginSetupSteps: z.array(step).optional().describe("케이스마다 맨 앞에서 실행할 로그인 스텝"), loginLocalStorage: z.record(z.string(), z.string()).optional(),
     account: z.object({ mode: z.enum(["none", "provided", "create"]), method: z.enum(["ui", "api", "db-script"]).optional(), note: z.string().optional() }).optional(),
     acknowledged: z.boolean().optional().describe("화면 노출 안내를 사용자에게 했을 때 true"),

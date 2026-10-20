@@ -21,6 +21,7 @@ export const DEFAULT_CONFIG: Config = {
   deletePattern: "(delete|remove|trash|삭제|제거|지우기|휴지통)",
   destructivePattern: "(destroy|purge|drop|reset|withdraw|deactivate|초기화|탈퇴|폐기|비활성)",
   maxRounds: 10,
+  repeatLimit: 3,
   videoFps: 60,
   responder: { mode: "off", batchSeconds: 30 },
   evidenceLimitMB: 4096,

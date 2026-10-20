@@ -66,13 +66,14 @@ export const displayAvailable = (env: Record<string, string | undefined> = proce
 /** 상한·반복 이슈에 세는 라운드: 끝까지 돈 전체 라운드만(중단한 라운드는 세지 않는다) */
 const fullRounds = (project: Project) => project.rounds().filter((r) => r.scope === "full" && r.status === "finished");
 
-/** 같은 이슈가 마지막 3개 전체 라운드에서 연속으로 나왔는지 */
+/** 같은 이슈가 마지막 repeatLimit(기본 3)개 전체 라운드에서 연속으로 나왔는지 */
 export function repeatedIssues(project: Project): string[] {
-  const last = fullRounds(project).slice(-3);
-  if (last.length < 3) return [];
   const cfg = project.config();
+  const limit = Math.max(2, cfg.repeatLimit ?? 3);
+  const last = fullRounds(project).slice(-limit);
+  if (last.length < limit) return [];
   const sets = last.map((r) => new Set(issuesOf(project.readJson<CaseResult[]>(`rounds/${r.id}/results.json`, []), cfg).map((x) => x.id)));
-  return [...sets[0]!].filter((id) => sets[1]!.has(id) && sets[2]!.has(id)).sort();
+  return [...sets[0]!].filter((id) => sets.every((s) => s.has(id))).sort();
 }
 
 export interface Decision {
@@ -108,7 +109,7 @@ export function precheck(project: Project, opts: StartOpts): { ok: true; decisio
     const ack = project.readJson<{ key?: string }>("escalation.json", {});
     if (opts.acknowledgeRepeated) project.writeJson("escalation.json", { key, at: nowIso() });
     else if (ack.key !== key)
-      return { ok: false, decision: { needs_decision: true, question: `같은 이슈가 3라운드 연속 나왔습니다(${rep.slice(0, 8).join(", ")}${rep.length > 8 ? " …" : ""}). 사용자에게 올려 어떻게 할지 정하세요.`, options: [{ value: "continue", meaning: "계속한다: e2e_round_start 를 acknowledge_repeated=true 로 다시 호출" }, { value: "stop", meaning: "멈추고 이 이슈를 개발 쪽에 따로 넘긴다" }, { value: "na", meaning: "기대값이 틀렸다면 e2e_case_set_status 로 해당 없음(na) 처리하고 사유를 적는다" }] } };
+      return { ok: false, decision: { needs_decision: true, question: `같은 이슈가 ${cfg.repeatLimit ?? 3}라운드 연속 나왔습니다(${rep.slice(0, 8).join(", ")}${rep.length > 8 ? " …" : ""}). 사용자에게 올려 어떻게 할지 정하세요.`, options: [{ value: "continue", meaning: "계속한다: e2e_round_start 를 acknowledge_repeated=true 로 다시 호출" }, { value: "stop", meaning: "멈추고 이 이슈를 개발 쪽에 따로 넘긴다" }, { value: "na", meaning: "기대값이 틀렸다면 e2e_case_set_status 로 해당 없음(na) 처리하고 사유를 적는다" }] } };
   }
   const headless = opts.headless ?? cfg.headless;
   if (!headless && !displayAvailable())

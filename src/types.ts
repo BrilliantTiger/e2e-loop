@@ -72,6 +72,8 @@ export interface Config {
   destructivePattern: string;
   /** 라운드 상한(전체 라운드 기준). 기본 10 */
   maxRounds: number;
+  /** 같은 이슈가 이 횟수만큼 전체 라운드에서 연속으로 나오면 사용자에게 올린다. 기본 3(확정 요구사항). 한 표를 끝내는 데 더 걸리면 사용자가 7 등으로 올린다 */
+  repeatLimit: number;
   /** 증거(영상·스크린샷) 보관 용량 상한(MB). 넘기 전에 알린다 */
   evidenceLimitMB: number;
   /** 사용자가 이슈로 승격한 경고: 경고 문구에 match(부분 문자열)가 들어 있으면 그 케이스를 실패로 본다. case 가 있으면 그 케이스에만 */

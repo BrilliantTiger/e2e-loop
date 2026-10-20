@@ -41,6 +41,8 @@ export interface PrestartAnswers {
   resetCommand?: string;
   resetCwd?: string;
   maxRounds?: number;
+  /** 같은 이슈가 연속 몇 라운드면 사용자에게 올릴지(기본 3). 한 표를 끝내는 데 더 걸리면 7 등으로 올린다 */
+  repeatLimit?: number;
   login?: "none" | "provided";
   loginSetupSteps?: Step[];
   loginLocalStorage?: Record<string, string>;
@@ -83,6 +85,10 @@ export function aPrestart(p: Project, a: PrestartAnswers) {
       cfg.maxRounds = a.maxRounds;
       st.maxRoundsAnswered = true;
     }
+  }
+  if (a.repeatLimit !== undefined) {
+    if (!Number.isInteger(a.repeatLimit) || a.repeatLimit < 2) err.push("repeatLimit 은 2 이상의 정수여야 합니다.");
+    else cfg.repeatLimit = a.repeatLimit;
   }
   if (a.login) st.login = a.login;
   if (a.loginSetupSteps) cfg.auth = { ...(cfg.auth ?? {}), setupSteps: a.loginSetupSteps };
