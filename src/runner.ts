@@ -8,6 +8,7 @@ import type { EvidenceKit } from "./evidence.ts";
 import { ToolError, isBlankActual } from "./toolerror.ts";
 import { CLICK_WAIT_MS, PANEL_WAIT_MS, READ_WAIT_MS, settleList, waitEnabled, waitGone, waitPanelTitle, waitRendered } from "./reads.ts";
 import { isToastStep } from "./toast.ts";
+import { collectRows, perPage } from "./pages.ts";
 import { SLICED_EVAL_WARNING, looksTruncated, slicesValue } from "./judge.ts";
 import { SINGLE_STATE_WARNING, singleEndState, waitEndState } from "./waits.ts";
 import { isRowSel, translateSel } from "./rows.ts";
@@ -61,6 +62,7 @@ export function describe(s: Step): string {
     case "screenshot": return `스크린샷${t(s.name)}`;
     case "eval": return `스크립트 실행`;
     case "probe": return `점검(${s.kind}) ${s.label ?? s.sel ?? ""}`;
+    case "collect": return `여러 쪽 줄 모으기${t(s.sel)}`;
     case "prereq": return `선행 조건 「${s.name ?? "-"}」 확인`;
     case "gate": return `Gate 「${s.name ?? "-"}」 막힘이 정상 → ${s.resolve?.length ? "풀고" : "(사람이 풀기 전)"} 풀린 뒤 PASS 기준 확인`;
     default: return s.op;
@@ -332,6 +334,21 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
             }
           } else await runExpect(page, s, cfg.baseUrl);
           break;
+        case "collect": {
+          // 목록이 여러 쪽이면 모든 쪽을 돌며 같은 이름 줄을 모은다(첫 줄·pop() 으로 읽지 않는다)
+          const wantRows = s.count !== undefined ? s.count > 0 : s.atLeast !== undefined ? s.atLeast > 0 : s.contains !== undefined;
+          const got = await collectRows(page, { sel: s.sel, next: s.next, first: s.first, maxPages: s.maxPages, expectRows: wantRows }, s.timeout ?? READ_WAIT_MS);
+          sr.desc += ` — ${got.pages}쪽에서 ${got.rows.length}줄 모음(${got.stoppedBy})`;
+          sr.found = `${perPage(got)}: ${got.rows.slice(0, 6).map((r) => `「${r.text.slice(0, 40)}」`).join(" ")}${got.rows.length > 6 ? " …" : ""}`;
+          if (!s.next) res.warnings.push(`여러 쪽 줄 모으기에 next(다음 쪽 단추)가 없어 한 쪽만 읽음: ${s.sel}`);
+          if (got.stoppedBy === "쪽 상한") res.warnings.push(`여러 쪽 줄 모으기가 쪽 상한(${s.maxPages ?? 50}쪽)에서 멈춤 — 남은 쪽의 줄은 모으지 못했을 수 있음`);
+          const errs: string[] = [];
+          if (s.count !== undefined && got.rows.length !== s.count) errs.push(`모든 쪽에서 모은 줄 개수가 다름: 기대 ${s.count} / 실제 ${got.rows.length}`);
+          if (s.atLeast !== undefined && got.rows.length < s.atLeast) errs.push(`모든 쪽에서 모은 줄이 적음: 기대 ${s.atLeast}줄 이상 / 실제 ${got.rows.length}`);
+          for (const t of ([] as string[]).concat(s.contains ?? [])) if (!got.rows.some((r) => r.text.includes(t))) errs.push(`모은 줄 중에 「${t}」 가 있는 줄이 없음`);
+          if (errs.length) throw new Error(`${errs.join(" | ")} (${perPage(got)}, ${s.sel})`);
+          break;
+        }
         case "prereq": {
           // 챕터의 선행 조건(예: 대상 줄을 찾았다). 못 채우면 이 챕터는 「선행 조건 실패 — 도구」 NA 로 끝나고 뒤 동작을 누르지 않는다
           const { op: _op, name: _n, basis: _b, ...cond } = s;

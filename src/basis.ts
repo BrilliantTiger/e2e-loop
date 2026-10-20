@@ -7,6 +7,7 @@ import { isToastStep } from "./toast.ts";
 export function isExpectation(s: Step): boolean {
   if (s.op === "gate") return true;
   if (s.op === "expect") return !isToastStep(s) && ["url", "title", "titleContains", "visible", "hidden", "count", "text", "textContains", "value", "checked", "enabled", "dialog"].some((k) => s[k] !== undefined);
+  if (s.op === "collect") return ["count", "atLeast", "contains"].some((k) => s[k] !== undefined);
   if (s.op === "api") return s.status !== undefined || s.json !== undefined || s.jsonHas !== undefined || s.jsonArray !== undefined;
   if (s.op === "eval") return s.equals !== undefined;
   return false;

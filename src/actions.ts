@@ -31,8 +31,8 @@ import { LABEL_ONLY_WARNING, labelOnly } from "./finders.ts";
 import { TOAST_WARNING, isToastStep } from "./toast.ts";
 import { SLICED_EVAL_WARNING, TRUNCATED_EXPECT_WARNING, looksTruncated, slicesValue } from "./judge.ts";
 import { BASIS_WARNING, isExpectation, missingBasis } from "./basis.ts";
-const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate", "prereq"]);
-const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check"]);
+const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate", "prereq", "collect"]);
+const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check", "collect"]);
 
 const dashboards = new Map<string, DashboardInfo>();
 const liveRounds = new Map<string, Promise<unknown>>();
@@ -267,6 +267,10 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
     if (badSel.length) {
       errors.push(`${c.id}: 줄 선택자 오류 ${badSel.join("; ")}. ${ROW_BY_NUMBER_HELP}`);
       continue;
+    }
+    for (const [i, s] of c.steps.entries()) {
+      if (s.op === "collect" && !s.next) warns.push(`${c.id} #${i + 1}: 여러 쪽 줄 모으기에 next(다음 쪽 단추 선택자)가 없어 한 쪽만 읽음`);
+      if (s.op === "eval" && typeof s.script === "string" && /\.pop\(\)|\.at\(\s*-1\s*\)/.test(s.script)) warns.push(`${c.id} #${i + 1}: eval 이 pop()·마지막 줄만 읽음 — 목록이 여러 쪽이면 같은 이름 줄을 놓침. collect 스텝(next 로 모든 쪽을 돌며 줄 모으기)을 쓸 것`);
     }
     for (const [i, s] of c.steps.entries()) if (isToastStep(s)) warns.push(`${c.id} #${i + 1}: ${TOAST_WARNING}`);
     for (const [i, s] of c.steps.entries()) {
