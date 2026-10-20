@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as A from "../src/actions.ts";
-import { DefectGuard, requiresCycle } from "../src/chapter.ts";
+import { DefectGuard, requiresCycle, screenMatches } from "../src/chapter.ts";
+import { runCase } from "../src/runner.ts";
 import { addComment, listComments } from "../src/comments.ts";
 import { Project } from "../src/store.ts";
 import { blockedCount, excludedAllTsv, excludedRows, excludedTsv, mergeExcludedAcross, toolErrorCount } from "../src/toolerror.ts";
@@ -210,3 +211,42 @@ test("라운드: 선행 챕터(C9)가 제품 FAIL 이면 C11·C12 는 돌지 않
   expect(ex.every((x: any) => x.kind === "H")).toBe(true);
   expect(ex.map((x: any) => x.no)[0]).toBe(`${start.round}-X-01`);
 }, 180000);
+
+// ---- 선행 미완료: 목표 화면으로 갔는데 선행 단계 화면에 머물면 기다리지 않고 바로 NA(H) ----
+
+test("화면 경로 맞추기: <id>·:id·* 조각은 아무 값이나 받고, 쿼리·끝 / 는 무시한다", () => {
+  expect(screenMatches("/l2/datasets/7/table", "/l2/datasets/<id>/table")).toBe(true);
+  expect(screenMatches("/l2/datasets/7/time-key", "/l2/datasets/<id>/table")).toBe(false);
+  expect(screenMatches("/l2/datasets/7/table/", "/l2/datasets/:id/table")).toBe(true);
+  expect(screenMatches("/a?x=1", "/a")).toBe(true);
+  expect(screenMatches("/a/b", "/a")).toBe(false);
+});
+
+test("선행 챕터에 기대는 케이스가 목표 화면으로 갔는데 선행 화면에 머물면 60초 기다리지 않고 바로 「선행 미완료」 NA(H)", async () => {
+  const read: string[] = [];
+  const ctx = fakeCtx({ url: async () => "http://fake/l2/datasets/7/time-key", text: async (s: string) => (read.push(s), "") });
+  const c = mk("C12-1", "C12", { requires: ["C11U"], screen: "/l2/datasets/<id>/table", steps: [{ op: "goto", url: "/l2/datasets/7/table" }, { op: "expect", sel: "#status", text: "완료", basis: "POL-1" }] });
+  const t0 = Date.now();
+  const r = await runCase(ctx, c);
+  expect(Date.now() - t0).toBeLessThan(3000);
+  expect(r.status).toBe("NA");
+  expect(r.toolError).toBeUndefined();
+  expect(r.blockedBy?.chapter).toBe("C11U");
+  expect(r.reason).toContain("선행 미완료");
+  expect(r.reason).toContain("/l2/datasets/7/time-key");
+  expect(read).toEqual([]); // 화면 값을 읽지 않았다
+  expect(blockedCount([r])).toBe(1);
+  expect(toolErrorCount([r])).toBe(0);
+  // 뒤 챕터도 같은 뿌리로 막힌다
+  const g = new DefectGuard(nameOf);
+  g.record(c, r);
+  expect(g.blockedBy(mk("C44-1", "C44", { requires: ["C12"] }))?.detail).toBe("선행 미완료(챕터 C11U)");
+});
+
+test("목표 화면에 제대로 들어갔거나, 의존 선언이 없거나, 처음부터 다른 화면으로 가는 케이스는 그대로 돈다", async () => {
+  const at = (u: string) => fakeCtx({ url: async () => u, text: async () => "완료" });
+  const steps = [{ op: "goto", url: "/l2/datasets/7/table" }, { op: "expect", sel: "#status", text: "완료", basis: "POL-1" }];
+  expect((await runCase(at("http://fake/l2/datasets/7/table"), mk("A", "C12", { requires: ["C11U"], screen: "/l2/datasets/<id>/table", steps }))).status).toBe("PASS");
+  expect((await runCase(at("http://fake/l2/datasets/7/time-key"), mk("B", "C12", { screen: "/l2/datasets/<id>/table", steps }))).status).toBe("PASS");
+  expect((await runCase(at("http://fake/list"), mk("C", "C12", { requires: ["C11U"], screen: "/l2/datasets/<id>/table", steps: [{ op: "goto", url: "/list" }, { op: "expect", sel: "#status", text: "완료", basis: "POL-1" }] }))).status).toBe("PASS");
+});

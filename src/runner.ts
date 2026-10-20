@@ -1,4 +1,5 @@
 import { mkdirSync, copyFileSync } from "node:fs";
+import { PrereqIncomplete, screenMatches } from "./chapter.ts";
 import { join, relative } from "node:path";
 import type { Case, CaseResult, Config, StepResult, Step, Verdict } from "./types.ts";
 import type { Driver, DPage } from "./drivers/index.ts";
@@ -243,6 +244,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   let osBlocked: string | undefined;
   let toolErr: { kind: ToolError["kind"]; detail: string; evidenceText?: string } | undefined;
   let skipped: string | undefined;
+  let prereqIncomplete: CaseResult["blockedBy"];
   const shot = async (name: string): Promise<string | undefined> => {
     const p = join(edir, name + ".png");
     try {
@@ -300,7 +302,16 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
         }
       }
       switch (s.op) {
-        case "goto": await page.goto(abs(s.url, cfg.baseUrl)); break;
+        case "goto": {
+          await page.goto(abs(s.url, cfg.baseUrl));
+          // 선행 챕터에 기대는 케이스가 목표 화면으로 갔는데 다른 화면(예: 선행 단계 화면)에 머물면 선행 단계가 안 끝난 것이다.
+          // 그 화면에서 읽기를 60초씩 기다리지 않고 바로 「선행 미완료」 NA(H)로 끝낸다
+          if (c.requires?.length && c.screen && screenMatches(new URL(abs(s.url, cfg.baseUrl)).pathname, c.screen)) {
+            const at = new URL(await page.url(), cfg.baseUrl).pathname;
+            if (!screenMatches(at, c.screen)) throw new PrereqIncomplete(c.requires[0]!, `선행 미완료: 목표 화면(${c.screen})으로 갔는데 ${at} 에 머묾 — 선행 챕터(${c.requires.join(", ")})가 끝나지 않은 것으로 보고 읽지 않음`);
+          }
+          break;
+        }
         case "click": await page.click(s.sel); break;
         case "dblclick": await page.dblclick(s.sel); break;
         case "hover": await page.hover(s.sel); break;
@@ -460,8 +471,9 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       sr.error = String(e?.message ?? e).replace(/\n\s+/g, " ").slice(0, 600);
       failedAt = i;
       if (e?.name === "OsWindowRequired") osBlocked = String(e.message);
+      if (e?.name === "PrereqIncomplete") prereqIncomplete = { chapter: e.chapter, by: [], detail: String(e.message) };
       if (e?.name === "ToolError") toolErr = { kind: e.kind, detail: String(e.message), evidenceText: e.evidenceText };
-      else if (!osBlocked && !skipped) {
+      else if (!osBlocked && !skipped && !prereqIncomplete) {
         // 케이스가 예상하지 못한 대화상자가 먼저 떠서 막힌 것(예: 확인 모달)이면 사이트 결함이 아니라 NA — 모달 글자를 증거로 남긴다
         const dlg = await unexpectedDialog(page, s, steps);
         if (dlg) {
@@ -518,6 +530,13 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   // 화면 글이 빈 것이 사이트의 JS 오류·서버 5xx 와 함께 나왔다면 도구 탓이 아니라 사이트의 결함이다 — FAIL 로 둔다
   const siteFault = res.pageErrors.length > 0 || res.failedRequests.some((r) => /^(5\d\d|ERR)\b/.test(r));
   if (toolErr && siteFault) toolErr = undefined;
+  if (prereqIncomplete) {
+    // 선행 단계가 끝나지 않아 목표 화면에 못 들어감 — 도구 오류도 제품 FAIL 도 아니라 「선행 결함에 막힘」(H)
+    res.status = "NA";
+    res.blockedBy = prereqIncomplete;
+    res.reason = `${prereqIncomplete.detail} (도구 오류 아님, 선행 단계를 마친 뒤 다시 실행)`;
+    toolErr = undefined;
+  }
   if (toolErr) {
     // 시험 도구 탓에 판정하지 못한 것이지 사이트의 결함이 아니다 — FAIL 이 아니라 NA, 이슈가 아니라 제외 시트로 간다
     res.status = "NA";

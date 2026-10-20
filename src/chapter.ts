@@ -86,6 +86,7 @@ export const chapterName = (c: Case, fallback: (c: Case) => string): string => (
 
 /** 선행 결함에 막힘의 근거를 사람이 읽는 글로: 「선행 결함에 막힘(C9-03 외 16건, 챕터 C9)」 */
 export function blockedLabel(b: { chapter: string; by: string[] }): string {
+  if (!b.by.length) return `선행 미완료(챕터 ${b.chapter})`;
   const more = b.by.length > 1 ? ` 외 ${b.by.length - 1}건` : "";
   return `선행 결함에 막힘(${b.by[0] ?? "-"}${more}, 챕터 ${b.chapter})`;
 }
@@ -164,4 +165,21 @@ export function requiresCycle(cases: Pick<Case, "chapter" | "requires">[]): stri
     if (hit) return hit;
   }
   return undefined;
+}
+
+/** 화면 경로가 목표 화면에 맞는가. 목표의 <id>·:id·* 조각은 아무 조각이나 받는다 */
+export function screenMatches(path: string, screen: string): boolean {
+  const norm = (x: string) => x.replace(/[?#].*$/, "").replace(/\/+$/, "") || "/";
+  const a = norm(path).split("/");
+  const b = norm(screen).split("/");
+  if (a.length !== b.length) return false;
+  return b.every((seg, i) => seg === a[i] || /^(<[^>]+>|:[^/]+|\*)$/.test(seg));
+}
+
+/** 선행 단계가 끝나지 않아 목표 화면으로 못 들어간 것(사유 H). 러너가 기다리지 않고 바로 NA 로 끝낸다 */
+export class PrereqIncomplete extends Error {
+  constructor(public chapter: string, msg: string) {
+    super(msg);
+    this.name = "PrereqIncomplete";
+  }
 }

@@ -426,3 +426,18 @@ test("점검(probe) 스텝이 모달 때문에 실패한 것은 예상한 대화
   const r = await runCase(ctx, mk("T-PROBE", [{ op: "goto", url: "/" }, { op: "probe", kind: "click", sel: "#open" }]));
   expect(r.status).toBe("FAIL");
 });
+
+test("E: 일괄 결과에서 「안 보냄」이 정상인 줄은 줄마다 근거를 붙여 기대로 쓸 수 있고 통과한다. 근거 없이 「전부 성공」을 기대하면 등록 때 경고한다", async () => {
+  // 줄 선택자는 러너가 xpath 로 바꿔 넘긴다 — 줄 글자로 가린다
+  const ctx = fakeCtx({ text: async (s: string) => (s.includes("b.csv") ? "안 보냄" : s.includes("a.csv") ? "성공" : "") });
+  const ok = mk("E-ROWS", [
+    { op: "goto", url: "/handoff" },
+    { op: "expect", sel: 'cell[col="결과"][row="a.csv"]', text: "성공", basis: "POL-1 보낼 수 있는 파일은 성공" },
+    { op: "expect", sel: 'cell[col="결과"][row="b.csv"]', text: "안 보냄", basis: "POL-1 Gate 막힘 파일은 보내지 않음" },
+  ]);
+  const up = aCaseUpsert({ project: ctx.project.root, cases: [ok, mk("E-ALL", [{ op: "goto", url: "/handoff" }, { op: "eval", script: "rows.every(r => r === '성공')", equals: true }])] });
+  expect(up.warns.some((w) => w.startsWith("E-ROWS") && w.includes("오류 E"))).toBe(false);
+  expect(up.warns.some((w) => w.startsWith("E-ALL") && w.includes("오류 E"))).toBe(true);
+  const r = await runCase(ctx, ok);
+  expect(r.status).toBe("PASS");
+});
