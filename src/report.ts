@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import type { CaseResult, RoundMeta } from "./types.ts";
 import { Project } from "./store.ts";
 import { coverage } from "./coverage.ts";
-import { toolErrorCount } from "./toolerror.ts";
+import { blockedCount, toolErrorCount } from "./toolerror.ts";
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -32,7 +32,7 @@ export function diffWithPrevious(project: Project, meta: RoundMeta, results: Cas
   return d;
 }
 
-export interface TrendRow { round: string; scope: string; issues: number; toolError: number; fail: number; flaky: number; blocked: number; skip: number; warn: number; pass: number; total: number }
+export interface TrendRow { round: string; scope: string; issues: number; toolError: number; blockedByDefect: number; fail: number; flaky: number; blocked: number; skip: number; warn: number; pass: number; total: number }
 /** 회차별 이슈 수 추이. 이슈 = 실패 + 불안정 + 검증 못 한 것(BLOCKED). 스킵은 이슈가 아니다. 0 에 수렴하면 끝. */
 export function trend(project: Project, upTo?: RoundMeta, upToResults?: CaseResult[]): TrendRow[] {
   const rows: TrendRow[] = [];
@@ -44,7 +44,7 @@ export function trend(project: Project, upTo?: RoundMeta, upToResults?: CaseResu
     const flaky = res.filter((x) => x.status === "FLAKY").length;
     const blocked = res.filter((x) => x.status === "BLOCKED" && !cfg.acceptedSkips.includes(x.id)).length;
     const skip = res.filter((x) => x.status === "SKIP").length;
-    rows.push({ round: r.id, scope: r.scope, issues: fail + flaky + blocked, toolError: toolErrorCount(res), fail, flaky, blocked, skip, warn: res.filter((x) => x.status === "PASS" && x.warnings.length).length, pass: res.filter((x) => x.status === "PASS").length, total: res.length });
+    rows.push({ round: r.id, scope: r.scope, issues: fail + flaky + blocked, toolError: toolErrorCount(res), blockedByDefect: blockedCount(res), fail, flaky, blocked, skip, warn: res.filter((x) => x.status === "PASS" && x.warnings.length).length, pass: res.filter((x) => x.status === "PASS").length, total: res.length });
   }
   return rows;
 }

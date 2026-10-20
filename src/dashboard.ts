@@ -29,8 +29,9 @@ function state(project: Project, roundId?: string, role: "owner" | "viewer" = "v
   const counts = {
     pass: results.filter((r) => r.status === "PASS").length,
     issue: results.filter((r) => isIssue(r, cfg)).length,
-    skip: results.filter((r) => r.status === "SKIP" || (r.status === "NA" && !r.toolError)).length,
+    skip: results.filter((r) => r.status === "SKIP" || (r.status === "NA" && !r.toolError && !r.blockedBy)).length,
     toolError: results.filter((r) => r.status === "NA" && r.toolError).length,
+    blocked: results.filter((r) => r.status === "NA" && r.blockedBy).length,
     warn: results.filter((r) => r.status === "PASS" && r.warnings.length).length,
   };
   return {
@@ -244,7 +245,7 @@ main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;p
 <header><h1>E2E 실시간 대시보드</h1><span id="who" class="badge" style="display:none"></span><span id="proj" style="color:var(--mut)"></span><select id="sel"></select><span id="st" class="pill"></span><a id="rep" style="display:none" target="_blank">결과 보고서 열기</a></header>
 <main>
 <section class="card"><h2>진행</h2><div class="bar"><i id="bar" style="width:0"></i></div><div id="prog" style="margin:6px 0"></div>
-<div class="cnt"><div><b id="cp" class="ok">0</b>통과</div><div><b id="cf" class="fail">0</b>이슈</div><div><b id="cs">0</b>스킵·해당 없음</div><div><b id="ct" style="color:var(--warn)">0</b>도구 오류(NA)</div><div><b id="cw" style="color:var(--warn)">0</b>경고</div></div>
+<div class="cnt"><div><b id="cp" class="ok">0</b>통과</div><div><b id="cf" class="fail">0</b>이슈</div><div><b id="cs">0</b>스킵·해당 없음</div><div><b id="ct" style="color:var(--warn)">0</b>도구 오류(NA)</div><div><b id="cb" style="color:var(--warn)">0</b>선행 결함에 막힘</div><div><b id="cw" style="color:var(--warn)">0</b>경고</div></div>
 <div id="cur" style="font-weight:600"></div><div id="fbs"></div></section>
 <section class="card live"><h2>지금 화면</h2><img id="live" alt="아직 화면이 없습니다"></section>
 <section class="card"><h2>이슈 추이 (0 에 수렴하면 종료)</h2><div class="tr" id="tr"></div></section>
@@ -261,7 +262,7 @@ function draw(){const s=last;if(!s)return;$('proj').textContent=s.project;
 const sel=$('sel');if(sel.options.length!==s.rounds.length){sel.innerHTML=s.rounds.map(r=>'<option>'+r.id+'</option>').join('')}if(s.round&&!round)sel.value=s.round.id;
 const st=$('st');const rs=s.round?s.round.status:'';st.textContent=rs==='running'?'진행 중':rs==='finished'?'완료':rs==='aborted'?'중단':'대기';st.className='pill '+rs;
 const rep=$('rep');if(s.hasReport){rep.style.display='';rep.href='/files/'+s.round.id+'/report.html'}else rep.style.display='none';
-$('notice').textContent=s.notice;$('who').textContent=s.role==='owner'?'🔑 오너 모드':'';$('who').style.display=s.role==='owner'?'':'none';$('cp').textContent=s.counts.pass;$('cf').textContent=s.counts.issue;$('cs').textContent=s.counts.skip;$('ct').textContent=s.counts.toolError;$('cw').textContent=s.counts.warn;
+$('notice').textContent=s.notice;$('who').textContent=s.role==='owner'?'🔑 오너 모드':'';$('who').style.display=s.role==='owner'?'':'none';$('cp').textContent=s.counts.pass;$('cf').textContent=s.counts.issue;$('cs').textContent=s.counts.skip;$('ct').textContent=s.counts.toolError;$('cb').textContent=s.counts.blocked;$('cw').textContent=s.counts.warn;
 const pr=s.progress;$('bar').style.width=pr.total?Math.round(pr.done/pr.total*100)+'%':'0';$('prog').textContent=pr.done+' / '+pr.total+' 케이스'+(s.round?' · '+s.round.driver+' · 데이터 '+s.round.data.decision:'');
 $('cur').textContent=s.running&&pr.current?'▶ '+pr.current.id+' '+pr.current.title:'';
 $('fbs').innerHTML=(s.feedback||[]).map(f=>'<div class="fb">다음 회차에 적용할 요청 '+esc(f.id)+': '+esc(f.text)+'</div>').join('');

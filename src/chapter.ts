@@ -80,3 +80,88 @@ export class ChapterGuard {
     };
   }
 }
+
+/** 챕터 이름: 케이스에 chapter 를 적었으면 그 이름, 아니면 화면|기능 단위 */
+export const chapterName = (c: Case, fallback: (c: Case) => string): string => (c.chapter?.trim() ? c.chapter.trim() : fallback(c));
+
+/** 선행 결함에 막힘의 근거를 사람이 읽는 글로: 「선행 결함에 막힘(C9-03 외 16건, 챕터 C9)」 */
+export function blockedLabel(b: { chapter: string; by: string[] }): string {
+  const more = b.by.length > 1 ? ` 외 ${b.by.length - 1}건` : "";
+  return `선행 결함에 막힘(${b.by[0] ?? "-"}${more}, 챕터 ${b.chapter})`;
+}
+
+/**
+ * 챕터 간 의존 (사유 H). 케이스의 requires 가 가리키는 선행 챕터에 제품 FAIL 이 있으면 그 케이스는 돌리지 않는다.
+ * 선행 챕터 자신이 막혔으면 뒤 챕터도 같은 뿌리 결함에 막힌 것으로 본다(C9 → C11 → C12 → C44).
+ * 선행 챕터가 이번 라운드에 아직 돌지 않았거나 일부 라운드라 없으면 막지 않는다.
+ */
+export class DefectGuard {
+  private failed = new Map<string, string[]>();
+  private root = new Map<string, { chapter: string; by: string[] }>();
+  constructor(private nameOf: (c: Case) => string) {}
+
+  private applies = (c: Case) => c.type === "spec" && (c.status ?? "active") === "active" && !c.skipReason;
+
+  /** 이 케이스를 막는 선행 결함. 없으면 undefined */
+  blockedBy(c: Case): NonNullable<CaseResult["blockedBy"]> | undefined {
+    if (!this.applies(c) || !c.requires?.length) return undefined;
+    for (const need of c.requires) {
+      const f = this.failed.get(need);
+      const by = f?.length ? { chapter: need, by: f } : this.root.get(need);
+      if (by) return { chapter: by.chapter, by: by.by, detail: blockedLabel(by) };
+    }
+    return undefined;
+  }
+
+  /** 결과를 기록한다. 제품 FAIL(도구 오류가 아닌 FAIL)이면 챕터의 결함으로, 막힌 NA(H)면 뿌리 결함을 이어 받는다 */
+  record(c: Case, r: CaseResult) {
+    if (!this.applies(c)) return;
+    const name = this.nameOf(c);
+    if (r.status === "FAIL" && !r.toolError) {
+      this.failed.set(name, [...(this.failed.get(name) ?? []), c.id]);
+    } else if (r.blockedBy && !this.root.has(name)) {
+      this.root.set(name, { chapter: r.blockedBy.chapter, by: r.blockedBy.by });
+    }
+  }
+
+  /** 막힌 케이스의 결과: 누르지 않고 NA(H) 로 둔다 */
+  naResult(c: Case, b: NonNullable<CaseResult["blockedBy"]>): CaseResult {
+    return {
+      id: c.id, title: c.title, type: c.type, event: c.event, source_ref: c.source_ref, element: c.element, risk: c.risk,
+      status: "NA", reason: `${b.detail} — 이 케이스는 돌리지 않음(도구 오류 아님, 선행 결함을 고친 뒤 다시 실행)`, blockedBy: b,
+      warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(),
+    };
+  }
+}
+
+/** 챕터 의존(requires)이 돌고 도는지 찾는다. 돌면 그 고리(예: ["C9","C11K","C9"]), 아니면 undefined */
+export function requiresCycle(cases: Pick<Case, "chapter" | "requires">[]): string[] | undefined {
+  const edges = new Map<string, Set<string>>();
+  for (const c of cases) {
+    const name = c.chapter?.trim();
+    if (!name || !c.requires?.length) continue;
+    const set = edges.get(name) ?? new Set<string>();
+    for (const r of c.requires) set.add(r.trim());
+    edges.set(name, set);
+  }
+  const state = new Map<string, 1 | 2>();
+  const path: string[] = [];
+  const visit = (n: string): string[] | undefined => {
+    if (state.get(n) === 2) return undefined;
+    if (state.get(n) === 1) return [...path.slice(path.indexOf(n)), n];
+    state.set(n, 1);
+    path.push(n);
+    for (const m of edges.get(n) ?? []) {
+      const hit = visit(m);
+      if (hit) return hit;
+    }
+    path.pop();
+    state.set(n, 2);
+    return undefined;
+  };
+  for (const n of edges.keys()) {
+    const hit = visit(n);
+    if (hit) return hit;
+  }
+  return undefined;
+}

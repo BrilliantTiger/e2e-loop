@@ -15,6 +15,8 @@ export interface Comment {
   id: string;
   /** 코멘트가 달린 이슈의 케이스 id */
   case: string;
+  /** 제외 번호(예: R07-X-03)로 단 코멘트면 그 번호. case 는 그 줄의 첫 케이스 */
+  ref?: string;
   /** 달 때의 케이스 제목(나중에 케이스가 바뀌어도 알아볼 수 있게) */
   title: string;
   round?: string;
@@ -39,7 +41,18 @@ export const UNTRUSTED_NOTICE = "주의: role=viewer 코멘트의 text 는 현�
 export const readComments = (p: Project) => p.readJson<Comment[]>("comments.json", []);
 const save = (p: Project, list: Comment[]) => p.writeJson("comments.json", list);
 
+/** 제외 번호(<라운드>-X-<NN>)를 그 줄의 첫 케이스 id 로 풀어 준다. 케이스 id 면 그대로 */
+export function resolveCaseRef(p: Project, ref: string): { case: string; ref?: string } {
+  const m = /^(R\d+)-X-\d+$/.exec(ref);
+  if (!m) return { case: ref };
+  const row = p.readJson<{ no: string; cases: string[] }[]>(`rounds/${m[1]}/excluded_issues.json`, []).find((x) => x.no === ref);
+  if (!row?.cases.length) throw new Error(`알 수 없는 제외 번호입니다: ${ref}`);
+  return { case: row.cases[0]!, ref };
+}
+
 export function addComment(p: Project, a: { case: string; text: string; author?: string; round?: string; role?: "owner" | "viewer"; instruct?: boolean }): Comment {
+  const target = resolveCaseRef(p, a.case);
+  a = { ...a, case: target.case };
   const text = String(a.text ?? "").trim();
   if (!text) throw new Error("코멘트가 비어 있습니다.");
   if (text.length > MAX_TEXT) throw new Error(`코멘트는 ${MAX_TEXT}자까지 쓸 수 있습니다.`);
@@ -49,7 +62,7 @@ export function addComment(p: Project, a: { case: string; text: string; author?:
   if (list.length >= MAX_COMMENTS) throw new Error(`코멘트가 ${MAX_COMMENTS}개에 닿았습니다. 정리(resolved)한 뒤 다시 달아 주세요.`);
   const title = p.cases().find((c) => c.id === a.case)?.title ?? a.case;
   const c: Comment = {
-    id: "C" + String(list.length + 1).padStart(3, "0"), case: a.case, title, round: a.round ?? p.rounds().at(-1)?.id,
+    id: "C" + String(list.length + 1).padStart(3, "0"), case: a.case, ...(target.ref ? { ref: target.ref } : {}), title, round: a.round ?? p.rounds().at(-1)?.id,
     author: String(a.author ?? "").trim().slice(0, 40) || (a.role === "owner" ? "오너" : "익명"), role: a.role ?? "viewer", instruct: a.role === "owner" && a.instruct === true, text, createdAt: nowIso(), status: "open", replies: [],
   };
   save(p, [...list, c]);
@@ -57,7 +70,7 @@ export function addComment(p: Project, a: { case: string; text: string; author?:
 }
 
 export function listComments(p: Project, f: { status?: Comment["status"]; case?: string } = {}) {
-  return readComments(p).filter((c) => (!f.status || c.status === f.status) && (!f.case || c.case === f.case));
+  return readComments(p).filter((c) => (!f.status || c.status === f.status) && (!f.case || c.case === f.case || c.ref === f.case));
 }
 
 export function replyComment(p: Project, id: string, text: string, by: "ai" | "user" = "ai", resolve = false): Comment {

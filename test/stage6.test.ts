@@ -69,7 +69,7 @@ test.skipIf(!hasLan)("토큰 없는 접속은 막고, 토큰이 있으면 허용
   expect((await get("/?token=wrong")).status).toBe(401);
   expect((await get("/", { headers: { authorization: "Bearer wrong" } })).status).toBe(401);
   expect((await get("/", { headers: { cookie: "e2e_token=wrong" } })).status).toBe(401);
-  expect((await get(`/?token=${d.token.slice(0, -1)}0`)).status).toBe(401); // 거의 맞는 토큰도 안 됨
+  expect((await get(`/?token=${d.token.slice(0, -1)}${d.token.endsWith("0") ? "1" : "0"}`)).status).toBe(401); // 거의 맞는 토큰도 안 됨(끝 글자만 다름)
 
   // 주소의 토큰 → 쿠키로 바꿔 심고 주소에서 지움
   const first = await get(`/?token=${d.token}`);
@@ -86,7 +86,7 @@ test.skipIf(!hasLan)("토큰 없는 접속은 막고, 토큰이 있으면 허용
   expect(html).not.toContain("\\uC2E4"); // 한글이 유니코드 이스케이프 글자로 깨지지 않는다
   const st: any = await (await get("/api/state", { headers: { authorization: `Bearer ${d.token}` } })).json();
   expect(st.notice).toContain("테스트 데이터와 테스트 계정만 입력");
-  expect(st.counts).toEqual({ pass: 0, issue: 0, skip: 0, toolError: 0, warn: 0 });
+  expect(st.counts).toEqual({ pass: 0, issue: 0, skip: 0, toolError: 0, blocked: 0, warn: 0 });
   expect(st.trend).toEqual([]);
 });
 

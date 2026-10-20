@@ -10,9 +10,9 @@ import { evidenceSources } from "./session.ts";
 import { sheetGate } from "./sheet.ts";
 import { EvidenceKit, evidenceUsage } from "./evidence.ts";
 import { issuesOf } from "./issues.ts";
-import { toolErrorCount } from "./toolerror.ts";
+import { blockedCount, toolErrorCount } from "./toolerror.ts";
 import { prestartStatus } from "./prestart.ts";
-import { ChapterGuard } from "./chapter.ts";
+import { ChapterGuard, DefectGuard, chapterName } from "./chapter.ts";
 import { cleanupOwn, cleanupStale, describeProcs, staleBrowserProcs, waitNoStale } from "./procs.ts";
 
 async function sh(cmd: string, cwd: string, timeoutMs = 600000): Promise<{ code: number; out: string }> {
@@ -185,7 +185,9 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
   const createdSet = new Set(project.readJson<string[]>("created.json", []));
   const seenSels = new Set<string>();
   const reportedFeatures = new Set<string>();
-  const guard = new ChapterGuard(featureKey);
+  const chapterKey = (c: Case) => chapterName(c, featureKey);
+  const guard = new ChapterGuard(chapterKey);
+  const defects = new DefectGuard(chapterKey);
   let lastChapter = "";
   const meta: RoundMeta = {
     id, n, status: "running", startedAt: nowIso(), driver: driver.name, headless: cfg.headless,
@@ -260,18 +262,23 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         };
         let r: CaseResult;
         // 챕터를 시작하기 전: 이전 라운드가 남긴 브라우저 프로세스가 0개인가(막 닫히는 중일 수 있어 잠깐 기다린다)
-        if (c.type === "spec" && featureKey(c) !== lastChapter) {
-          lastChapter = featureKey(c);
+        const blockedBy = defects.blockedBy(c);
+        if (!blockedBy && c.type === "spec" && chapterKey(c) !== lastChapter) {
+          lastChapter = chapterKey(c);
           if (!guard.skipReason(c)) {
             const left = await waitNoStale(8000);
             if (left.length) {
               guard.end(c, `이전 브라우저 프로세스 ${left.length}개가 남아 있어 두 브라우저가 겹침(${describeProcs(left)})`);
-              emit({ type: "stale-browsers", chapter: featureKey(c), count: left.length });
+              emit({ type: "stale-browsers", chapter: chapterKey(c), count: left.length });
             }
           }
         }
         const endedWhy = guard.skipReason(c);
-        if (endedWhy) {
+        if (blockedBy) {
+          // 선행 챕터에 제품 결함이 있다: 이 케이스는 누르지 않고 「선행 결함에 막힘」 NA(H)로 둔다
+          r = defects.naResult(c, blockedBy);
+          emit({ type: "chapter-blocked", case: c.id, chapter: blockedBy.chapter, by: blockedBy.by.slice(0, 5) });
+        } else if (endedWhy) {
           // 챕터가 이미 끝났다(선행 조건 실패 · 읽기 실패 연속): 뒤 동작을 누르지 않고 NA(F)로 둔다
           r = guard.naResult(c, endedWhy);
           emit({ type: "chapter-skip", case: c.id, why: endedWhy.slice(0, 200) });
@@ -288,6 +295,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
           r = guard.settle(c, r);
           if (r.toolError?.kind === "F") emit({ type: "chapter-na", case: c.id, why: r.toolError.detail.slice(0, 200) });
         }
+        defects.record(c, r);
         results.push(r);
         project.writeJson(`rounds/${id}/results.json`, results);
         emit({ type: "case-end", case: c.id, status: r.status, reason: r.reason, warnings: r.warnings.length, ms: r.durationMs, video: r.video });
@@ -310,7 +318,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
       meta.finishedAt = nowIso();
       const cnt: Record<string, number> = { PASS: 0, FAIL: 0, FLAKY: 0, BLOCKED: 0, NA: 0, SKIP: 0 };
       for (const r of results) cnt[r.status] = (cnt[r.status] ?? 0) + 1;
-      meta.summary = { ...(cnt as Record<Verdict, number>), total: results.length, toolError: toolErrorCount(results) };
+      meta.summary = { ...(cnt as Record<Verdict, number>), total: results.length, toolError: toolErrorCount(results), blockedByDefect: blockedCount(results) };
       try {
         await finalizeEvidence(project, id, kit, results);
         meta.evidenceWarnings = kit.warnings.length ? kit.warnings : undefined;
@@ -359,7 +367,7 @@ export function featureDone(selected: Case[], results: CaseResult[], reported: S
   if (res.some((r) => !r)) return null; // 아직 안 돈 케이스가 있다
   if (!res.some((r) => r!.status === "PASS")) return null;
   if (res.some((r) => !["PASS", "SKIP", "NA"].includes(r!.status))) return null;
-  if (res.some((r) => r!.toolError)) return null; // 도구 오류로 판정하지 못한 케이스가 있으면 통과로 보고하지 않는다
+  if (res.some((r) => r!.toolError || r!.blockedBy)) return null; // 도구 오류로 판정하지 못한 케이스가 있으면 통과로 보고하지 않는다
   reported.add(key);
   const [screen, feature] = key.split("|") as [string, string];
   return { screen, feature, cases: group.length, titles: group.slice(0, 5).map((c) => c.title) };

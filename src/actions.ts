@@ -1,4 +1,5 @@
 // MCP 와 CLI 가 함께 쓰는 동작 모음. 반환값은 JSON 으로 직렬화되는 평범한 객체.
+import { requiresCycle } from "./chapter.ts";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { Case, Config, DriverName, Source, Step } from "./types.ts";
@@ -238,6 +239,20 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
         continue;
       }
     }
+    if (c.chapter !== undefined && (typeof c.chapter !== "string" || !c.chapter.trim())) {
+      errors.push(`${c.id}: chapter 는 챕터 이름(비어 있지 않은 글자)이어야 함`);
+      continue;
+    }
+    if (c.requires !== undefined) {
+      if (!Array.isArray(c.requires) || !c.requires.length || c.requires.some((x) => typeof x !== "string" || !x.trim())) {
+        errors.push(`${c.id}: requires 는 선행 챕터 이름의 배열이어야 함(예: ["C9"])`);
+        continue;
+      }
+      if (c.chapter && c.requires.includes(c.chapter)) {
+        errors.push(`${c.id}: 챕터 ${c.chapter} 가 자기 자신을 requires 로 가리킴`);
+        continue;
+      }
+    }
     const badWait = c.steps.map((s, i) => ({ s, i })).filter(({ s }) => s.op === "wait" && s.endStates !== undefined && !(s.endStates && typeof s.endStates === "object" && !Array.isArray(s.endStates) && Object.values(s.endStates).every((v) => typeof v === "string" || (Array.isArray(v) && v.every((x) => typeof x === "string")))));
     if (badWait.length) {
       errors.push(`${c.id}: 잘못된 끝 상태 대기 ${badWait.map(({ i }) => `#${i + 1}`).join(", ")} — wait.endStates 는 { "상태 이름": "선택자" } 모양이어야 함`);
@@ -295,8 +310,20 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
     if (c.steps[0]!.op !== "goto" && !c.steps.some((s) => s.op === "goto")) warns.push(`${c.id}: goto 스텝이 없습니다. 케이스는 매번 새 브라우저에서 시작하므로 첫 스텝에서 이동해야 합니다.`);
     if ((c.type ?? "spec") === "spec" && !c.source_ref) warns.push(`${c.id}: source_ref(근거 위치)가 없습니다. 기획서의 어느 절/디자인의 어느 프레임인지 적어 두세요.`);
     if (!c.steps.some((s) => (s.op === "expect" && !isToastStep(s)) || s.op === "probe" || s.op === "api")) warns.push(`${c.id}: 기대값을 확인하는 expect 스텝이 없어 “화면이 열린다” 이상을 검증하지 못합니다.`);
+    const merged = { type: "spec", status: "active", risk: "safe", ...byId.get(c.id), ...c } as Case;
+    if (merged.requires?.length) {
+      const loop = requiresCycle([...[...byId.values()].filter((x) => x.id !== c.id), merged]);
+      if (loop) {
+        errors.push(`${c.id}: 챕터 의존이 돌고 돎(${loop.join(" → ")}) — 선행 챕터는 한 방향으로만 가리킬 것`);
+        continue;
+      }
+    }
     byId.has(c.id) ? updated++ : added++;
-    byId.set(c.id, { type: "spec", status: "active", risk: "safe", ...byId.get(c.id), ...c } as Case);
+    byId.set(c.id, merged);
+  }
+  {
+    const known = new Set([...byId.values()].map((x) => x.chapter?.trim()).filter(Boolean) as string[]);
+    for (const c of a.cases) for (const need of c.requires ?? []) if (typeof need === "string" && need.trim() && !known.has(need.trim())) warns.push(`${c.id}: requires 의 챕터 「${need}」 를 chapter 로 가진 케이스가 없음 — 이름이 맞는지 확인(없는 챕터는 막지 않음)`);
   }
   if (!errors.length || added + updated) p.saveCases([...byId.values()]);
   return { added, updated, total: byId.size, errors, warns };

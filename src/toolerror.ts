@@ -1,8 +1,9 @@
 // 시험 도구(스크립트) 탓에 난 오류는 FAIL 이 아니라 NA(도구 판정 불가)로 둔다.
-// NA 는 이슈 시트가 아니라 제외 시트(excluded_issues)로 올리고, 제외 사유는 A~E 중 하나로 표시한다.
+// NA 는 이슈 시트가 아니라 제외 시트(excluded_issues)로 올리고, 제외 사유는 A~G(도구 오류) 또는 H(선행 결함에 막힘, 도구 오류가 아님) 중 하나로 표시한다.
 //   A 오지 않을 상태를 기다림   B 줄 번호 재사용   C 요소 찾는 방법이 화면과 다름
 //   D 화면이 그려지기 전에 읽음   E 기대가 기획서와 다름
 //   F 앞 단계가 실패했는데 뒤 단계를 계속 누름   G 판정용 문자열을 잘라서 비교
+//   H 선행 챕터의 제품 결함에 막혀 돌리지 않음(도구 오류가 아니라 제품 결함의 여파)
 import type { Case, CaseResult, Step, ToolErrorKind } from "./types.ts";
 
 export type { ToolErrorKind };
@@ -70,10 +71,29 @@ export const elementOf = (step: Step | undefined, c: Pick<Case, "title"> | undef
   return c?.title ?? fallback;
 };
 
+/** 제외 사유: 도구 오류 A~G 와 선행 결함에 막힘 H */
+export type ExcludedKind = ToolErrorKind | "H";
+export const EXCLUDED_LABEL: Record<ExcludedKind, string> = { ...TOOL_ERROR_LABEL, H: "선행 결함에 막힘" };
+const EXCLUDED_ACTION: Record<ExcludedKind, string> = { ...TOOL_ERROR_ACTION, H: "시험은 고치지 말고 선행 챕터의 제품 결함을 고친 뒤 다시 실행" };
+
 export interface ExcludedRow {
+  /** 제외 번호: <라운드>-X-<NN> (예: R07-X-03). 코멘트·추적에 쓴다 */
+  no: string;
+  /** 첫 케이스 id */
   id: string;
+  /** 합쳐진 모든 케이스 id */
+  cases: string[];
+  /** 같은 (챕터, 화면, 요소, 동작, 사유)를 한 줄로 합친 횟수 */
+  count: number;
   title: string;
-  kind: ToolErrorKind;
+  chapter: string;
+  screen: string;
+  element: string;
+  /** 동작(한국어 동사) */
+  verb: string;
+  kind: ExcludedKind;
+  /** 합치는 기준: 챕터·화면·요소·동작·사유 */
+  key: string;
   symptom: string;
   reason: string;
   action: string;
@@ -82,32 +102,104 @@ export interface ExcludedRow {
 }
 
 const isToolNa = (r: Pick<CaseResult, "status" | "toolError">) => r.status === "NA" && !!r.toolError;
+const isBlockedNa = (r: Pick<CaseResult, "status" | "blockedBy">) => r.status === "NA" && !!r.blockedBy;
+const isExcludedNa = (r: Pick<CaseResult, "status" | "toolError" | "blockedBy">) => isToolNa(r) || isBlockedNa(r);
 
-/** 도구 오류(NA)로 제외된 결과의 수. 「해당 없음」(케이스 status:"na")은 세지 않는다. */
+/** 도구 오류(NA A~G)로 제외된 결과의 수. 「해당 없음」(케이스 status:"na")과 선행 결함에 막힌 것(H)은 세지 않는다. */
 export const toolErrorCount = (results: Pick<CaseResult, "status" | "toolError">[]): number => results.filter(isToolNa).length;
+/** 선행 챕터의 제품 결함에 막혀 돌리지 않은 결과의 수(H). 도구 오류가 아니다. */
+export const blockedCount = (results: Pick<CaseResult, "status" | "blockedBy">[]): number => results.filter(isBlockedNa).length;
 
-/** 제외 시트의 줄. symptomOf 는 결과 하나의 「현상」 문장을 만들어 주는 함수. */
-export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) => string): ExcludedRow[] {
-  return results.filter(isToolNa).map((r) => {
-    const kind = r.toolError!.kind;
+export interface ExcludedInfo {
+  chapter?: string;
+  screen?: string;
+  element?: string;
+  verb?: string;
+}
+
+/**
+ * 제외 시트의 줄. symptomOf 는 결과 하나의 「현상」 문장을 만들어 주는 함수.
+ * 같은 (챕터, 화면, 요소, 동작, 사유)는 한 줄로 합치고 횟수를 센다. 줄마다 <라운드>-X-<NN> 번호를 붙인다.
+ */
+export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) => string, ctx: { round?: string; info?: (r: CaseResult) => ExcludedInfo } = {}): ExcludedRow[] {
+  const round = ctx.round ?? "R00";
+  const rows: ExcludedRow[] = [];
+  const byKey = new Map<string, ExcludedRow>();
+  for (const r of results.filter(isExcludedNa)) {
+    const kind: ExcludedKind = r.blockedBy ? "H" : r.toolError!.kind;
+    const info = ctx.info?.(r) ?? {};
+    const chapter = info.chapter ?? "";
+    const screen = info.screen ?? "";
+    const element = info.element ?? r.title;
+    const verb = info.verb ?? "실행";
+    const key = [chapter, screen, element, verb, kind === "H" ? `H:${r.blockedBy!.chapter}` : kind].join("\u0001");
+    const hit = byKey.get(key);
+    if (hit) {
+      hit.count++;
+      hit.cases.push(r.id);
+      continue;
+    }
     const shot = [...r.steps].reverse().find((s) => s.status === "fail" && s.shot)?.shot ?? r.steps.map((s) => s.shot).filter(Boolean).at(-1);
-    return {
+    const row: ExcludedRow = {
+      no: `${round}-X-${String(rows.length + 1).padStart(2, "0")}`,
       id: r.id,
+      cases: [r.id],
+      count: 1,
       title: r.title,
-      kind,
+      chapter, screen, element, verb, kind, key,
       symptom: symptomOf(r),
-      reason: `${kind} ${TOOL_ERROR_LABEL[kind]}: ${r.toolError!.detail}`,
-      action: TOOL_ERROR_ACTION[kind],
-      note: "도구 판정 불가",
-      evidence: [shot, r.toolError!.evidenceText].filter(Boolean).join(" · ") || undefined,
+      reason: kind === "H" ? `H ${EXCLUDED_LABEL.H}: ${r.blockedBy!.detail}` : `${kind} ${TOOL_ERROR_LABEL[kind]}: ${r.toolError!.detail}`,
+      action: EXCLUDED_ACTION[kind],
+      note: kind === "H" ? "도구 오류 아님 — 선행 챕터의 제품 결함에 막혀 돌리지 않음" : "도구 판정 불가",
+      evidence: [shot, r.toolError?.evidenceText].filter(Boolean).join(" · ") || undefined,
     };
-  });
+    byKey.set(key, row);
+    rows.push(row);
+  }
+  return rows;
 }
 
 const cell = (v: unknown) => String(v ?? "").replace(/[\t\r\n]+/g, " ");
 
-/** 제외 시트(탭 구분). 열: 케이스 · 현상 · 제외 사유 · 처리 · 비고 · 증거 */
+/** 제외 시트(탭 구분). 열: 번호 · 케이스 · 챕터 · 횟수 · 현상 · 제외 사유 · 처리 · 비고 · 증거 */
 export function excludedTsv(rows: ExcludedRow[]): string {
-  const head = ["케이스", "현상", "제외 사유", "처리", "비고", "증거"].join("\t");
-  return [head, ...rows.map((x) => [x.id, x.symptom, x.reason, x.action, x.note, x.evidence ?? ""].map(cell).join("\t"))].join("\n") + "\n";
+  const head = ["번호", "케이스", "챕터", "횟수", "현상", "제외 사유", "처리", "비고", "증거"].join("\t");
+  return [head, ...rows.map((x) => [x.no, x.cases.join(", "), x.chapter, x.count, x.symptom, x.reason, x.action, x.note, x.evidence ?? ""].map(cell).join("\t"))].join("\n") + "\n";
+}
+
+/** 여러 라운드에 걸쳐 합친 제외 줄: 같은 줄이 다시 돌 때마다 새로 쌓이지 않고 횟수만 늘어난다 */
+export interface ExcludedAllRow extends ExcludedRow {
+  /** 이 줄이 나온 라운드들 */
+  rounds: string[];
+  /** 가장 최근에 나온 라운드 */
+  lastRound: string;
+}
+
+/** 라운드별 제외 줄(오래된 라운드부터)을 같은 key 끼리 합친다. 번호는 처음 나온 번호를 유지하고 횟수는 더한다. */
+export function mergeExcludedAcross(perRound: { round: string; rows: ExcludedRow[] }[]): ExcludedAllRow[] {
+  const out = new Map<string, ExcludedAllRow>();
+  for (const { round, rows } of perRound) {
+    for (const x of rows) {
+      if (!x.key) continue; // key 가 없는 옛 형식 줄은 합치지 않는다
+      const hit = out.get(x.key);
+      if (hit) {
+        hit.count += x.count;
+        hit.cases = [...new Set([...hit.cases, ...x.cases])];
+        if (!hit.rounds.includes(round)) hit.rounds.push(round);
+        hit.lastRound = round;
+        hit.symptom = x.symptom;
+        hit.reason = x.reason;
+        hit.evidence = x.evidence ?? hit.evidence;
+      } else {
+        out.set(x.key, { ...x, cases: [...x.cases], rounds: [round], lastRound: round });
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+/** 합친 제외 시트(탭 구분). 열: 번호 · 케이스 · 챕터 · 횟수 · 나온 라운드 · 현상 · 제외 사유 · 처리 · 비고 · 증거 */
+export function excludedAllTsv(rows: ExcludedAllRow[]): string {
+  const head = ["번호", "케이스", "챕터", "횟수", "나온 라운드", "현상", "제외 사유", "처리", "비고", "증거"].join("\t");
+  return [head, ...rows.map((x) => [x.no, x.cases.join(", "), x.chapter, x.count, x.rounds.join(","), x.symptom, x.reason, x.action, x.note, x.evidence ?? ""].map(cell).join("\t"))].join("\n") + "\n";
 }

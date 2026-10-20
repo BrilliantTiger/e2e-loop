@@ -71,7 +71,7 @@ test("제외 시트에는 NA(도구 오류)만 오르고 사유에 A~E 가 표�
   expect(rows[0]!.kind).toBe("D");
   expect(rows[0]!.reason).toContain("D 화면이 그려지기 전에 읽음");
   expect(rows[0]!.symptom).toContain("/list에서 「#total」에 대해 「확인」 했더니");
-  expect(excludedTsv(rows).split("\n")[0]).toBe("케이스\t현상\t제외 사유\t처리\t비고\t증거");
+  expect(excludedTsv(rows).split("\n")[0]).toBe("번호\t케이스\t챕터\t횟수\t현상\t제외 사유\t처리\t비고\t증거");
   expect(toolErrorCount([na, plain])).toBe(1);
 });
 
@@ -87,8 +87,8 @@ test("라운드 결과물: 「이슈 N · 도구 오류(NA) M」을 따로 보�
   p.writeJson("rounds/R01/results.json", results);
   const out = writeSheets(p, m, results);
   const dir = p.roundDir("R01");
-  expect(readFileSync(out.files.aiMd, "utf8")).toContain("이슈 0 · 도구 오류(NA) 1");
-  expect(readFileSync(out.files.aiMd, "utf8")).toContain("## 도구 오류(NA) 1건");
+  expect(readFileSync(out.files.aiMd, "utf8")).toContain("이슈 0 · 도구 오류(NA) 1 · 선행 결함에 막힘(H) 0");
+  expect(readFileSync(out.files.aiMd, "utf8")).toContain("## 도구 오류(NA) 1줄");
   const j = JSON.parse(readFileSync(out.files.aiJson, "utf8"));
   expect(j.issue_count).toBe(0);
   expect(j.tool_error_count).toBe(1);
