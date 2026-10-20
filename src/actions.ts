@@ -28,6 +28,7 @@ export const proj = (p?: string) => new Project(p ?? process.env.E2E_PROJECT ?? 
 import { SINGLE_STATE_WARNING, singleEndState } from "./waits.ts";
 import { ROW_BY_NUMBER_HELP, rowByNumber, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, labelOnly } from "./finders.ts";
+import { SLICED_EVAL_WARNING, TRUNCATED_EXPECT_WARNING, looksTruncated, slicesValue } from "./judge.ts";
 import { BASIS_WARNING, isExpectation, missingBasis } from "./basis.ts";
 const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate", "prereq"]);
 const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check"]);
@@ -253,6 +254,15 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
     });
     if (badSel.length) {
       errors.push(`${c.id}: 줄 선택자 오류 ${badSel.join("; ")}. ${ROW_BY_NUMBER_HELP}`);
+      continue;
+    }
+    for (const [i, s] of c.steps.entries()) {
+      if (s.op === "eval" && s.equals !== undefined && slicesValue(s.script)) warns.push(`${c.id} #${i + 1}: ${SLICED_EVAL_WARNING("eval")}`);
+      if (s.op === "expect" && [s.text, s.textContains, s.value].some(looksTruncated)) warns.push(`${c.id} #${i + 1}: ${TRUNCATED_EXPECT_WARNING("expect")}`);
+    }
+    const badPanel = c.steps.flatMap((s, i) => (s.panelTitle !== undefined && (typeof s.panelTitle !== "string" || !s.panelTitle.trim()) ? [`#${i + 1}`] : []));
+    if (badPanel.length) {
+      errors.push(`${c.id}: panelTitle ${badPanel.join(", ")} 은 비어 있지 않은 글자여야 함`);
       continue;
     }
     for (const [i, s] of c.steps.entries()) if (typeof s.sel === "string" && labelOnly(s.sel)) warns.push(`${c.id} #${i + 1}: ${LABEL_ONLY_WARNING(s.sel)}`);

@@ -6,7 +6,8 @@ import { Project, expandEnv, nowIso } from "./store.ts";
 import { judgeErrors, runProbe, sleep, type ProbePolicy } from "./probes.ts";
 import type { EvidenceKit } from "./evidence.ts";
 import { ToolError, isBlankActual } from "./toolerror.ts";
-import { READ_WAIT_MS, settleList, waitRendered } from "./reads.ts";
+import { PANEL_WAIT_MS, READ_WAIT_MS, settleList, waitPanelTitle, waitRendered } from "./reads.ts";
+import { SLICED_EVAL_WARNING, looksTruncated, slicesValue } from "./judge.ts";
 import { SINGLE_STATE_WARNING, singleEndState, waitEndState } from "./waits.ts";
 import { isRowSel, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, describeFound, labelOnly } from "./finders.ts";
@@ -66,10 +67,13 @@ async function runExpect(p: DPage, s: Step, base: string) {
   const errs: string[] = [];
   /** 실제 칸이 비었거나 undefined·NaN — 사이트의 결함이 아니라 도구가 화면을 못 읽은 것(D) */
   const blanks: string[] = [];
+  /** 기대한 글이 잘린 글(…로 끝남)이라 어긋난 것 — 판정용 값을 자른 것이라 도구 탓(G) */
+  const truncs: string[] = [];
   const sel: string | undefined = s.sel;
   const lab: string | undefined = s.selLabel ?? sel;
   const mismatch = (expected: unknown, actual: string, msg: string) => {
     if (isBlankActual(actual) && !isBlankActual(expected)) blanks.push(msg);
+    else if (looksTruncated(expected)) truncs.push(msg);
     else errs.push(msg);
   };
   if (s.url !== undefined) {
@@ -122,6 +126,7 @@ async function runExpect(p: DPage, s: Step, base: string) {
   }
   if (errs.length) throw new Error(errs.join(" | "));
   if (blanks.length) throw new ToolError("D", `실제 값을 읽지 못함(빈 칸·undefined·NaN) — ${blanks.join(" | ")}`);
+  if (truncs.length) throw new ToolError("G", `기대한 글이 잘린 글(…)이라 전체 글과 비교할 수 없음 — ${truncs.join(" | ")}`);
 }
 
 /** 상태코드 기대값: 숫자, 숫자 배열, "2xx" "3xx", "<400" */
@@ -265,6 +270,14 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           }
         }
       }
+      // 패널·모달은 제목에 대상이 뜰 때까지 기다린 뒤 읽는다(늦게 그려지는 패널 때문에 버튼을 못 찾는 문제)
+      if (s.panelTitle !== undefined) {
+        const target = String(s.panelTitle);
+        const wt = Number(s.panelTimeout ?? PANEL_WAIT_MS);
+        const got = await waitPanelTitle(page, target, wt, typeof s.panel === "string" ? translateSel(s.panel) : undefined);
+        if (!got.ok) throw new Error(`패널 제목에 「${target}」 가 ${Math.round(wt / 1000)}초 안에 안 뜸 — 지금 뜬 패널 제목: ${got.titles.length ? got.titles.map((t) => `「${t.slice(0, 80)}」`).join(" ") : "(패널 없음)"}`);
+        sr.desc += ` — 패널 제목 「${target}」 확인`;
+      }
       switch (s.op) {
         case "goto": await page.goto(abs(s.url, cfg.baseUrl)); break;
         case "click": await page.click(s.sel); break;
@@ -283,7 +296,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           } else if (s.sel) {
             res.warnings.push(`끝 상태를 하나만 받는 대기(${s.sel} ${s.state ?? "visible"}): 그 상태가 오지 않으면 실패로 끝남. 화면의 모든 끝 상태를 endStates 로 넣을 것(오류 A)`);
             await page.waitFor(s.sel, s.state ?? "visible", s.timeout ?? cfg.stepTimeoutMs);
-          } else await sleep(Number(s.ms ?? 500));
+          } else if (s.panelTitle === undefined || s.ms !== undefined) await sleep(Number(s.ms ?? 500));
           break;
         case "expect": await runExpect(page, s, cfg.baseUrl); break;
         case "prereq": {
@@ -363,8 +376,14 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
             const wt = s.timeout ?? READ_WAIT_MS;
             if (!(await waitRendered(page, w, wt))) throw new ToolError("D", `읽기 전에 그려져 있어야 하는 ${w} 가 ${wt}ms 안에 나타나지 않음`);
           }
+          if (s.equals !== undefined && slicesValue(s.script)) res.warnings.push(SLICED_EVAL_WARNING("eval"));
           const v = await page.evaluate(s.script);
-          if (s.equals !== undefined && JSON.stringify(v) !== JSON.stringify(s.equals)) throw new Error(`스크립트 결과가 다름: 기대 ${JSON.stringify(s.equals)} / 실제 ${JSON.stringify(v)}`);
+          if (s.equals !== undefined && JSON.stringify(v) !== JSON.stringify(s.equals)) {
+            const msg = `스크립트 결과가 다름: 기대 ${JSON.stringify(s.equals)} / 실제 ${JSON.stringify(v)}`;
+            // 스크립트가 글자를 잘라 비교했다면 이 어긋남은 사이트의 결함인지 가릴 수 없다(오류 G)
+            if (slicesValue(s.script)) throw new ToolError("G", `판정용 값을 slice·substring 으로 잘라 비교함 — 자르지 않은 전체로 비교해야 판정할 수 있음. ${msg}`);
+            throw new Error(msg);
+          }
           break;
         }
         case "probe": {
