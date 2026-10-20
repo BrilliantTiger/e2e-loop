@@ -1,8 +1,9 @@
 // 시험 도구(스크립트) 탓에 난 오류는 FAIL 이 아니라 NA(도구 판정 불가)로 둔다.
-// NA 는 이슈 시트가 아니라 제외 시트(excluded_issues)로 올리고, 제외 사유는 A~G·L(도구 오류) 또는 H(선행 결함에 막힘, 도구 오류가 아님) 중 하나로 표시한다.
+// NA 는 이슈 시트가 아니라 제외 시트(excluded_issues)로 올리고, 제외 사유는 A~G·L·M(도구 오류) 또는 H(선행 결함에 막힘, 도구 오류가 아님) 중 하나로 표시한다.
 //   A 오지 않을 상태를 기다림   B 줄 번호 재사용   C 요소 찾는 방법이 화면과 다름
 //   D 화면이 그려지기 전에 읽음   E 기대가 기획서와 다름
 //   F 앞 단계가 실패했는데 뒤 단계를 계속 누름   G 판정용 문자열을 잘라서 비교
+//   M 서버 비동기 계산이 안 끝났는데 누름(준비 신호가 상한 안에 안 옴)
 //   L 진행 신호가 보이는데 무변화 종료 규칙·상한으로 끝냄(대기 상한이 처리 시간보다 짧음)
 //   H 선행 챕터의 제품 결함에 막혀 돌리지 않음(도구 오류가 아니라 제품 결함의 여파)
 import type { Case, CaseResult, Step, ToolErrorKind } from "./types.ts";
@@ -18,6 +19,7 @@ export const TOOL_ERROR_LABEL: Record<ToolErrorKind, string> = {
   F: "앞 단계가 실패했는데 뒤 단계를 계속 누름",
   G: "판정용 문자열을 잘라서 비교",
   L: "무변화 종료 규칙이 너무 짧음(진행 중인데 끝냄)",
+  M: "선행 계산 미완료(서버 비동기 계산이 안 끝났는데 누름)",
 };
 
 const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
@@ -29,6 +31,7 @@ const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
   F: "챕터에 선행 조건(prereq)을 선언하고, 앞 읽기가 실패한 원인(줄·요소 찾기)을 고쳐 다시 실행",
   G: "판정용 값은 자르지 않고 전체로 비교하도록 고쳐 다시 실행(자르는 것은 로그에만)",
   L: "케이스 maxWaitSec 를 서버 처리 시간보다 길게 정하고, 진행 신호를 wait.progress 로 적어 다시 실행",
+  M: "서버 계산이 끝날 때까지 기다린 뒤 다시 실행(준비 신호 ready 의 상한 timeoutSec 를 늘리거나 선행 계산을 먼저 끝냄)",
 };
 
 /** 스텝이 던지면 케이스가 FAIL 이 아니라 NA(도구 판정 불가)로 끝난다. */
@@ -135,7 +138,8 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
     const screen = info.screen ?? "";
     const element = info.element ?? r.title;
     const verb = info.verb ?? "실행";
-    const key = [chapter, screen, element, verb, kind === "H" ? `H:${r.blockedBy!.chapter}` : kind].join("\u0001");
+    // M(선행 계산 미완료)은 같은 준비 신호를 기다린 줄이면 요소·동작이 달라도 한 원인이라 한 줄로 합친다
+    const key = kind === "M" ? [chapter, screen, "M", r.toolError!.evidenceText ?? ""].join("\u0001") : [chapter, screen, element, verb, kind === "H" ? `H:${r.blockedBy!.chapter}` : kind].join("\u0001");
     const hit = byKey.get(key);
     if (hit) {
       hit.count++;

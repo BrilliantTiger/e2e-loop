@@ -1,7 +1,7 @@
 import { mkdirSync, copyFileSync } from "node:fs";
 import { PrereqIncomplete, screenMatches } from "./chapter.ts";
 import { join, relative } from "node:path";
-import type { Case, CaseResult, Config, StepResult, Step, Verdict } from "./types.ts";
+import type { Case, CaseResult, Config, ReadySignal, StepResult, Step, Verdict } from "./types.ts";
 import type { Driver, DPage } from "./drivers/index.ts";
 import { Project, expandEnv, nowIso } from "./store.ts";
 import { judgeErrors, runProbe, sleep, type ProbePolicy } from "./probes.ts";
@@ -11,7 +11,7 @@ import { CLICK_WAIT_MS, PANEL_WAIT_MS, READ_WAIT_MS, settleList, waitEnabled, wa
 import { isToastStep } from "./toast.ts";
 import { collectRows, perPage } from "./pages.ts";
 import { SLICED_EVAL_WARNING, looksTruncated, slicesValue } from "./judge.ts";
-import { SINGLE_STATE_WARNING, singleEndState, waitEndState } from "./waits.ts";
+import { MAX_WAIT_MS, SINGLE_STATE_WARNING, singleEndState, waitEndState } from "./waits.ts";
 import { isRowSel, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, describeFound, labelOnly } from "./finders.ts";
 
@@ -154,6 +154,74 @@ function jsonPath(obj: any, path: string): any {
   return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
 
+/** 준비 신호의 이름(사람이 읽는 글) */
+export function readyLabel(r: ReadySignal): string {
+  if (r.name) return r.name;
+  if (r.api) return `API ${String(r.api.method ?? "GET").toUpperCase()} ${r.api.url}${r.api.json ? " " + JSON.stringify(r.api.json) : ""}`;
+  return `${r.sel}${r.text !== undefined ? ` = "${r.text}"` : r.textContains !== undefined ? ` 에 "${r.textContains}"` : " 보임"}`;
+}
+
+/** 준비 신호가 지금 왔는가. now 는 지금 값(로그용) */
+async function readyNow(page: DPage, cfg: Config, r: ReadySignal): Promise<{ ok: boolean; now: string }> {
+  try {
+    if (r.api) {
+      const method = String(r.api.method ?? "GET").toUpperCase();
+      const url = abs(r.api.url, cfg.baseUrl);
+      let status: number;
+      let text: string;
+      if (r.api.via === "page") {
+        const got = await page.evaluate<{ status: number; text: string }>(`(async () => { const r = await fetch(${JSON.stringify(url)}, { method: ${JSON.stringify(method)}, credentials: 'include' }); const t = await r.text(); return { status: r.status, text: t.slice(0, 200000) }; })()`);
+        status = got.status;
+        text = got.text;
+      } else {
+        const res = await fetch(url, { method, signal: AbortSignal.timeout(15000) });
+        status = res.status;
+        text = await res.text();
+      }
+      const statusOk = r.api.status === undefined ? status < 400 : statusMatches(status, r.api.status);
+      if (!statusOk) return { ok: false, now: `상태코드 ${status}` };
+      if (!r.api.json) return { ok: true, now: `상태코드 ${status}` };
+      let body: any;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        return { ok: false, now: `JSON 아님: ${text.slice(0, 60)}` };
+      }
+      const now = Object.keys(r.api.json).map((k) => `${k}=${JSON.stringify(jsonPath(body, k))}`).join(" ");
+      return { ok: Object.entries(r.api.json).every(([k, v]) => JSON.stringify(jsonPath(body, k)) === JSON.stringify(v)), now };
+    }
+    const sel = translateSel(String(r.sel));
+    if (!((await page.count(sel).catch(() => 0)) > 0 && (await page.isVisible(sel).catch(() => false)))) return { ok: false, now: "안 보임" };
+    if (r.text === undefined && r.textContains === undefined) return { ok: true, now: "보임" };
+    const t = String((await page.text(sel).catch(() => "")) ?? "").trim();
+    return { ok: r.text !== undefined ? t === r.text : t.includes(String(r.textContains)), now: `「${t.slice(0, 60)}」` };
+  } catch (e: any) {
+    return { ok: false, now: `읽지 못함: ${String(e?.message ?? e).slice(0, 60)}` };
+  }
+}
+
+/** 준비 신호가 모두 올 때까지 기다린다. 상한 안에 안 오면 ToolError(M) — 사이트의 결함이 아니라 서버 계산이 덜 끝난 채 누를 뻔한 것 */
+export async function waitReady(page: DPage, cfg: Config, c: Pick<Case, "ready" | "maxWaitSec">, onLog?: (line: string) => void): Promise<string> {
+  const list = ([] as ReadySignal[]).concat(c.ready ?? []);
+  const t0 = Date.now();
+  for (const r of list) {
+    const cap = (r.timeoutSec ?? c.maxWaitSec ?? MAX_WAIT_MS / 1000) * 1000;
+    const poll = r.pollMs ?? 2000;
+    let lastLog = Date.now();
+    for (;;) {
+      const got = await readyNow(page, cfg, r);
+      if (got.ok) break;
+      if (Date.now() - t0 >= cap) throw new ToolError("M", `선행 계산 미완료: 준비 신호 「${readyLabel(r)}」 가 ${Math.round(cap / 1000)}초 안에 오지 않음(지금 ${got.now}) — 서버 계산이 끝나기 전에는 누르지 않음`, readyLabel(r));
+      if (Date.now() - lastLog >= 15000) {
+        lastLog = Date.now();
+        onLog?.(`준비 신호 「${readyLabel(r)}」 기다리는 중 ${Math.round((Date.now() - t0) / 1000)}초 — 지금 ${got.now}`);
+      }
+      await new Promise((res) => setTimeout(res, poll));
+    }
+  }
+  return `준비 신호 ${list.map((r) => `「${readyLabel(r)}」`).join(" ")} 확인(${((Date.now() - t0) / 1000).toFixed(1)}초)`;
+}
+
 /** 대화상자 안쪽에 있는 요소인가를 가리는 CSS (inpage dialogs 와 같은 범위) */
 const DIALOG_CLOSEST = "dialog,[role=dialog],[role=alertdialog],[aria-modal=true],.modal,.ant-modal,.MuiDialog-root";
 
@@ -256,6 +324,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     }
   };
 
+  let readyDone = !c.ready;
   for (let i = 0; i < steps.length; i++) {
     const s0 = steps[i]!;
     let s: Step = s0;
@@ -263,6 +332,11 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     const tStep = Date.now();
     const rowStep = typeof s0.sel === "string" && isRowSel(s0.sel);
     try {
+      // 준비 신호: 첫 동작(이동이 아닌 스텝) 전에 서버 계산이 끝났다는 신호가 올 때까지 누르지 않고 기다린다(오류 M)
+      if (!readyDone && s0.op !== "goto" && i >= (cfg.auth?.setupSteps?.length ?? 0)) {
+        readyDone = true;
+        sr.desc = `${await waitReady(page, cfg, c, (line) => ctx.emit({ type: "wait-log", case: c.id, i, line }))} → ${sr.desc}`;
+      }
       // 줄 도우미(row=… · cell[…])는 번호가 아니라 컬럼 이름·글자로 찾는 xpath 로 바꿔 쓴다
       if (rowStep) s = { ...s0, sel: translateSel(s0.sel), selLabel: s0.sel };
       if (typeof s0.sel === "string") {

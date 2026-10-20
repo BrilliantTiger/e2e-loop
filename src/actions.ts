@@ -243,6 +243,22 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       errors.push(`${c.id}: chapter 는 챕터 이름(비어 있지 않은 글자)이어야 함`);
       continue;
     }
+    if (c.ready !== undefined) {
+      const list = ([] as any[]).concat(c.ready);
+      const bad = list.flatMap((r, i) => {
+        if (!r || typeof r !== "object") return [`#${i + 1}`];
+        const api = r.api && typeof r.api === "object" && typeof r.api.url === "string" && r.api.url.trim();
+        const sel = typeof r.sel === "string" && r.sel.trim();
+        if (!api === !sel) return [`#${i + 1}(api 와 sel 중 하나만)`];
+        if (r.timeoutSec !== undefined && !(typeof r.timeoutSec === "number" && r.timeoutSec > 0)) return [`#${i + 1}(timeoutSec 는 0보다 큰 초)`];
+        if (r.api?.json !== undefined && (typeof r.api.json !== "object" || Array.isArray(r.api.json) || r.api.json === null)) return [`#${i + 1}(api.json 은 { 경로: 값 })`];
+        return [];
+      });
+      if (!list.length || bad.length) {
+        errors.push(`${c.id}: 준비 신호 ready ${bad.join(", ") || "(비어 있음)"} — { api: { url, json: { 경로: 값 } } } 또는 { sel, text|textContains } 꼴이어야 함`);
+        continue;
+      }
+    }
     if (c.requires !== undefined) {
       if (!Array.isArray(c.requires) || !c.requires.length || c.requires.some((x) => typeof x !== "string" || !x.trim())) {
         errors.push(`${c.id}: requires 는 선행 챕터 이름의 배열이어야 함(예: ["C9"])`);

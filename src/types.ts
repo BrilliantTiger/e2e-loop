@@ -32,8 +32,26 @@ export interface Case {
   maxWaitSec?: number;
   /** 챕터 이름(예: "C9"). 없으면 화면|기능 단위가 챕터다. 다른 케이스의 `requires` 가 이 이름을 가리킨다 */
   chapter?: string;
+  /** 준비 신호: 서버의 비동기 계산이 끝났다는 신호(API 값 또는 화면 요소). 첫 동작 전에 이 신호가 모두 올 때까지 누르지 않고 기다린다. 상한 안에 안 오면 NA(M) */
+  ready?: ReadySignal | ReadySignal[];
   /** 이 케이스가 기대는 선행 챕터 이름들. 선행 챕터에 제품 FAIL 이 있으면 이 케이스는 돌리지 않고 NA(H) */
   requires?: string[];
+}
+
+/** 준비 신호 하나. api 나 sel 중 하나를 쓴다 */
+export interface ReadySignal {
+  /** 사람이 읽는 이름(예: "Time key 후보 최신") */
+  name?: string;
+  /** API 값: 응답이 json 의 경로마다 그 값이면 준비됨. via:"page" 면 브라우저 안에서 보낸다(로그인 세션) */
+  api?: { url: string; method?: string; via?: "page"; status?: unknown; json?: Record<string, unknown> };
+  /** 화면 요소: 보이고, text/textContains 가 있으면 그 글자일 때 준비됨 */
+  sel?: string;
+  text?: string;
+  textContains?: string;
+  /** 상한(초). 없으면 케이스 maxWaitSec, 그것도 없으면 600 */
+  timeoutSec?: number;
+  /** 다시 묻는 간격(ms). 기본 2000 */
+  pollMs?: number;
 }
 
 export type DriverName = "auto" | "ego" | "chrome" | "edge" | "chromium";
@@ -155,8 +173,8 @@ export interface ObservedApi {
 
 export type Verdict = "PASS" | "FAIL" | "FLAKY" | "BLOCKED" | "NA" | "SKIP";
 
-/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 */
-export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L";
+/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 · M 서버 비동기 계산이 안 끝났는데 누름 */
+export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L" | "M";
 
 export interface StepResult {
   i: number;
