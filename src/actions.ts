@@ -226,6 +226,17 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       errors.push(`${c.id}: 잘못된 스텝 ${bad.map(({ s, i }) => `#${i + 1}(${s.op})`).join(", ")} — 허용: ${[...OPS].join(" ")}, click/fill/select/check 등은 sel 필수, goto 는 url 필수`);
       continue;
     }
+    if (c.maxWaitSec !== undefined) {
+      if (typeof c.maxWaitSec !== "number" || !(c.maxWaitSec > 0)) {
+        errors.push(`${c.id}: maxWaitSec 은 0보다 큰 숫자(초)여야 함`);
+        continue;
+      }
+      const bare = c.steps.flatMap((s, i) => (s.op === "wait" && s.sel && !s.endStates ? [`#${i + 1}`] : []));
+      if (bare.length) {
+        errors.push(`${c.id}: 긴 계산을 기다리는 케이스(maxWaitSec)의 대기 ${bare.join(", ")} 는 끝 상태를 모두 명시해야 함 — wait.endStates { "완료": "…", "확인 필요": "…", "막힘": "…", "오류": "…" } 로 쓸 것(오류 A)`);
+        continue;
+      }
+    }
     const badWait = c.steps.map((s, i) => ({ s, i })).filter(({ s }) => s.op === "wait" && s.endStates !== undefined && !(s.endStates && typeof s.endStates === "object" && !Array.isArray(s.endStates) && Object.values(s.endStates).every((v) => typeof v === "string" || (Array.isArray(v) && v.every((x) => typeof x === "string")))));
     if (badWait.length) {
       errors.push(`${c.id}: 잘못된 끝 상태 대기 ${badWait.map(({ i }) => `#${i + 1}`).join(", ")} — wait.endStates 는 { "상태 이름": "선택자" } 모양이어야 함`);

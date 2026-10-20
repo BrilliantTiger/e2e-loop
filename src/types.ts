@@ -28,6 +28,8 @@ export interface Case {
   feature?: string;
   /** 규칙이나 사용자 선택으로 일부러 돌리지 않는 케이스(결과는 SKIP) */
   skipReason?: string;
+  /** 긴 계산을 기다리는 케이스의 대기 상한(초). 끝 상태 대기(wait.endStates)의 전체 상한이 되고, 60초 무변화는 로그만 남기고 상한까지 기다린다. 예: Time anchor 후보 계산은 720 이상 */
+  maxWaitSec?: number;
 }
 
 export type DriverName = "auto" | "ego" | "chrome" | "edge" | "chromium";

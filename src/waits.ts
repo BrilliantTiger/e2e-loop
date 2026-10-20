@@ -21,6 +21,8 @@ export interface EndStateOpts {
   logEveryMs?: number;
   /** 상태를 읽는 간격(ms). 기본 500 */
   pollMs?: number;
+  /** 긴 계산 대기: 화면이 idleMs 동안 안 바뀌어도 실패로 끝내지 않고 현재 화면 글자를 로그에 남기며 상한까지 기다린다 */
+  longWait?: boolean;
   onLog?: (line: string) => void;
 }
 
@@ -83,7 +85,12 @@ export async function waitEndState(p: DPage, w: EndStateWait, o: EndStateOpts = 
       lastLog = now;
       o.onLog?.(`대기 중 ${Math.round((now - t0) / 1000)}초 — 끝 상태(${names.join(" · ")}) 아직 없음. 화면: ${await sample()}`);
     }
-    if (now - changedAt >= idleMs) {
+    if (o.longWait && now - changedAt >= idleMs) {
+      // 긴 계산: 무변화는 실패가 아니다. 현재 화면 글자를 남기고 다음 무변화 구간을 다시 센다
+      o.onLog?.(`화면이 ${Math.round(idleMs / 1000)}초 동안 안 바뀜(긴 계산 대기, 상한 ${Math.round(cap / 1000)}초까지 계속) — 현재 화면: ${await sample()}`);
+      changedAt = now;
+    }
+    if (!o.longWait && now - changedAt >= idleMs) {
       const msg = `화면이 ${Math.round(idleMs / 1000)}초 동안 안 바뀜 — 끝 상태(${names.join(" · ")}) 중 어느 것도 안 나타남. 현재 화면: ${await sample()}`;
       o.onLog?.(`대기 실패(도구 판정 불가): ${msg}`);
       throw new ToolError("A", msg);

@@ -291,7 +291,10 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           if (s.endStates) {
             // 끝 상태 집합 대기: 어느 끝 상태든 도착하면 끝낸다. 15초마다 로그, 60초 무변화면 대기 실패(도구 판정 불가)
             if (singleEndState(s as any)) res.warnings.push(SINGLE_STATE_WARNING);
-            const got = await waitEndState(page, s as any, { onLog: (line) => ctx.emit({ type: "wait-log", case: c.id, i, line }) });
+            // 케이스의 maxWaitSec 이 있으면 그것이 전체 상한(긴 계산). 스텝의 timeout 이 더 우선한다
+            const long = c.maxWaitSec !== undefined && s.idleMs === undefined;
+            const spec = c.maxWaitSec !== undefined && s.timeout === undefined ? { ...s, timeout: c.maxWaitSec * 1000 } : s;
+            const got = await waitEndState(page, spec as any, { longWait: long, onLog: (line) => ctx.emit({ type: "wait-log", case: c.id, i, line }) });
             sr.desc += ` — 도착: 「${got.state}」 (${(got.ms / 1000).toFixed(1)}초)`;
           } else if (s.sel) {
             res.warnings.push(`끝 상태를 하나만 받는 대기(${s.sel} ${s.state ?? "visible"}): 그 상태가 오지 않으면 실패로 끝남. 화면의 모든 끝 상태를 endStates 로 넣을 것(오류 A)`);
