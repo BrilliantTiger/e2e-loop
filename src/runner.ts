@@ -6,7 +6,8 @@ import { Project, expandEnv, nowIso } from "./store.ts";
 import { judgeErrors, runProbe, sleep, type ProbePolicy } from "./probes.ts";
 import type { EvidenceKit } from "./evidence.ts";
 import { ToolError, isBlankActual } from "./toolerror.ts";
-import { PANEL_WAIT_MS, READ_WAIT_MS, settleList, waitPanelTitle, waitRendered } from "./reads.ts";
+import { CLICK_WAIT_MS, PANEL_WAIT_MS, READ_WAIT_MS, settleList, waitEnabled, waitGone, waitPanelTitle, waitRendered } from "./reads.ts";
+import { isToastStep } from "./toast.ts";
 import { SLICED_EVAL_WARNING, looksTruncated, slicesValue } from "./judge.ts";
 import { SINGLE_STATE_WARNING, singleEndState, waitEndState } from "./waits.ts";
 import { isRowSel, translateSel } from "./rows.ts";
@@ -30,6 +31,9 @@ export interface RunCtx {
   /** 이 라운드에서 이미 찾은 요소(선택자). 처음 쓰는 요소만 찾은 요소의 글자를 로그에 남긴다 */
   seenSels?: Set<string>;
 }
+
+/** 대상 요소를 누르거나 채우는 동작(누르기 전 대기를 쓸 수 있는 스텝) */
+const ACT_OPS = new Set(["click", "dblclick", "hover", "fill", "select", "check", "press"]);
 
 const safe = (s: string) => s.replace(/[^\w.-]+/g, "_").slice(0, 80);
 
@@ -278,6 +282,21 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
         if (!got.ok) throw new Error(`패널 제목에 「${target}」 가 ${Math.round(wt / 1000)}초 안에 안 뜸 — 지금 뜬 패널 제목: ${got.titles.length ? got.titles.map((t) => `「${t.slice(0, 80)}」`).join(" ") : "(패널 없음)"}`);
         sr.desc += ` — 패널 제목 「${target}」 확인`;
       }
+      // 누르기 전에: 「세는 중」 같은 표시가 사라지고(waitGone), 단추가 있고 켜질 때까지(waitEnabled) 기다린다
+      if (ACT_OPS.has(s.op) && typeof s.sel === "string" && (s.waitGone !== undefined || s.waitEnabled === true)) {
+        const wt = Number(s.waitTimeout ?? CLICK_WAIT_MS);
+        if (s.waitGone !== undefined) {
+          const g = await waitGone(page, s.waitGone, wt);
+          if (!g.ok) throw new Error(`${Math.round(wt / 1000)}초가 지나도 사라지지 않음: ${g.remaining.map((x) => `「${x}」`).join(" ")} — 그 표시가 사라진 뒤에 눌러야 함`);
+          sr.desc += ` — ${([] as string[]).concat(s.waitGone).join("·")} 사라짐 확인`;
+        }
+        if (s.waitEnabled === true) {
+          const w = await waitEnabled(page, s.sel, wt);
+          if (!w.ok) throw new Error(`${Math.round(wt / 1000)}초 안에 켜지지 않음: ${s.sel} ${w.state}${w.text ? ` 글자 「${w.text}」` : ""}`);
+          sr.desc += ` — 켜짐 확인: 「${w.text ?? ""}」`;
+          if (!sr.found) sr.found = `글자 「${w.text ?? ""}」 (켜진 뒤에 누름)`;
+        }
+      }
       switch (s.op) {
         case "goto": await page.goto(abs(s.url, cfg.baseUrl)); break;
         case "click": await page.click(s.sel); break;
@@ -301,7 +320,18 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
             await page.waitFor(s.sel, s.state ?? "visible", s.timeout ?? cfg.stepTimeoutMs);
           } else if (s.panelTitle === undefined || s.ms !== undefined) await sleep(Number(s.ms ?? 500));
           break;
-        case "expect": await runExpect(page, s, cfg.baseUrl); break;
+        case "expect":
+          if (isToastStep(s)) {
+            // 토스트는 참고로만 적는다: 있어도 없어도 판정하지 않는다(쓰기 동작은 서버 효과로 판정)
+            try {
+              await runExpect(page, s, cfg.baseUrl);
+              sr.desc += " — 토스트 확인됨(참고)";
+            } catch (e: any) {
+              sr.desc += " — 토스트 참고만(판정 안 함)";
+              res.warnings.push(`토스트 참고(판정 아님): ${String(e?.message ?? e).slice(0, 160)}`);
+            }
+          } else await runExpect(page, s, cfg.baseUrl);
+          break;
         case "prereq": {
           // 챕터의 선행 조건(예: 대상 줄을 찾았다). 못 채우면 이 챕터는 「선행 조건 실패 — 도구」 NA 로 끝나고 뒤 동작을 누르지 않는다
           const { op: _op, name: _n, basis: _b, ...cond } = s;

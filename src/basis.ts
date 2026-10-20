@@ -1,11 +1,12 @@
 // 기대의 근거 (오류 E: 시험 기대가 기획서와 다름).
 // 케이스의 기대 칸마다 근거(기획서 POL · CCB 번호)를 적는다. 근거가 없는 기대는 시트에서 경고한다.
 import type { Case, Step } from "./types.ts";
+import { isToastStep } from "./toast.ts";
 
 /** 기대(통과 조건)를 가진 스텝인가 */
 export function isExpectation(s: Step): boolean {
   if (s.op === "gate") return true;
-  if (s.op === "expect") return ["url", "title", "titleContains", "visible", "hidden", "count", "text", "textContains", "value", "checked", "enabled", "dialog"].some((k) => s[k] !== undefined);
+  if (s.op === "expect") return !isToastStep(s) && ["url", "title", "titleContains", "visible", "hidden", "count", "text", "textContains", "value", "checked", "enabled", "dialog"].some((k) => s[k] !== undefined);
   if (s.op === "api") return s.status !== undefined || s.json !== undefined || s.jsonHas !== undefined || s.jsonArray !== undefined;
   if (s.op === "eval") return s.equals !== undefined;
   return false;

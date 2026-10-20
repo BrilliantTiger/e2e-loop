@@ -28,6 +28,7 @@ export const proj = (p?: string) => new Project(p ?? process.env.E2E_PROJECT ?? 
 import { SINGLE_STATE_WARNING, singleEndState } from "./waits.ts";
 import { ROW_BY_NUMBER_HELP, rowByNumber, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, labelOnly } from "./finders.ts";
+import { TOAST_WARNING, isToastStep } from "./toast.ts";
 import { SLICED_EVAL_WARNING, TRUNCATED_EXPECT_WARNING, looksTruncated, slicesValue } from "./judge.ts";
 import { BASIS_WARNING, isExpectation, missingBasis } from "./basis.ts";
 const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate", "prereq"]);
@@ -267,6 +268,7 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       errors.push(`${c.id}: 줄 선택자 오류 ${badSel.join("; ")}. ${ROW_BY_NUMBER_HELP}`);
       continue;
     }
+    for (const [i, s] of c.steps.entries()) if (isToastStep(s)) warns.push(`${c.id} #${i + 1}: ${TOAST_WARNING}`);
     for (const [i, s] of c.steps.entries()) {
       if (s.op === "eval" && s.equals !== undefined && slicesValue(s.script)) warns.push(`${c.id} #${i + 1}: ${SLICED_EVAL_WARNING("eval")}`);
       if (s.op === "expect" && [s.text, s.textContains, s.value].some(looksTruncated)) warns.push(`${c.id} #${i + 1}: ${TRUNCATED_EXPECT_WARNING("expect")}`);
@@ -288,7 +290,7 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
     }
     if (c.steps[0]!.op !== "goto" && !c.steps.some((s) => s.op === "goto")) warns.push(`${c.id}: goto 스텝이 없습니다. 케이스는 매번 새 브라우저에서 시작하므로 첫 스텝에서 이동해야 합니다.`);
     if ((c.type ?? "spec") === "spec" && !c.source_ref) warns.push(`${c.id}: source_ref(근거 위치)가 없습니다. 기획서의 어느 절/디자인의 어느 프레임인지 적어 두세요.`);
-    if (!c.steps.some((s) => s.op === "expect" || s.op === "probe" || s.op === "api")) warns.push(`${c.id}: 기대값을 확인하는 expect 스텝이 없어 “화면이 열린다” 이상을 검증하지 못합니다.`);
+    if (!c.steps.some((s) => (s.op === "expect" && !isToastStep(s)) || s.op === "probe" || s.op === "api")) warns.push(`${c.id}: 기대값을 확인하는 expect 스텝이 없어 “화면이 열린다” 이상을 검증하지 못합니다.`);
     byId.has(c.id) ? updated++ : added++;
     byId.set(c.id, { type: "spec", status: "active", risk: "safe", ...byId.get(c.id), ...c } as Case);
   }
