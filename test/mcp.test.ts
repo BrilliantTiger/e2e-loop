@@ -11,7 +11,7 @@ test("MCP 서버가 뜨고 e2e_* 도구를 노출한다", async () => {
   await client.connect(transport);
   try {
     const tools = (await client.listTools()).tools.map((t) => t.name);
-    for (const n of ["e2e_doctor", "e2e_session_start", "e2e_intake", "e2e_init", "e2e_source_add", "e2e_discover", "e2e_case_upsert", "e2e_round_start", "e2e_round_status", "e2e_round_report", "e2e_complete_check", "e2e_feedback", "e2e_dashboard", "e2e_status"]) expect(tools).toContain(n);
+    for (const n of ["e2e_doctor", "e2e_session_start", "e2e_intake", "e2e_init", "e2e_source_add", "e2e_discover", "e2e_case_upsert", "e2e_round_start", "e2e_round_status", "e2e_round_report", "e2e_complete_check", "e2e_feedback", "e2e_dashboard", "e2e_status", "e2e_dataset"]) expect(tools).toContain(n);
     const res: any = await client.callTool({ name: "e2e_doctor", arguments: {} });
     const body = JSON.parse(res.content[0].text);
     expect(body.checks.length).toBeGreaterThan(5);

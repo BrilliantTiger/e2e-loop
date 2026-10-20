@@ -38,6 +38,16 @@ export interface Case {
   lock?: string | string[];
   /** 이 케이스가 기대는 선행 챕터 이름들. 선행 챕터에 제품 FAIL 이 있으면 이 케이스는 돌리지 않고 NA(H) */
   requires?: string[];
+  /** 이 케이스가 쓰는 Dataset 이름(설정 datasets 의 키). 스텝 글의 {{dataset.<이름>}} 이 이 Dataset 의 값으로 바뀐다 */
+  dataset?: string;
+}
+
+/** Dataset 마다 다른 것: 전용 값(예: 「안 보냄」이 의도된 표 목록)과 그 근거 */
+export interface DatasetProfile {
+  /** 전용 값. 스텝 글에서 {{dataset.<이름>}} 으로 읽는다(판정식에 박지 않는다) */
+  values?: Record<string, unknown>;
+  /** 값의 근거(기획서 규칙 번호. 예: POL-CCB_048) */
+  basis?: string;
 }
 
 /** 준비 신호 하나. api 나 sel 중 하나를 쓴다 */
@@ -115,6 +125,8 @@ export interface Config {
   stepTimeoutMs: number;
   /** 멈춤 측정: 누르는 스텝마다 화면이 멈췄는지 잰다(기능 판정과 따로). mode 기본 on, limitMs(멈춤으로 볼 길이) 기본 1000 */
   freeze?: { mode?: "on" | "off"; limitMs?: number };
+  /** Dataset 이름 → 그 Dataset 의 전용 값·근거(e2e_dataset 으로 기록) */
+  datasets?: Record<string, DatasetProfile>;
 }
 
 export interface Source {
@@ -177,8 +189,8 @@ export interface ObservedApi {
 
 export type Verdict = "PASS" | "FAIL" | "FLAKY" | "BLOCKED" | "NA" | "SKIP";
 
-/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 · M 서버 비동기 계산이 안 끝났는데 누름 · N 같은 탭·같은 Dataset 에서 챕터 두 개가 동시에 돎 · O 창이 가려진 채 잰 멈춤 측정(측정 무효) · U 화면 열기의 멈춤이 재현되지 않음(첫 로드 비용·동시 부하) */
-export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L" | "M" | "N" | "O" | "U";
+/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 · M 서버 비동기 계산이 안 끝났는데 누름 · N 같은 탭·같은 Dataset 에서 챕터 두 개가 동시에 돎 · O 창이 가려진 채 잰 멈춤 측정(측정 무효) · U 화면 열기의 멈춤이 재현되지 않음(첫 로드 비용·동시 부하) · P 판정식 안에 다른 Dataset 전용 값을 박음 */
+export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L" | "M" | "N" | "O" | "P" | "U";
 
 export interface StepResult {
   i: number;

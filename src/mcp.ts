@@ -137,6 +137,12 @@ server.registerTool("e2e_case_upsert", {
   inputSchema: { project, cases: z.array(caseShape).min(1) },
 }, wrap(A.aCaseUpsert as any));
 
+server.registerTool("e2e_dataset", {
+  title: "Dataset 설정",
+  description: "Dataset 마다 다른 값(예: 「안 보냄」이 의도된 표 목록)과 그 근거(기획서 규칙 번호)를 기록한다. 판정식(eval·기대 글)에 Dataset 전용 값을 박지 말고, 케이스에 dataset 을 적은 뒤 스텝 글에서 {{dataset.<이름>}} 으로 읽는다 — 박으면 다른 Dataset 에서 의도된 동작이 FAIL 로 나온다(오류 P). 인자 없이 부르면 지금 설정을 돌려준다.",
+  inputSchema: { project, name: z.string().optional(), values: z.record(z.string(), z.unknown()).optional().describe("전용 값. 예: { notSent: [\"표1\",\"표2\"] }"), basis: z.string().optional().describe("값의 근거(기획서 규칙 번호)"), remove: z.boolean().optional() },
+}, wrap(A.aDataset));
+
 server.registerTool("e2e_case_list", {
   title: "케이스 목록",
   description: "등록된 케이스를 간단히 조회한다.",

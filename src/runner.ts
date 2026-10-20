@@ -15,6 +15,7 @@ import { MAX_WAIT_MS, SINGLE_STATE_WARNING, singleEndState, waitEndState } from 
 import { isRowSel, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, describeFound, labelOnly } from "./finders.ts";
 import { bringVisible, freezeArm, freezeEnsure, freezeRead, judgeFreeze } from "./freeze.ts";
+import { HARD_VALUE_WARNING, datasetOf, describeHard, fillDataset, hardValues, hardValuesIn, usesDataset } from "./dataset.ts";
 
 export interface RunCtx {
   project: Project;
@@ -411,8 +412,14 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
         readyDone = true;
         sr.desc = `${await waitReady(page, cfg, c, (line) => ctx.emit({ type: "wait-log", case: c.id, i, line }))} → ${sr.desc}`;
       }
+      // Dataset 전용 값은 판정식에 박지 않고 설정에서 읽는다: {{dataset.<이름>}} 을 이 케이스 Dataset 의 값으로 바꾼다(오류 P)
+      if (usesDataset(s0)) {
+        const f = fillDataset(s0, datasetOf(cfg, c));
+        if (f.missing.length) throw new ToolError("P", `Dataset ${c.dataset ? `「${c.dataset}」` : "(케이스에 dataset 없음)"} 설정에 값 ${f.missing.map((x) => `「${x}」`).join(" ")} 이 없어 판정식을 채우지 못함 — e2e_dataset 의 values 에 적을 것`);
+        s = f.step;
+      }
       // 줄 도우미(row=… · cell[…])는 번호가 아니라 컬럼 이름·글자로 찾는 xpath 로 바꿔 쓴다
-      if (rowStep) s = { ...s0, sel: translateSel(s0.sel), selLabel: s0.sel };
+      if (rowStep) s = { ...s, sel: translateSel(s.sel), selLabel: s.sel };
       if (typeof s0.sel === "string") {
         // 사람이 쓴 케이스의 라벨 글자만으로 찾는 호출은 경고한다(자동 점검 케이스는 제외)
         if (c.type === "spec" && labelOnly(s0.sel)) res.warnings.push(LABEL_ONLY_WARNING(s0.sel));
@@ -681,6 +688,13 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     // 도구가 할 수 없는 일이지 사이트의 결함이 아니다 — 검증하지 못한 것으로 둔다
     res.status = "BLOCKED";
     res.reason = osBlocked;
+  }
+  // 판정식에 다른 Dataset 전용 값(예: 다른 Dataset 의 「안 보냄」 표 목록)을 박았다면 이 Dataset 의 의도된 동작을 FAIL 로 본 것일 수 있다(오류 P)
+  const hard = hardValues(c, cfg.datasets);
+  if (hard.own.length) res.warnings.push(HARD_VALUE_WARNING(hard.own, true));
+  if (failedAt >= 0 && !toolErr && !osBlocked && !skipped && !prereqIncomplete) {
+    const hv = hardValuesIn(steps[failedAt]!, cfg.datasets).filter((h) => h.dataset !== c.dataset);
+    if (hv.length) toolErr = { kind: "P", detail: `판정식에 다른 Dataset 전용 값이 박혀 있음(${describeHard(hv)}) — 이 케이스의 Dataset ${c.dataset ? `「${c.dataset}」` : "(미지정)"} 에서는 의도된 동작이 FAIL 로 나올 수 있어 판정하지 않음` };
   }
   // 화면 글이 빈 것이 사이트의 JS 오류·서버 5xx 와 함께 나왔다면 도구 탓이 아니라 사이트의 결함이다 — FAIL 로 둔다
   const siteFault = res.pageErrors.length > 0 || res.failedRequests.some((r) => /^(5\d\d|ERR)\b/.test(r));
