@@ -16,7 +16,7 @@ import { isRowSel, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, describeFound, labelOnly } from "./finders.ts";
 import { bringVisible, freezeArm, freezeEnsure, freezeRead, judgeFreeze } from "./freeze.ts";
 import { HARD_VALUE_WARNING, datasetConflicts, datasetOf, describeHard, fillDataset, hardValues, hardValuesIn, stepApplies, usesDataset } from "./dataset.ts";
-import { isExpectation } from "./basis.ts";
+import { basisDiffers, basisText, hasBasis, isExpectation } from "./basis.ts";
 
 export interface RunCtx {
   project: Project;
@@ -557,7 +557,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
         case "gate": {
           // 사람 결정이 필요한 Gate: 풀기 전에는 막혀 있는 것이 정상이고, 풀린 뒤가 PASS 기준이다
           const name = s.name ?? "-";
-          const why = s.basis ? ` (근거 ${s.basis})` : "";
+          const why = hasBasis(s) ? ` (근거 ${basisText(s.basis)})` : "";
           try {
             await runExpect(page, withSel({ op: "expect", ...(s.blocked ?? {}) }), cfg.baseUrl);
           } catch (e: any) {
@@ -722,6 +722,10 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   if (failedAt >= 0 && !toolErr && !osBlocked && !skipped && !prereqIncomplete) {
     const hv = hardValuesIn(steps[failedAt]!, cfg.datasets).filter((h) => h.dataset !== c.dataset);
     if (hv.length) toolErr = { kind: "P", detail: `판정식에 다른 Dataset 전용 값이 박혀 있음(${describeHard(hv)}) — 이 케이스의 Dataset ${c.dataset ? `「${c.dataset}」` : "(미지정)"} 에서는 의도된 동작이 FAIL 로 나올 수 있어 판정하지 않음` };
+  }
+  // 기획서와 화면설계서가 다르다고 적은 기대가 어긋났으면 어느 쪽이 맞는지 정해지지 않은 것이다 — 결함으로 세지 않는다(오류 S)
+  if (failedAt >= 0 && !toolErr && !osBlocked && !skipped && !prereqIncomplete && basisDiffers(steps[failedAt])) {
+    toolErr = { kind: "S", detail: `근거가 서로 다른 기대가 어긋남(${basisText(steps[failedAt]!.basis)}) — 어느 쪽을 따를지 정해지지 않아 판정하지 않음: ${String(res.steps[failedAt]?.error ?? "").slice(0, 200)}` };
   }
   // 화면 글이 빈 것이 사이트의 JS 오류·서버 5xx 와 함께 나왔다면 도구 탓이 아니라 사이트의 결함이다 — FAIL 로 둔다
   const siteFault = res.pageErrors.length > 0 || res.failedRequests.some((r) => /^(5\d\d|ERR)\b/.test(r));

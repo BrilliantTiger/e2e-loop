@@ -31,7 +31,7 @@ import { ROW_BY_NUMBER_HELP, rowByNumber, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, labelOnly } from "./finders.ts";
 import { TOAST_WARNING, isToastStep } from "./toast.ts";
 import { SLICED_EVAL_WARNING, TRUNCATED_EXPECT_WARNING, looksTruncated, slicesValue } from "./judge.ts";
-import { BASIS_WARNING, isExpectation, missingBasis } from "./basis.ts";
+import { BASIS_WARNING, basisProblem, hasBasis, isExpectation, missingBasis } from "./basis.ts";
 import { HARD_VALUE_WARNING, datasetConflicts, hardValues, usesDataset } from "./dataset.ts";
 const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate", "prereq", "condition", "collect"]);
 const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check", "collect"]);
@@ -279,7 +279,7 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       errors.push(`${c.id}: 잘못된 끝 상태 대기 ${badWait.map(({ i }) => `#${i + 1}`).join(", ")} — wait.endStates 는 { "상태 이름": "선택자" } 모양이어야 함`);
       continue;
     }
-    const badGate = c.steps.flatMap((s, i) => (s.op === "gate" && !(s.blocked && typeof s.blocked === "object" && s.passed && typeof s.passed === "object" && typeof s.basis === "string" && s.basis.trim()) ? [`#${i + 1}`] : []));
+    const badGate = c.steps.flatMap((s, i) => (s.op === "gate" && !(s.blocked && typeof s.blocked === "object" && s.passed && typeof s.passed === "object" && hasBasis(s)) ? [`#${i + 1}`] : []));
     if (badGate.length) {
       errors.push(`${c.id}: Gate ${badGate.join(", ")} 에는 blocked(막힘이 정상일 때의 기대), passed(풀린 뒤 PASS 기준), basis(근거)가 필요함`);
       continue;
@@ -287,6 +287,14 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
     const badPrereq = c.steps.flatMap((s, i) => (s.op === "prereq" && !(typeof s.name === "string" && s.name.trim() && isExpectation({ ...s, op: "expect" })) ? [`#${i + 1}`] : []));
     if (badPrereq.length) {
       errors.push(`${c.id}: 선행 조건 ${badPrereq.join(", ")} 에는 name(무엇을 찾았다는 조건인지)과 확인할 내용(sel + count·visible·text 등)이 필요함`);
+      continue;
+    }
+    const badBasis = c.steps.flatMap((s, i) => {
+      const why = s.basis === undefined ? undefined : basisProblem(s.basis);
+      return why ? [`#${i + 1}: ${why}`] : [];
+    });
+    if (badBasis.length) {
+      errors.push(`${c.id}: 근거 칸 ${badBasis.join(" / ")}`);
       continue;
     }
     const badCond = c.steps.flatMap((s, i) => (s.op === "condition" && !(typeof s.name === "string" && s.name.trim() && (typeof s.sel === "string" || (s.api && typeof s.api.url === "string"))) ? [`#${i + 1}`] : []));

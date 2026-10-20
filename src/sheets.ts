@@ -9,6 +9,7 @@ import { coverage } from "./coverage.ts";
 import { diffWithPrevious, fixHint, trend } from "./report.ts";
 import { readComments, type Comment } from "./comments.ts";
 import { describeRetest, readRetest } from "./retest.ts";
+import { basisText, hasBasis } from "./basis.ts";
 import { blockedCount, elementOf, excludedAllTsv, excludedRows, excludedTsv, freezeUnconfirmedCount, markRepeats, measureInvalidCount, mergeExcludedAcross, symptomSentence, toolErrorCount, verbOf, type ExcludedRow } from "./toolerror.ts";
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -35,7 +36,7 @@ const PROBE_EXPECT: Record<string, string> = {
   delete: "누르면 테스터가 등록한 항목이 지워지고 화면이 바뀌어야 함",
 };
 
-const basisTail = (s: Step) => (typeof s.basis === "string" && s.basis.trim() ? ` (근거: ${s.basis.trim()})` : "");
+const basisTail = (s: Step) => (hasBasis(s) ? ` (근거: ${basisText(s.basis)})` : "");
 
 /** expect 스텝(또는 gate 의 blocked·passed)의 기대를 사람이 읽는 글로 */
 function expectText(step: Record<string, any>): string {

@@ -6,7 +6,7 @@ import { loadAnalyses } from "./analysis/store.ts";
 import { reconcile } from "./analysis/reconcile.ts";
 import { coverage } from "./coverage.ts";
 import { readIntake } from "./session.ts";
-import { missingBasis, type MissingBasis, isExpectation } from "./basis.ts";
+import { missingBasis, type MissingBasis, isExpectation, basisDiffers, basisText } from "./basis.ts";
 import { CARRIED_E_MARK, carriedE } from "./carry.ts";
 import { datasetConflicts, describeHard, hardValues } from "./dataset.ts";
 import { describeRetest, readRetest, type RetestEntry } from "./retest.ts";
@@ -50,6 +50,8 @@ export interface Sheet {
     datasetConflicts: { id: string; detail: string }[];
     /** 재시험 대기열(사유 R): 선행 챕터를 다시 시험한 뒤 돌릴 케이스 */
     retestQueue: RetestEntry[];
+    /** 기획서와 화면설계서가 다르다고 적은 기대(오류 S) */
+    basisDiffers: { id: string; detail: string }[];
   };
 }
 
@@ -128,6 +130,10 @@ export function buildSheet(p: Project): Sheet {
         return list.length ? [{ id: c.id, detail: describeHard(list), foreign: hv.foreign.length > 0 }] : [];
       }),
       retestQueue: readRetest(p),
+      basisDiffers: cases.filter((c) => (c.status ?? "active") === "active").flatMap((c) => {
+        const d = c.steps.flatMap((s, i) => (basisDiffers(s) ? [`#${i + 1} ${basisText(s.basis)}`] : []));
+        return d.length ? [{ id: c.id, detail: d.join(" / ") }] : [];
+      }),
       datasetConflicts: cases.filter((c) => (c.status ?? "active") === "active").flatMap((c) => {
         const x = datasetConflicts(c, cfg.datasets, isExpectation);
         return x.length ? [{ id: c.id, detail: x.join(" / ") }] : [];
@@ -170,7 +176,8 @@ export function renderSheetMd(s: Sheet, opts: { full?: boolean } = {}): string {
   if (g.retestQueue.length) gapLines.push(`- 재시험 대기열 ${g.retestQueue.length}건(사유 R, 선행 챕터가 도구 오류로 끝나 돌리지 않음) — ${describeRetest(g.retestQueue)}. 선행 챕터의 시험을 고친 뒤 e2e_round_start retest=true`);
   if (g.datasetConflicts.length) gapLines.push(`- ⚠ Dataset 특성 선언과 어긋난 기대 ${g.datasetConflicts.length}건 — 고치기 전에는 실행하지 않고 NA(Q): ${g.datasetConflicts.slice(0, 6).map((x) => `${x.id}(${x.detail.slice(0, 120)})`).join(", ")}`);
   if (g.datasetValues.length) gapLines.push(`- ⚠ 판정식에 Dataset 전용 값이 박힌 케이스 ${g.datasetValues.length}건 — 다른 Dataset 에서 의도된 동작이 FAIL 로 나온다(오류 P). e2e_dataset 의 values 에 두고 {{dataset.<이름>}} 으로 읽을 것: ${g.datasetValues.slice(0, 8).map((x) => `${x.id}(${x.detail}${x.foreign ? ", 다른 Dataset 값" : ""})`).join(", ")}`);
-  if (g.expectNoBasis.length) gapLines.push(`- ⚠ 기대 칸에 근거(basis: 기획서 POL · CCB 번호)가 없는 케이스 ${g.expectNoBasis.length}건(기대 ${g.expectNoBasis.reduce((n, x) => n + x.steps.length, 0)}칸) — 근거 없는 기대는 오류 E(기대가 기획서와 다름)의 원인이 된다: ${g.expectNoBasis.slice(0, 8).map((x) => `${x.id} ${x.steps.map((n) => "#" + n).join("")}`).join(", ")}`);
+  if (g.basisDiffers.length) gapLines.push(`- ⚠ 기획서와 화면설계서가 다른 기대 ${g.basisDiffers.length}건 — 어느 쪽을 따를지 사람이 정할 때까지 어긋나도 결함으로 세지 않음(오류 S): ${g.basisDiffers.slice(0, 6).map((x) => `${x.id} ${x.detail.slice(0, 120)}`).join(", ")}`);
+  if (g.expectNoBasis.length) gapLines.push(`- ⚠ 기대 칸에 근거(basis: 기획서 POL · CCB 번호 또는 화면설계서 번호)가 없는 케이스 ${g.expectNoBasis.length}건(기대 ${g.expectNoBasis.reduce((n, x) => n + x.steps.length, 0)}칸) — 근거 없는 기대는 오류 E(기대가 기획서와 다름)의 원인이 된다: ${g.expectNoBasis.slice(0, 8).map((x) => `${x.id} ${x.steps.map((n) => "#" + n).join("")}`).join(", ")}`);
   if (g.blockedCases.length) gapLines.push(`- 보류 케이스 ${g.blockedCases.length}건: ${g.blockedCases.slice(0, 5).map((b) => `${b.id}(${b.reason})`).join(", ")}`);
   if (gapLines.length) out.push("", "## 빈틈과 주의", ...gapLines);
   return out.join("\n");
