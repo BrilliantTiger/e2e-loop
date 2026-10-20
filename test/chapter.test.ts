@@ -123,3 +123,13 @@ test("자동 점검(probe)·해당 없음·건너뜀 케이스는 챕터 가드�
   expect(g.skipReason(mk("S3", [{ op: "goto", url: "/" }], { skipReason: "규칙" }))).toBeUndefined();
   expect(g.skipReason(mk("S4", [{ op: "goto", url: "/" }]))).toContain("챕터를 끝냄");
 });
+
+test("챕터 시작 전에 이전 브라우저 프로세스가 남아 있어 챕터를 끝내면 그 챕터의 케이스는 NA(F)로 둔다", () => {
+  const g = new ChapterGuard(key);
+  const a = mk("A1", [{ op: "goto", url: "/" }]);
+  g.end(a, "이전 브라우저 프로세스 2개가 남아 있어 두 브라우저가 겹침");
+  const na = g.naResult(a, g.skipReason(a)!);
+  expect(na.status).toBe("NA");
+  expect(na.reason).toContain("두 브라우저가 겹침");
+  expect(g.skipReason(mk("B1", [{ op: "goto", url: "/" }], { feature: "다른 기능" }))).toBeUndefined();
+});

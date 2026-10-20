@@ -1,3 +1,4 @@
+import { OWNER_MARK } from "../procs.ts";
 import { chromium, type Browser, type Page } from "playwright";
 import { mkdirSync, existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -107,6 +108,8 @@ export class PwDriver implements Driver {
     this.browser = await chromium.launch({
       headless: this.cfg.headless,
       channel: this.pick === "chrome" ? "chrome" : this.pick === "edge" ? "msedge" : undefined,
+      // 이 도구가 띄운 브라우저라는 표지(알 수 없는 인자는 브라우저가 무시한다). 다음 라운드가 남은 프로세스를 가려내는 데 쓴다
+      args: [`--${OWNER_MARK}=${process.pid}`],
     });
   }
   async newSession(evidenceDir: string): Promise<Session> {

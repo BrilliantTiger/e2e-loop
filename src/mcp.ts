@@ -158,8 +158,8 @@ server.registerTool("e2e_coverage", {
 server.registerTool("e2e_round_start", {
   title: "회차 시작",
   description: "전체 케이스를 처음부터 한 회차 실행한다(백그라운드). 시작 전에 데이터를 초기화할지 그대로 갈지 반드시 사용자에게 확인해야 한다 — data 를 주지 않고 정책이 ask 면 질문 선택지(needs_decision)가 돌아온다. data: reset(초기화 후 시작, 파괴적 동작도 점검) / keep(그대로, 파괴적 동작은 SKIP) / manual-reset-done(사용자가 직접 초기화 완료). 실시간 대시보드 주소가 함께 돌아온다. 회차가 도는 동안에는 코드·케이스를 고치지 않는다.",
-  inputSchema: { project, data: z.enum(["reset", "keep", "manual-reset-done"]).optional(), driver: z.enum(["auto", "ego", "chrome", "edge", "chromium"]).optional(), headless: z.boolean().optional(), only: z.array(z.string()).optional().describe("지정한 케이스만(부분 회차 — 완료 판정에는 쓸 수 없음)"), onlyFailed: z.boolean().optional().describe("직전 회차 실패 케이스만 다시(부분 회차)"), acknowledge_repeated: z.boolean().optional().describe("같은 이슈가 3라운드 연속이라 사용자에게 올렸고 사용자가 계속하기로 했을 때만 true"), open: z.boolean().optional().describe("대시보드를 브라우저로 열기") },
-}, wrap(((a: any) => A.aRoundStart({ ...a, acknowledgeRepeated: a.acknowledge_repeated })) as any));
+  inputSchema: { project, data: z.enum(["reset", "keep", "manual-reset-done"]).optional(), driver: z.enum(["auto", "ego", "chrome", "edge", "chromium"]).optional(), headless: z.boolean().optional(), only: z.array(z.string()).optional().describe("지정한 케이스만(부분 회차 — 완료 판정에는 쓸 수 없음)"), onlyFailed: z.boolean().optional().describe("직전 회차 실패 케이스만 다시(부분 회차)"), acknowledge_repeated: z.boolean().optional().describe("같은 이슈가 3라운드 연속이라 사용자에게 올렸고 사용자가 계속하기로 했을 때만 true"), cleanup_browsers: z.boolean().optional().describe("이전 라운드가 남긴 브라우저 프로세스가 있다고 사용자에게 알렸고 사용자가 끊기로 했을 때만 true(노드 스크립트·브라우저를 나무째 끊고 0개를 다시 확인)"), open: z.boolean().optional().describe("대시보드를 브라우저로 열기") },
+}, wrap(((a: any) => A.aRoundStart({ ...a, acknowledgeRepeated: a.acknowledge_repeated, cleanupBrowsers: a.cleanup_browsers })) as any));
 
 server.registerTool("e2e_round_status", {
   title: "회차 진행 확인",

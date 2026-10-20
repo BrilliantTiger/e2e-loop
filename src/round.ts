@@ -13,6 +13,7 @@ import { issuesOf } from "./issues.ts";
 import { toolErrorCount } from "./toolerror.ts";
 import { prestartStatus } from "./prestart.ts";
 import { ChapterGuard } from "./chapter.ts";
+import { cleanupOwn, cleanupStale, describeProcs, staleBrowserProcs, waitNoStale } from "./procs.ts";
 
 async function sh(cmd: string, cwd: string, timeoutMs = 600000): Promise<{ code: number; out: string }> {
   const p = Bun.spawn(["/bin/sh", "-lc", cmd], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -41,6 +42,22 @@ export interface StartOpts {
   onlyFailed?: boolean; // 직전 회차에서 FAIL 이었던 것만 다시
   /** 같은 이슈가 3라운드 연속이라고 사용자에게 올린 뒤, 사용자가 계속하기로 했을 때 */
   acknowledgeRepeated?: boolean;
+  /** 이전 라운드가 남긴 브라우저 프로세스를 사용자 확인 뒤 나무째 끊고 시작한다 */
+  cleanupBrowsers?: boolean;
+}
+
+/**
+ * 라운드 시작 전 점검: 이전 라운드가 남긴 이 도구의 브라우저 프로세스가 0개인가.
+ * 남아 있으면 끊을지 사용자에게 묻도록 결정을 돌려주고, 끊기로 했으면(cleanupBrowsers) 나무째 끊은 뒤 0개를 다시 확인한다.
+ */
+export async function browserPreflight(opts: StartOpts): Promise<{ ok: true; cleaned?: number } | { ok: false; error?: string; decision?: Decision }> {
+  const stale = await staleBrowserProcs();
+  if (!stale.length) return { ok: true };
+  if (!opts.cleanupBrowsers)
+    return { ok: false, decision: { needs_decision: true, question: `이전 라운드가 남긴 브라우저 프로세스 ${stale.length}개가 있습니다(${describeProcs(stale)}). 두 브라우저가 겹치면 판정이 어긋나므로 이대로 시작하지 않습니다. 끊고 시작할까요?`, options: [{ value: "cleanup", meaning: "끊고 시작한다: e2e_round_start 를 cleanup_browsers=true 로 다시 호출(노드 스크립트·브라우저 프로세스를 나무째 끊고 0개를 다시 확인)" }, { value: "stop", meaning: "시작하지 않는다(다른 라운드가 아직 돌고 있다면 끝난 뒤에 시작)" }] } };
+  const r = await cleanupStale();
+  if (r.after.length) return { ok: false, error: `이전 브라우저 프로세스 ${r.after.length}개를 끊지 못했습니다(${describeProcs(r.after)}). 직접 종료한 뒤 다시 시작하세요.` };
+  return { ok: true, cleaned: r.before };
 }
 
 /** 화면이 있는 환경인가. Linux 에서 DISPLAY·WAYLAND_DISPLAY 가 없으면 화면이 없다. macOS·Windows 는 있다고 본다. */
@@ -139,6 +156,8 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
   const pre = precheck(project, opts);
   if (!pre.ok) throw new Error(pre.error ?? JSON.stringify(pre.decision));
   if (runningRound(project)) throw new Error("이미 진행 중인 회차가 있습니다. e2e_round_status 로 확인하거나 e2e_round_stop 으로 중단하세요.");
+  const pf = await browserPreflight(opts);
+  if (!pf.ok) throw new Error(pf.error ?? JSON.stringify(pf.decision));
   const cfg = project.config();
   if (opts.headless !== undefined) cfg.headless = opts.headless;
   let cases = project.cases();
@@ -166,6 +185,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
   const seenSels = new Set<string>();
   const reportedFeatures = new Set<string>();
   const guard = new ChapterGuard(featureKey);
+  let lastChapter = "";
   const meta: RoundMeta = {
     id, n, status: "running", startedAt: nowIso(), driver: driver.name, headless: cfg.headless,
     data: { decision: pre.decision, scope: cfg.data.resetScope },
@@ -238,6 +258,17 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
           }
         };
         let r: CaseResult;
+        // 챕터를 시작하기 전: 이전 라운드가 남긴 브라우저 프로세스가 0개인가(막 닫히는 중일 수 있어 잠깐 기다린다)
+        if (c.type === "spec" && featureKey(c) !== lastChapter) {
+          lastChapter = featureKey(c);
+          if (!guard.skipReason(c)) {
+            const left = await waitNoStale(8000);
+            if (left.length) {
+              guard.end(c, `이전 브라우저 프로세스 ${left.length}개가 남아 있어 두 브라우저가 겹침(${describeProcs(left)})`);
+              emit({ type: "stale-browsers", chapter: featureKey(c), count: left.length });
+            }
+          }
+        }
         const endedWhy = guard.skipReason(c);
         if (endedWhy) {
           // 챕터가 이미 끝났다(선행 조건 실패 · 읽기 실패 연속): 뒤 동작을 누르지 않고 NA(F)로 둔다
@@ -272,6 +303,9 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
       meta.error = String(e?.message ?? e).slice(0, 500);
     } finally {
       await driver.close().catch(() => {});
+      // 닫은 뒤에도 이 도구가 띄운 브라우저 프로세스가 남았는지 확인하고, 남았으면 나무째 끊고 0개를 다시 확인한다
+      const leftover = await cleanupOwn().catch(() => null);
+      if (leftover?.before) kit.warnings.push(leftover.after.length ? `라운드가 끝난 뒤 브라우저 프로세스 ${leftover.after.length}개를 끊지 못함(${describeProcs(leftover.after)})` : `라운드가 끝난 뒤 남은 브라우저 프로세스 ${leftover.before}개를 끊음`);
       meta.finishedAt = nowIso();
       const cnt: Record<string, number> = { PASS: 0, FAIL: 0, FLAKY: 0, BLOCKED: 0, NA: 0, SKIP: 0 };
       for (const r of results) cnt[r.status] = (cnt[r.status] ?? 0) + 1;

@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { OWNER_MARK, killTree } from "../procs.ts";
 import { join } from "node:path";
 import { buildVideoFromFrames } from "./egorec.ts";
 import type { Config } from "../types.ts";
@@ -224,7 +225,8 @@ export class EgoDriver implements Driver {
     const probe = Bun.serve({ port: 0, fetch: () => new Response("") });
     this.port = probe.port!;
     probe.stop(true);
-    this.proc = Bun.spawn([this.bin, "nodejs", "-e", BRIDGE(this.port)], { stdout: "pipe", stderr: "pipe" });
+    // 스크립트 맨 앞 주석이 표지다: 다음 라운드가 남은 브리지 프로세스를 가려내는 데 쓴다
+    this.proc = Bun.spawn([this.bin, "nodejs", "-e", `/*${OWNER_MARK}=${process.pid}*/\n` + BRIDGE(this.port)], { stdout: "pipe", stderr: "pipe" });
     // 내장 Node 런타임은 console.log 를 stderr 로 내보내기도 한다 — 두 스트림을 함께 읽는다
     let buf = "";
     const dec = new TextDecoder();
@@ -289,6 +291,8 @@ export class EgoDriver implements Driver {
     try {
       await this.call({ op: "quit" }, 15000);
     } catch {}
-    setTimeout(() => this.proc?.kill(), 3000).unref?.();
+    // 브리지(노드 스크립트)와 그 자손을 나무째 끊는다. 체인 셸만 끊고 스크립트·브라우저가 남는 일이 없게 한다
+    const pid = this.proc?.pid;
+    if (pid) await killTree(pid, 3000).catch(() => []);
   }
 }

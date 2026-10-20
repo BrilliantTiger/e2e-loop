@@ -16,7 +16,7 @@ import { evidenceUsage, pruneEvidence } from "./evidence.ts";
 import { repeatedIssues } from "./round.ts";
 import { listComments, openCount, replyComment, resolveComments, UNTRUSTED_NOTICE, type Comment } from "./comments.ts";
 import { coverage } from "./coverage.ts";
-import { precheck, runningRound, startRound, stopRound, type StartOpts } from "./round.ts";
+import { browserPreflight, precheck, runningRound, startRound, stopRound, type StartOpts } from "./round.ts";
 import { completeCheck } from "./gate.ts";
 import { dashboardToken, startDashboard, type DashboardInfo } from "./dashboard.ts";
 import { addFeedback, resolveFeedback } from "./feedback.ts";
@@ -332,9 +332,11 @@ export async function aRoundStart(a: StartOpts & { project?: string; open?: bool
       question: `브라우저 밖 OS 창을 거치는 케이스 ${os.count}건이 있습니다. 먼저 e2e_os_check 로 컴퓨터 제어 도구를 점검하고, 동작하지 않으면 사용자에게 허용/스킵을 물어 결정하세요.`,
       options: [{ value: "e2e_os_check", meaning: "점검 후 필요하면 허용/스킵을 사용자에게 묻는다" }],
     };
+  const pf = await browserPreflight(a);
+  if (!pf.ok) return pf.decision ? pf.decision : { error: pf.error };
   const dash = ensureDashboard(p);
   const usage = evidenceUsage(p);
-  const { id, done } = await startRound(p, a);
+  const { id, done } = await startRound(p, { ...a, cleanupBrowsers: false });
   liveRounds.set(p.root + id, done.catch(() => {}));
   if (a.open) Bun.spawn(["open", dash.access_url], { stdout: "ignore", stderr: "ignore" });
   const m = p.rounds().find((r) => r.id === id)!;

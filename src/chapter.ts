@@ -63,6 +63,11 @@ export class ChapterGuard {
     return r;
   }
 
+  /** 챕터를 시작할 수 없어 끝낸다(예: 이전 브라우저 프로세스가 남아 있음). 뒤 케이스는 누르지 않는다 */
+  end(c: Case, why: string) {
+    this.ended.set(this.keyOf(c), why);
+  }
+
   /** 끝난 챕터의 케이스를 누르지 않고 NA(F)로 둔 결과 */
   naResult(c: Case, why: string): CaseResult {
     const detail = `이 챕터는 이미 끝남 — ${why}. 뒤 동작을 누르지 않음`;
