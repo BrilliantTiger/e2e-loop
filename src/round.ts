@@ -12,6 +12,7 @@ import { EvidenceKit, evidenceUsage } from "./evidence.ts";
 import { issuesOf } from "./issues.ts";
 import { toolErrorCount } from "./toolerror.ts";
 import { prestartStatus } from "./prestart.ts";
+import { ChapterGuard } from "./chapter.ts";
 
 async function sh(cmd: string, cwd: string, timeoutMs = 600000): Promise<{ code: number; out: string }> {
   const p = Bun.spawn(["/bin/sh", "-lc", cmd], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -164,6 +165,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
   const createdSet = new Set(project.readJson<string[]>("created.json", []));
   const seenSels = new Set<string>();
   const reportedFeatures = new Set<string>();
+  const guard = new ChapterGuard(featureKey);
   const meta: RoundMeta = {
     id, n, status: "running", startedAt: nowIso(), driver: driver.name, headless: cfg.headless,
     data: { decision: pre.decision, scope: cfg.data.resetScope },
@@ -236,13 +238,23 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
           }
         };
         let r: CaseResult;
-        try {
-          r = await mk(0);
-          if (r.status === "FAIL" && !r.promoted) r = await retryFailed(r, mk, emit, c.id);
-        } catch (e: any) {
-          const gone = browserGone(e);
-          // 브라우저를 다시 띄워도 안 되면 사이트의 결함이 아니라 환경 문제 → 검증 못 한 것(BLOCKED)
-          r = { id: c.id, title: c.title, type: c.type, status: gone ? "BLOCKED" : "FAIL", reason: gone ? `브라우저가 죽어 판정하지 못함(다시 띄웠지만 실패): ${String(e?.message ?? e).slice(0, 200)}` : `실행기 오류: ${String(e?.message ?? e).slice(0, 300)}`, warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(), ...(gone ? {} : { priority: "P1" as const }) };
+        const endedWhy = guard.skipReason(c);
+        if (endedWhy) {
+          // 챕터가 이미 끝났다(선행 조건 실패 · 읽기 실패 연속): 뒤 동작을 누르지 않고 NA(F)로 둔다
+          r = guard.naResult(c, endedWhy);
+          emit({ type: "chapter-skip", case: c.id, why: endedWhy.slice(0, 200) });
+        } else {
+          try {
+            r = await mk(0);
+            // 연속 읽기 실패의 2번째부터는 NA(F)로 바뀌므로 재시도하지 않는다
+            if (r.status === "FAIL" && !r.promoted && !guard.willConvert(c, r)) r = await retryFailed(r, mk, emit, c.id);
+          } catch (e: any) {
+            const gone = browserGone(e);
+            // 브라우저를 다시 띄워도 안 되면 사이트의 결함이 아니라 환경 문제 → 검증 못 한 것(BLOCKED)
+            r = { id: c.id, title: c.title, type: c.type, status: gone ? "BLOCKED" : "FAIL", reason: gone ? `브라우저가 죽어 판정하지 못함(다시 띄웠지만 실패): ${String(e?.message ?? e).slice(0, 200)}` : `실행기 오류: ${String(e?.message ?? e).slice(0, 300)}`, warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(), ...(gone ? {} : { priority: "P1" as const }) };
+          }
+          r = guard.settle(c, r);
+          if (r.toolError?.kind === "F") emit({ type: "chapter-na", case: c.id, why: r.toolError.detail.slice(0, 200) });
         }
         results.push(r);
         project.writeJson(`rounds/${id}/results.json`, results);

@@ -28,8 +28,8 @@ export const proj = (p?: string) => new Project(p ?? process.env.E2E_PROJECT ?? 
 import { SINGLE_STATE_WARNING, singleEndState } from "./waits.ts";
 import { ROW_BY_NUMBER_HELP, rowByNumber, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, labelOnly } from "./finders.ts";
-import { BASIS_WARNING, missingBasis } from "./basis.ts";
-const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate"]);
+import { BASIS_WARNING, isExpectation, missingBasis } from "./basis.ts";
+const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate", "prereq"]);
 const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check"]);
 
 const dashboards = new Map<string, DashboardInfo>();
@@ -233,6 +233,11 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
     const badGate = c.steps.flatMap((s, i) => (s.op === "gate" && !(s.blocked && typeof s.blocked === "object" && s.passed && typeof s.passed === "object" && typeof s.basis === "string" && s.basis.trim()) ? [`#${i + 1}`] : []));
     if (badGate.length) {
       errors.push(`${c.id}: Gate ${badGate.join(", ")} 에는 blocked(막힘이 정상일 때의 기대), passed(풀린 뒤 PASS 기준), basis(근거)가 필요함`);
+      continue;
+    }
+    const badPrereq = c.steps.flatMap((s, i) => (s.op === "prereq" && !(typeof s.name === "string" && s.name.trim() && isExpectation({ ...s, op: "expect" })) ? [`#${i + 1}`] : []));
+    if (badPrereq.length) {
+      errors.push(`${c.id}: 선행 조건 ${badPrereq.join(", ")} 에는 name(무엇을 찾았다는 조건인지)과 확인할 내용(sel + count·visible·text 등)이 필요함`);
       continue;
     }
     const badSel = c.steps.flatMap((s, i) => {

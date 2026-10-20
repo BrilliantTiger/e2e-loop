@@ -56,6 +56,7 @@ export function describe(s: Step): string {
     case "screenshot": return `스크린샷${t(s.name)}`;
     case "eval": return `스크립트 실행`;
     case "probe": return `점검(${s.kind}) ${s.label ?? s.sel ?? ""}`;
+    case "prereq": return `선행 조건 「${s.name ?? "-"}」 확인`;
     case "gate": return `Gate 「${s.name ?? "-"}」 막힘이 정상 → ${s.resolve?.length ? "풀고" : "(사람이 풀기 전)"} 풀린 뒤 PASS 기준 확인`;
     default: return s.op;
   }
@@ -285,6 +286,16 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           } else await sleep(Number(s.ms ?? 500));
           break;
         case "expect": await runExpect(page, s, cfg.baseUrl); break;
+        case "prereq": {
+          // 챕터의 선행 조건(예: 대상 줄을 찾았다). 못 채우면 이 챕터는 「선행 조건 실패 — 도구」 NA 로 끝나고 뒤 동작을 누르지 않는다
+          const { op: _op, name: _n, basis: _b, ...cond } = s;
+          try {
+            await runExpect(page, withSel({ op: "expect", ...cond }), cfg.baseUrl);
+          } catch (e: any) {
+            throw new ToolError("F", `선행 조건 실패 — 도구: 「${s.name ?? "-"}」 ${String(e?.message ?? e).replace(/^실제 값을 읽지 못함\(빈 칸·undefined·NaN\) — /, "")}`);
+          }
+          break;
+        }
         case "gate": {
           // 사람 결정이 필요한 Gate: 풀기 전에는 막혀 있는 것이 정상이고, 풀린 뒤가 PASS 기준이다
           const name = s.name ?? "-";
