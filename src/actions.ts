@@ -243,6 +243,10 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       errors.push(`${c.id}: chapter 는 챕터 이름(비어 있지 않은 글자)이어야 함`);
       continue;
     }
+    if (c.lock !== undefined && !((typeof c.lock === "string" && c.lock.trim()) || (Array.isArray(c.lock) && c.lock.length && c.lock.every((x) => typeof x === "string" && x.trim())))) {
+      errors.push(`${c.id}: lock 은 잠금 키(예: "dataset:123") 글자 또는 글자 배열이어야 함`);
+      continue;
+    }
     if (c.ready !== undefined) {
       const list = ([] as any[]).concat(c.ready);
       const bad = list.flatMap((r, i) => {

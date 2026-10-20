@@ -34,6 +34,8 @@ export interface Case {
   chapter?: string;
   /** 준비 신호: 서버의 비동기 계산이 끝났다는 신호(API 값 또는 화면 요소). 첫 동작 전에 이 신호가 모두 올 때까지 누르지 않고 기다린다. 상한 안에 안 오면 NA(M) */
   ready?: ReadySignal | ReadySignal[];
+  /** 이 케이스가 쓰는 대상의 잠금 키(예: "dataset:123"). 챕터가 시작할 때 잠그고, 다른 프로세스가 같은 대상을 쓰는 중이면 그 챕터는 누르지 않고 NA(N) */
+  lock?: string | string[];
   /** 이 케이스가 기대는 선행 챕터 이름들. 선행 챕터에 제품 FAIL 이 있으면 이 케이스는 돌리지 않고 NA(H) */
   requires?: string[];
 }
@@ -173,8 +175,8 @@ export interface ObservedApi {
 
 export type Verdict = "PASS" | "FAIL" | "FLAKY" | "BLOCKED" | "NA" | "SKIP";
 
-/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 · M 서버 비동기 계산이 안 끝났는데 누름 */
-export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L" | "M";
+/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 · M 서버 비동기 계산이 안 끝났는데 누름 · N 같은 탭·같은 Dataset 에서 챕터 두 개가 동시에 돎 */
+export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L" | "M" | "N";
 
 export interface StepResult {
   i: number;

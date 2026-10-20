@@ -26,6 +26,7 @@ export function isReadFailure(r: Pick<CaseResult, "status" | "toolError" | "step
 export class ChapterGuard {
   private streak = new Map<string, number>();
   private ended = new Map<string, string>();
+  private endedKind = new Map<string, "F" | "N">();
   constructor(private keyOf: (c: Case) => string) {}
 
   /** 사람이 쓴(spec) 활성 케이스만 챕터 가드를 받는다(자동 점검 probe 는 제외) */
@@ -66,16 +67,18 @@ export class ChapterGuard {
   }
 
   /** 챕터를 시작할 수 없어 끝낸다(예: 이전 브라우저 프로세스가 남아 있음). 뒤 케이스는 누르지 않는다 */
-  end(c: Case, why: string) {
+  end(c: Case, why: string, kind: "F" | "N" = "F") {
     this.ended.set(this.keyOf(c), why);
+    this.endedKind.set(this.keyOf(c), kind);
   }
 
   /** 끝난 챕터의 케이스를 누르지 않고 NA(F)로 둔 결과 */
   naResult(c: Case, why: string): CaseResult {
-    const detail = `이 챕터는 이미 끝남 — ${why}. 뒤 동작을 누르지 않음`;
+    const kind = this.endedKind.get(this.keyOf(c)) ?? "F";
+    const detail = kind === "N" ? `${why}. 눌러 보지 않음` : `이 챕터는 이미 끝남 — ${why}. 뒤 동작을 누르지 않음`;
     return {
       id: c.id, title: c.title, type: c.type, event: c.event, source_ref: c.source_ref, element: c.element, risk: c.risk,
-      status: "NA", reason: `도구 판정 불가(F): ${detail}`, toolError: { kind: "F", detail },
+      status: "NA", reason: `도구 판정 불가(${kind}): ${detail}`, toolError: { kind, detail },
       warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(),
     };
   }

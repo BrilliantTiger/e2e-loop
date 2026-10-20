@@ -13,6 +13,7 @@ import { issuesOf } from "./issues.ts";
 import { blockedCount, toolErrorCount } from "./toolerror.ts";
 import { prestartStatus } from "./prestart.ts";
 import { ChapterGuard, DefectGuard, chapterName } from "./chapter.ts";
+import { acquire, lockKeys, release, releaseAll } from "./locks.ts";
 import { cleanupOwn, cleanupStale, describeProcs, staleBrowserProcs, waitNoStale } from "./procs.ts";
 
 async function sh(cmd: string, cwd: string, timeoutMs = 600000): Promise<{ code: number; out: string }> {
@@ -189,6 +190,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
   const guard = new ChapterGuard(chapterKey);
   const defects = new DefectGuard(chapterKey);
   let lastChapter = "";
+  let heldLocks: string[] = [];
   const meta: RoundMeta = {
     id, n, status: "running", startedAt: nowIso(), driver: driver.name, headless: cfg.headless,
     data: { decision: pre.decision, scope: cfg.data.resetScope },
@@ -265,6 +267,18 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         const blockedBy = defects.blockedBy(c);
         if (!blockedBy && c.type === "spec" && chapterKey(c) !== lastChapter) {
           lastChapter = chapterKey(c);
+          // 실행 중 잠금: 이 챕터가 쓰는 대상(탭·Dataset)을 다른 프로세스가 쓰는 중이면 누르지 않고 「동시 실행 거부」(오류 N)
+          release(heldLocks);
+          heldLocks = [];
+          const keys = [...new Set(selected.filter((x) => x.type === "spec" && chapterKey(x) === chapterKey(c)).flatMap((x) => lockKeys(x.lock, driver.name)))];
+          if (keys.length && !guard.skipReason(c)) {
+            const got = acquire(keys, { chapter: chapterKey(c), round: id, project: project.root });
+            if (got.ok) heldLocks = keys;
+            else {
+              guard.end(c, `동시 실행 거부: 대상 「${got.key}」 를 챕터 「${got.holder.chapter}」(라운드 ${got.holder.round ?? "-"}, 프로세스 ${got.holder.pid})가 쓰는 중`, "N");
+              emit({ type: "concurrent-reject", chapter: chapterKey(c), key: got.key, owner: got.holder.chapter, ownerRound: got.holder.round, ownerPid: got.holder.pid });
+            }
+          }
           if (!guard.skipReason(c)) {
             const left = await waitNoStale(8000);
             if (left.length) {
@@ -312,6 +326,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
       meta.error = String(e?.message ?? e).slice(0, 500);
     } finally {
       await driver.close().catch(() => {});
+      releaseAll();
       // 닫은 뒤에도 이 도구가 띄운 브라우저 프로세스가 남았는지 확인하고, 남았으면 나무째 끊고 0개를 다시 확인한다
       const leftover = await cleanupOwn().catch(() => null);
       if (leftover?.before) kit.warnings.push(leftover.after.length ? `라운드가 끝난 뒤 브라우저 프로세스 ${leftover.after.length}개를 끊지 못함(${describeProcs(leftover.after)})` : `라운드가 끝난 뒤 남은 브라우저 프로세스 ${leftover.before}개를 끊음`);
