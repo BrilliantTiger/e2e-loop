@@ -79,6 +79,10 @@ test("읽기 실패 판별: 요소 못 찾음·빈 값은 읽기 실패, 값이 
   expect(isReadFailure(res("x", "FAIL", { steps: [{ i: 1, op: "expect", desc: "", status: "fail", ms: 1, error: '텍스트가 다름: 기대 "3건" / 실제 "5건"' }] }))).toBe(false);
   expect(isReadFailure(res("x", "NA", { toolError: { kind: "D", detail: "예상 못 한 대화상자가 떠 있어 이 단계를 판정하지 못함" } }))).toBe(false);
   expect(isReadFailure(res("x", "PASS"))).toBe(false);
+  // 요소는 있는데 다른 요소가 가리고 있거나 꺼져 있어 못 누른 것은 읽기 실패가 아니다
+  const blocked = (error: string) => res("x", "FAIL", { steps: [{ i: 1, op: "click", desc: "", status: "fail", ms: 1, error }] });
+  expect(isReadFailure(blocked("Timeout 5000ms exceeded. waiting for locator('#b') <div class=\"overlay\"> intercepts pointer events"))).toBe(false);
+  expect(isReadFailure(blocked("Timeout 5000ms exceeded. waiting for locator('#b') element is not enabled"))).toBe(false);
 });
 
 test("읽기 실패 연속: 1번째는 그대로, 2번째부터 NA(F), 4번째에서 챕터를 끝내 뒤 케이스는 돌리지 않는다", () => {

@@ -11,6 +11,8 @@ export const READ_FAIL_END = 4;
 export const READ_FAIL_NA_FROM = 2;
 
 const NOT_FOUND = /요소를 찾지 못|waiting for (locator|selector)|Timeout \d+ms exceeded|resolved to 0 elements|보여야 하는데 안 보임|읽기 전에 그려져 있어야|읽지 못함/i;
+/** 요소는 있었는데 가려졌거나 꺼져 있어 못 누른 것 — 요소를 못 찾은 읽기 실패가 아니라 사이트의 상태일 수 있다 */
+const FOUND_BUT_BLOCKED = /intercepts pointer events|is not enabled|not stable|is disabled|element is not visible/i;
 const READ_OPS = new Set(["expect", "eval", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "collect"]);
 
 /** 결과가 「읽기 실패」인가: 빈 칸·undefined 로 못 읽었거나(NA D), 요소를 못 찾아 시간이 다 된 FAIL */
@@ -18,7 +20,7 @@ export function isReadFailure(r: Pick<CaseResult, "status" | "toolError" | "step
   if (r.status === "NA" && r.toolError) return r.toolError.kind === "D" && !/예상 못 한 대화상자/.test(r.toolError.detail);
   if (r.status !== "FAIL") return false;
   const failed = r.steps.find((s) => s.status === "fail");
-  return !!failed && READ_OPS.has(failed.op) && NOT_FOUND.test(failed.error ?? "");
+  return !!failed && READ_OPS.has(failed.op) && NOT_FOUND.test(failed.error ?? "") && !FOUND_BUT_BLOCKED.test(failed.error ?? "");
 }
 
 export class ChapterGuard {
