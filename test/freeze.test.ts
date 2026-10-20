@@ -116,3 +116,54 @@ test("실제 브라우저: 화면을 1.3초 붙잡는 클릭은 「1초 넘게 �
     await driver.close();
   }
 }, 60000);
+
+// ---- 오류 U: 화면 열기의 멈춤이 다시 열면 재현되지 않음(첫 로드 비용·동시 부하) ----
+test("U: 화면 열기에서 멈춤이 잡히면 한 번 더 열어 재고, 안 멈추면 「멈춤 미재현」(U)으로 판정에서 빼며 경고도 남기지 않는다", async () => {
+  let reads = 0;
+  let gotos = 0;
+  const frozen = raw({ lt: [[100, 2009]], gaps: [[90, 1566]] });
+  const ctx = fakeCtx({ goto: async () => void gotos++, evaluate: async (expr: string): Promise<any> => (expr.includes("const gaps = z.gaps.slice()") ? [frozen, raw({})][reads++] ?? raw({}) : true) });
+  const r = await runCase(ctx, mk("U-1", [{ op: "goto", url: "/history" }, { op: "expect", sel: "#out", text: "", basis: "POL-1" }]));
+  expect(r.status).toBe("PASS");
+  expect(gotos).toBe(2);
+  expect(r.steps[0]!.measure).toMatchObject({ verdict: "unconfirmed" });
+  expect(r.steps[0]!.measure!.why).toContain("미재현");
+  expect(r.warnings.some((w) => w.startsWith("측정"))).toBe(false);
+  const rows = excludedRows([r], () => "-", { round: "R09", stepInfo: () => ({ chapter: "C44", screen: "/history", element: "/history", verb: "이동" }) });
+  expect(rows.map((x) => x.kind)).toEqual(["U"]);
+  expect(rows[0]!.note).toContain("제품 결함 아님(미재현)");
+  expect(measureInvalidCount([r])).toBe(0);
+});
+
+test("U: 다시 열어도 멈추면 재현된 멈춤(경고), 누르는 동작의 멈춤은 다시 누르지 않고 멈춤으로 둔다", async () => {
+  const frozen = raw({ lt: [[100, 2009]], gaps: [[90, 1566]] });
+  let gotos = 0;
+  const ctx = fakeCtx({ goto: async () => void gotos++, evaluate: async (expr: string): Promise<any> => (expr.includes("const gaps = z.gaps.slice()") ? frozen : true) });
+  const r = await runCase(ctx, mk("U-2", [{ op: "goto", url: "/history" }, { op: "click", sel: "#open" }, { op: "expect", sel: "#out", text: "", basis: "POL-1" }]));
+  expect(gotos).toBe(2); // 화면 열기만 다시 열었다
+  expect(r.steps[0]!.measure).toMatchObject({ verdict: "freeze" });
+  expect(r.steps[0]!.measure!.why).toContain("재현됨");
+  expect(r.steps[1]!.measure).toMatchObject({ verdict: "freeze" });
+  expect(r.steps[1]!.measure!.why).toContain("재현은 확인하지 않음");
+  expect(r.warnings.filter((w) => w.startsWith("측정")).length).toBe(2);
+});
+
+test("실제 브라우저 U: 처음 열 때만 멈추는 화면은 미재현(U), 열 때마다 멈추는 화면은 재현된 멈춤", async () => {
+  const p = new Project(root);
+  p.ensure();
+  const cfg = { ...p.config(), baseUrl: `http://127.0.0.1:${port}`, driver: "chromium" as const, headless: true };
+  const { PwDriver } = await import("../src/drivers/playwright.ts");
+  const driver = new PwDriver(cfg, "chromium");
+  await driver.open();
+  try {
+    const ctx = { project: p, cfg, driver, roundId: "R01", decision: "keep" as const, emit: () => {} };
+    const first = await runCase(ctx, mk("UF-1", [{ op: "goto", url: "/firstload" }, { op: "wait", ms: 2000 }, { op: "expect", sel: "h1", text: "로드", basis: "POL-1" }]));
+    expect(first.status).toBe("PASS");
+    expect(first.steps[0]!.measure?.verdict).toBe("unconfirmed");
+    const slow = await runCase(ctx, mk("UF-2", [{ op: "goto", url: "/slowload" }, { op: "wait", ms: 2000 }, { op: "expect", sel: "h1", text: "로드", basis: "POL-1" }]));
+    expect(slow.steps[0]!.measure?.verdict).toBe("freeze");
+    expect(slow.steps[0]!.measure?.why).toContain("재현됨");
+  } finally {
+    await driver.close();
+  }
+}, 60000);

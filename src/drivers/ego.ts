@@ -6,6 +6,7 @@ import type { Config } from "../types.ts";
 import { expandEnv } from "../store.ts";
 import { type DPage, type Drained, type Driver, type NetEntry, type Session } from "./index.ts";
 import { HOOKS, LIB } from "./inpage.ts";
+import { FREEZE_INIT } from "../freeze.ts";
 
 // ego-browser 는 자기 내장 Node 런타임 안에서만 page API 를 쓸 수 있다.
 // 그래서 그 안에 작은 HTTP 서버를 띄우고, 이쪽(bun)에서 JSON 명령을 보낸다.
@@ -34,6 +35,7 @@ const call = async (m) => {
     case "goto": await page.goto(m.url); await page.waitForLoadState("load").catch(() => {}); return null;
     case "reload": await page.reload(); return null;
     case "front": if (typeof page.bringToFront === "function") await page.bringToFront(); return null;
+    case "initScript": await page.cdp("Page.addScriptToEvaluateOnNewDocument", { source: m.src }); return null;
     case "click": await page.click(m.sel, { timeout: m.timeout, label: m.label }); return null;
     case "dblclick": await page.dblclick(m.sel, { timeout: m.timeout }); return null;
     case "hover": await page.hover(m.sel, { timeout: m.timeout }); return null;
@@ -116,6 +118,8 @@ export function toEgoSel(sel: string): string {
 /** 드라이버 하나(= 한 번의 라운드) 안에서 공유하는 상태: 화면 캡처가 한 번 응답하지 않으면 이후 세션에서는 시도하지 않는다 */
 export interface EgoShared {
   shotBroken: boolean;
+  /** 멈춤 측정기를 새 문서마다 심도록 걸어 두었나(작업 탭은 케이스가 바뀌어도 같은 탭이라 한 번만) */
+  freezeInit?: boolean;
 }
 
 class EgoPage implements DPage {
@@ -262,6 +266,10 @@ export class EgoDriver implements Driver {
   async newSession(evidenceDir: string): Promise<Session> {
     mkdirSync(evidenceDir, { recursive: true });
     const page = new EgoPage((m, ms) => this.call(m, ms), this.cfg.stepTimeoutMs, this.shared);
+    if (!this.shared.freezeInit && (this.cfg.freeze?.mode ?? "on") === "on") {
+      this.shared.freezeInit = true;
+      await this.call({ op: "initScript", src: FREEZE_INIT }, 8000).catch(() => {}); // 안 되면 화면이 열린 뒤부터 잰다
+    }
     // 이전 케이스의 상태를 비운다(localStorage/sessionStorage 만. 쿠키는 프로필 전체에 닿아서 건드리지 않는다)
     await page.goto(this.cfg.baseUrl);
     const kv = Object.fromEntries(Object.entries(this.cfg.auth?.localStorage ?? {}).map(([k, v]) => [k, expandEnv(v)]));

@@ -8,7 +8,7 @@ import { isIssue } from "./issues.ts";
 import { coverage } from "./coverage.ts";
 import { diffWithPrevious, fixHint, trend } from "./report.ts";
 import { readComments, type Comment } from "./comments.ts";
-import { blockedCount, elementOf, excludedAllTsv, excludedRows, excludedTsv, markRepeats, measureInvalidCount, mergeExcludedAcross, symptomSentence, toolErrorCount, verbOf, type ExcludedRow } from "./toolerror.ts";
+import { blockedCount, elementOf, excludedAllTsv, excludedRows, excludedTsv, freezeUnconfirmedCount, markRepeats, measureInvalidCount, mergeExcludedAcross, symptomSentence, toolErrorCount, verbOf, type ExcludedRow } from "./toolerror.ts";
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const clip = (s: unknown, n = 300) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -381,7 +381,7 @@ export function renderHuman(project: Project, meta: RoundMeta, verdict: string, 
   let vid = 0;
   const caseBlock = (r: CaseResult) => {
     const steps = r.steps
-      .map((x) => `<tr class="${x.status}"><td>${x.i + 1}</td><td>${esc(x.desc)}${x.found ? `<br><span class="meta">찾은 요소: ${esc(x.found)}</span>` : ""}${x.measure && x.measure.verdict !== "ok" ? `<br><span class="meta">측정 ${x.measure.verdict === "freeze" ? "멈춤" : "무효(O, 창 가림)"}: ${esc(x.measure.why ?? "")} — ${esc(x.measure.summary)}${x.measure.remeasured ? ` · 재측정: ${esc(x.measure.remeasured)}` : ""}</span>` : ""}</td><td>${x.status === "ok" ? "통과" : x.status === "fail" ? "실패" : "건너뜀"}</td><td>${x.ms}ms</td><td>${x.shot ? `<a href="${esc(x.shot)}" target="_blank"><img loading="lazy" src="${esc(x.shot)}"></a>` : ""}</td></tr>${x.error ? `<tr class="err"><td></td><td colspan="4">${esc(x.error)}</td></tr>` : ""}${x.api ? `<tr class="api"><td></td><td colspan="4">API ${esc(x.api.method)} ${esc(x.api.url)} → ${x.api.status ?? "-"}${x.api.responseBody ? ` · ${esc(clip(x.api.responseBody, 160))}` : ""}</td></tr>` : ""}`)
+      .map((x) => `<tr class="${x.status}"><td>${x.i + 1}</td><td>${esc(x.desc)}${x.found ? `<br><span class="meta">찾은 요소: ${esc(x.found)}</span>` : ""}${x.measure && x.measure.verdict !== "ok" ? `<br><span class="meta">측정 ${x.measure.verdict === "freeze" ? "멈춤" : x.measure.verdict === "unconfirmed" ? "멈춤 미재현(U)" : "무효(O, 창 가림)"}: ${esc(x.measure.why ?? "")} — ${esc(x.measure.summary)}${x.measure.remeasured ? ` · 재측정: ${esc(x.measure.remeasured)}` : ""}</span>` : ""}</td><td>${x.status === "ok" ? "통과" : x.status === "fail" ? "실패" : "건너뜀"}</td><td>${x.ms}ms</td><td>${x.shot ? `<a href="${esc(x.shot)}" target="_blank"><img loading="lazy" src="${esc(x.shot)}"></a>` : ""}</td></tr>${x.error ? `<tr class="err"><td></td><td colspan="4">${esc(x.error)}</td></tr>` : ""}${x.api ? `<tr class="api"><td></td><td colspan="4">API ${esc(x.api.method)} ${esc(x.api.url)} → ${x.api.status ?? "-"}${x.api.responseBody ? ` · ${esc(clip(x.api.responseBody, 160))}` : ""}</td></tr>` : ""}`)
       .join("");
     const sig = [...r.pageErrors.map((e) => `JS 오류: ${e}`), ...r.failedRequests.map((e) => `요청: ${e}`), ...r.console.map((e) => `console.error: ${e}`)];
     const chs = loadChapters(rdir, r);
@@ -500,8 +500,9 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
   markRepeats(excluded, project.rounds().filter((r) => r.n < meta.n).map((r) => ({ round: r.id, rows: project.readJson<ExcludedRow[]>(`rounds/${r.id}/excluded_issues.json`, []) })));
   const blockedN = blockedCount(results);
   const measureNa = measureInvalidCount(results);
+  const unconfirmed = freezeUnconfirmedCount(results);
   const freezes = results.flatMap((r) => r.steps.filter((x) => x.measure?.verdict === "freeze").map((x) => ({ case: r.id, title: r.title, step: x.i + 1, desc: x.desc, why: x.measure!.why, summary: x.measure!.summary, status: r.status })));
-  const summaryLine = `이슈 ${issueCount} · 도구 오류(NA) ${toolErr} · 선행 결함에 막힘(H) ${blockedN}${measureNa ? ` · 측정 무효(O) ${measureNa}` : ""}${freezes.length ? ` · 멈춤 측정 ${freezes.length}` : ""} — 통과 ${s.PASS} · 실패 ${s.FAIL} · 불안정 ${s.FLAKY} · 검증 못 함 ${s.BLOCKED} · 스킵 ${s.SKIP} · 해당 없음 ${s.NA - toolErr - blockedN} / 전체 ${s.total}`;
+  const summaryLine = `이슈 ${issueCount} · 도구 오류(NA) ${toolErr} · 선행 결함에 막힘(H) ${blockedN}${measureNa ? ` · 측정 무효(O) ${measureNa}` : ""}${unconfirmed ? ` · 멈춤 미재현(U) ${unconfirmed}` : ""}${freezes.length ? ` · 멈춤 측정 ${freezes.length}` : ""} — 통과 ${s.PASS} · 실패 ${s.FAIL} · 불안정 ${s.FLAKY} · 검증 못 함 ${s.BLOCKED} · 스킵 ${s.SKIP} · 해당 없음 ${s.NA - toolErr - blockedN} / 전체 ${s.total}`;
   const diffLine = diff.prev ? `이전 ${diff.prev} 대비: 고쳐짐 ${diff.fixed.length} · 새로 깨짐 ${diff.regressed.length}${diff.regressed.length ? ` (회귀: ${diff.regressed.join(", ")})` : ""} · 계속 실패 ${diff.stillFailing.length} · 새 케이스 ${diff.newCases.length}` : undefined;
   const trendLine = tr.map((t) => `${t.round}${t.scope === "partial" ? "(부분)" : ""}=${t.issues}${t.toolError ? `(도구 오류 ${t.toolError})` : ""}${t.blockedByDefect ? `(선행 결함에 막힘 ${t.blockedByDefect})` : ""}`).join(" → ");
 
@@ -511,7 +512,7 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
     pendingFeedback: meta.pendingFeedback ?? [], injected: meta.injected ?? [], appliedFeedback: applied,
     tasks, issues, tool_error_count: toolErr, blocked_by_defect_count: blockedN,
     // 멈춤 측정: 기능 판정과 따로. freeze 는 1초 넘게 멈춘 스텝(경고), measure_invalid 는 창이 가려져 무효가 된 측정 수(O, 제외 시트)
-    measure: { freeze: freezes, measure_invalid: measureNa }, excluded: excluded.map((x) => ({ ...x, comments: readComments(project).filter((c) => x.cases.includes(c.case)).map((c) => ({ id: c.id, author: c.author, text: c.text, status: c.status })) })),
+    measure: { freeze: freezes, measure_invalid: measureNa, freeze_unconfirmed: unconfirmed }, excluded: excluded.map((x) => ({ ...x, comments: readComments(project).filter((c) => x.cases.includes(c.case)).map((c) => ({ id: c.id, author: c.author, text: c.text, status: c.status })) })),
     skipped: skipped.map((r) => ({ id: r.id, title: r.title, reason: r.reason })),
     warnings: warned.map((r) => ({ id: r.id, title: r.title, warnings: r.warnings })),
     coverage: { elements: { total: cov.elements.total, uncovered: cov.elements.uncovered }, cases: cov.cases, uncoveredSections: cov.sources.flatMap((x) => x.uncoveredSections.map((n) => `${x.title}: ${n}`)) },

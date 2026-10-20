@@ -54,6 +54,7 @@ $('#signup').onsubmit=async(e)=>{e.preventDefault();const f=new FormData(e.targe
 `,
   );
 
+let firstLoadHits = 0;
 Bun.serve({
   port,
   hostname: "127.0.0.1",
@@ -66,6 +67,11 @@ Bun.serve({
       return html(layout("항목", `<h1>항목</h1><ul id="list">${items.map((i) => `<li>${i.name} <button class="del" data-id="${i.id}">삭제</button></li>`).join("")}</ul><p id="count"></p><a href="/">홈으로</a>`, `fetch('/api/items').then(r=>r.json()).then(j=>{document.querySelector('#count').textContent='총 '+j.length+'개';});
 document.querySelectorAll('.del').forEach(b=>b.onclick=async()=>{await fetch('/api/items/'+b.dataset.id,{method:'DELETE'});location.reload();});`));
     // 멈춤 측정 시험용(링크하지 않음): 「오래 걸림」은 1.3초 동안 화면을 붙잡고, 「바로」는 곧장 글을 바꾼다
+    // 멈춤 재현 시험용(링크하지 않음): 「첫 로드」는 서버가 뜬 뒤 처음 열 때만 1.3초 붙잡고, 「늘 느림」은 열 때마다 붙잡는다
+    if (u.pathname === "/firstload" || u.pathname === "/slowload") {
+      const hold = u.pathname === "/slowload" || firstLoadHits++ === 0;
+      return html(layout("로드", `<h1>로드</h1>`, hold ? `setTimeout(()=>{const t=performance.now();while(performance.now()-t<1300){}},150);` : ""));
+    }
     if (u.pathname === "/busy")
       return html(layout("멈춤", `<h1>멈춤</h1><button id="slow">오래 걸림</button><button id="fast">바로</button><p id="out"></p>`, `document.querySelector('#slow').onclick=()=>{const t=performance.now();while(performance.now()-t<1300){}document.querySelector('#out').textContent='끝';};document.querySelector('#fast').onclick=()=>{document.querySelector('#out').textContent='바로 끝';};`));
     if (u.pathname === "/anim")

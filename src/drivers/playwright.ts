@@ -6,6 +6,7 @@ import type { Config } from "../types.ts";
 import { expandEnv } from "../store.ts";
 import type { DPage, Drained, Driver, NetEntry, Session } from "./index.ts";
 import { LIB } from "./inpage.ts";
+import { FREEZE_INIT } from "../freeze.ts";
 import { buildVideoFromFrames } from "./egorec.ts";
 
 class PwPage implements DPage {
@@ -137,6 +138,8 @@ export class PwDriver implements Driver {
       await ctx.addCookies(this.cfg.auth.cookies.map((c) => ({ ...c, value: expandEnv(c.value), url: c.url ?? (c.domain ? undefined : base.origin) })));
     }
     await ctx.addInitScript(LIB);
+    // 멈춤 측정기를 새 문서가 시작될 때 심는다(화면을 여는 동안의 멈춤까지 잰다)
+    if ((this.cfg.freeze?.mode ?? "on") === "on") await ctx.addInitScript(FREEZE_INIT);
     await ctx.tracing.start({ screenshots: true, snapshots: true });
     const page = await ctx.newPage();
     // 영상: CDP 스크린캐스트 프레임을 받아 mp4 로 만든다(화면이 바뀔 때만 프레임이 오고, videoFps 가 상한).

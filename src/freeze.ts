@@ -7,8 +7,8 @@
 // 창을 앞으로 가져와 보이게 된 뒤 다시 잰다(이동은 그 자리에서 다시 재고, 다른 동작은 다음 스텝부터 보이는 창에서 잰다).
 import type { DPage } from "./drivers/index.ts";
 
-/** 페이지 안 측정기. 이미 있으면 그대로 둔다(문서가 바뀌면 새로 단다) */
-const INSTALL = `(() => {
+/** 페이지 안 측정기. 이미 있으면 그대로 둔다(문서가 바뀌면 새로 단다). 드라이버가 새 문서가 시작될 때 심어 두면 화면을 여는 동안(로드 중)의 멈춤도 잰다 */
+export const FREEZE_INIT = `(() => {
   const w = window;
   if (w.__e2eFz) return true;
   const now = () => performance.now();
@@ -27,12 +27,15 @@ const INSTALL = `(() => {
 
 /** 지금부터 잰다(앞서 모은 것은 버린다) */
 const ARM = `(() => {
-  ${INSTALL};
+  ${FREEZE_INIT};
   const z = window.__e2eFz, n = performance.now();
   z.armed = n; z.lt = []; z.ev = []; z.gaps = []; z.tgaps = []; z.first = null; z.lastRaf = n; z.lastTick = n;
   z.hid = document.visibilityState === 'hidden'; z.blur = !document.hasFocus();
   return true;
 })()`;
+
+/** 측정기가 없으면 단다. 있으면 그대로 둬서 문서가 시작된 뒤(화면을 여는 동안) 모은 것을 남긴다 */
+const ENSURE = `(() => { ${FREEZE_INIT}; return true; })()`;
 
 /** 잰 것을 읽는다. 측정기가 없으면(문서가 바뀜) null */
 const READ = `(() => {
@@ -139,6 +142,15 @@ export async function freezeArm(page: DPage): Promise<boolean> {
 
 /** 측정기가 돌려준 모양인가(아니면 잰 것이 없는 것으로 본다) */
 const isRaw = (v: any): v is FreezeRaw => !!v && typeof v === "object" && ["lt", "ev", "gaps", "tgaps"].every((k) => Array.isArray(v[k])) && typeof v.ms === "number";
+
+/** 화면을 연 뒤: 측정기가 이미 있으면(새 문서가 시작될 때 심음) 로드 중의 멈춤까지 남기고, 없으면 지금부터 잰다 */
+export async function freezeEnsure(page: DPage): Promise<boolean> {
+  try {
+    return !!(await page.evaluate<boolean>(ENSURE));
+  } catch {
+    return false;
+  }
+}
 
 export async function freezeRead(page: DPage): Promise<FreezeRaw | null> {
   try {

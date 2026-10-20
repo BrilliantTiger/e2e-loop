@@ -7,6 +7,7 @@
 //   M 서버 비동기 계산이 안 끝났는데 누름(준비 신호가 상한 안에 안 옴)
 //   L 진행 신호가 보이는데 무변화 종료 규칙·상한으로 끝냄(대기 상한이 처리 시간보다 짧음)
 //   O 창이 가려진 채 잰 멈춤 측정(측정만 무효 — 기능 판정은 따로 남는다)
+//   U 화면 열기에서 잰 멈춤이 다시 열면 재현되지 않음(첫 로드 비용·동시 부하 — 판정에서 뺀다)
 //   H 선행 챕터의 제품 결함에 막혀 돌리지 않음(도구 오류가 아니라 제품 결함의 여파)
 import type { Case, CaseResult, Step, StepResult, ToolErrorKind } from "./types.ts";
 
@@ -24,6 +25,7 @@ export const TOOL_ERROR_LABEL: Record<ToolErrorKind, string> = {
   M: "선행 계산 미완료(서버 비동기 계산이 안 끝났는데 누름)",
   N: "동시 실행(같은 탭·같은 Dataset 에서 챕터 두 개가 동시에 돎)",
   O: "측정 무효(창 가림 — 가려진 창에서 잰 멈춤 측정)",
+  U: "멈춤 미재현(화면 열기의 멈춤이 다시 열면 안 남 — 첫 로드 비용·동시 부하)",
 };
 
 const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
@@ -38,6 +40,7 @@ const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
   M: "서버 계산이 끝날 때까지 기다린 뒤 다시 실행(준비 신호 ready 의 상한 timeoutSec 를 늘리거나 선행 계산을 먼저 끝냄)",
   N: "같은 대상을 쓰는 앞 챕터(잠금 소유자)가 끝난 뒤 다시 실행 — 같은 탭·Dataset 을 쓰는 라운드를 동시에 돌리지 않음",
   O: "창이 보이게 된 뒤 재측정 — 시험 창을 다른 창으로 가리지 않음(기능 판정은 그대로)",
+  U: "판정에서 뺌(제품 결함 아님) — 다음 라운드에도 멈추면 그때 멈춤으로 본다",
 };
 
 /** 스텝이 던지면 케이스가 FAIL 이 아니라 NA(도구 판정 불가)로 끝난다. */
@@ -123,6 +126,8 @@ const isExcludedNa = (r: Pick<CaseResult, "status" | "toolError" | "blockedBy">)
 export const toolErrorCount = (results: Pick<CaseResult, "status" | "toolError">[]): number => results.filter(isToolNa).length;
 /** 창이 가려진 채 재서 무효가 된 멈춤 측정의 수(O). 케이스의 기능 판정과 따로 센다 */
 export const measureInvalidCount = (results: Pick<CaseResult, "steps">[]): number => results.reduce((n, r) => n + r.steps.filter((s) => s.measure?.verdict === "invalid").length, 0);
+/** 화면 열기의 멈춤이 다시 열면 재현되지 않아 판정에서 뺀 측정의 수(U) */
+export const freezeUnconfirmedCount = (results: Pick<CaseResult, "steps">[]): number => results.reduce((n, r) => n + r.steps.filter((s) => s.measure?.verdict === "unconfirmed").length, 0);
 /** 선행 챕터의 제품 결함에 막혀 돌리지 않은 결과의 수(H). 도구 오류가 아니다. */
 export const blockedCount = (results: Pick<CaseResult, "status" | "blockedBy">[]): number => results.filter(isBlockedNa).length;
 
@@ -173,16 +178,17 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
     byKey.set(key, row);
     rows.push(row);
   }
-  // 측정 무효(O): 기능 판정과 따로, 창이 가려진 채 잰 스텝을 줄로 올린다(그 케이스의 기능 판정은 그대로)
+  // 측정 무효(O)·멈춤 미재현(U): 기능 판정과 따로, 그 스텝을 줄로 올린다(그 케이스의 기능 판정은 그대로)
   for (const r of results) {
     for (const s of r.steps) {
-      if (s.measure?.verdict !== "invalid") continue;
+      if (s.measure?.verdict !== "invalid" && s.measure?.verdict !== "unconfirmed") continue;
+      const mk: ExcludedKind = s.measure.verdict === "invalid" ? "O" : "U";
       const info = ctx.stepInfo?.(r, s) ?? {};
       const chapter = info.chapter ?? "";
       const screen = info.screen ?? "";
       const element = info.element ?? s.desc;
       const verb = info.verb ?? "실행";
-      const key = [chapter, screen, element, verb, "O"].join("\u0001");
+      const key = [chapter, screen, element, verb, mk].join("\u0001");
       const hit = byKey.get(key);
       if (hit) {
         hit.count++;
@@ -195,11 +201,11 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
         cases: [r.id],
         count: 1,
         title: r.title,
-        chapter, screen, element, verb, kind: "O", key,
+        chapter, screen, element, verb, kind: mk, key,
         symptom: `${screen}에서 「${element}」 「${verb}」 중 멈춤 측정 — ${s.measure.summary}`,
-        reason: `O ${TOOL_ERROR_LABEL.O}: ${s.measure.why ?? "-"}`,
-        action: EXCLUDED_ACTION.O,
-        note: `측정만 무효 — 기능 판정은 ${r.status}(따로 남음)${s.measure.remeasured ? ` · 재측정: ${s.measure.remeasured}` : ""}`,
+        reason: `${mk} ${TOOL_ERROR_LABEL[mk]}: ${s.measure.why ?? "-"}`,
+        action: EXCLUDED_ACTION[mk],
+        note: `${mk === "O" ? "측정만 무효" : "제품 결함 아님(미재현)"} — 기능 판정은 ${r.status}(따로 남음)${s.measure.remeasured ? ` · 재측정: ${s.measure.remeasured}` : ""}`,
         evidence: s.shot,
       };
       byKey.set(key, row);

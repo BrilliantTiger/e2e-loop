@@ -14,7 +14,7 @@ import { SLICED_EVAL_WARNING, looksTruncated, slicesValue } from "./judge.ts";
 import { MAX_WAIT_MS, SINGLE_STATE_WARNING, singleEndState, waitEndState } from "./waits.ts";
 import { isRowSel, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, describeFound, labelOnly } from "./finders.ts";
-import { bringVisible, freezeArm, freezeRead, judgeFreeze } from "./freeze.ts";
+import { bringVisible, freezeArm, freezeEnsure, freezeRead, judgeFreeze } from "./freeze.ts";
 
 export interface RunCtx {
   project: Project;
@@ -331,6 +331,20 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   const measuring = (cfg.freeze?.mode ?? "on") === "on";
   const limitMs = cfg.freeze?.limitMs ?? 1000;
   let open: { sr: StepResult; step: Step } | undefined;
+  /** 화면 열기를 그 자리에서 다시 열어 다시 잰다(다시 열어도 상태가 바뀌지 않는다) */
+  const remeasureGoto = async (step: Step): Promise<ReturnType<typeof judgeFreeze> | string | null> => {
+    try {
+      await page.goto(abs(step.url, cfg.baseUrl));
+    } catch (e: any) {
+      if (browserGone(e)) throw e;
+      return `다시 열다 실패: ${String(e?.message ?? e).slice(0, 120)}`;
+    }
+    await freezeEnsure(page);
+    await sleep(1500);
+    const again = await freezeRead(page);
+    return again ? judgeFreeze(again, limitMs) : null;
+  };
+  const freezeWarn = (why: string | undefined, desc: string, summary: string, tag = "") => res.warnings.push(`측정${tag}: ${why} — ${desc}: ${summary} (기능 판정과 따로)`);
   const closeMeasure = async () => {
     if (!open) return;
     const { sr, step } = open;
@@ -339,8 +353,27 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     if (!raw) return; // 문서가 바뀌어(다른 화면으로 이동) 잰 것이 없다
     const j = judgeFreeze(raw, limitMs);
     const m: NonNullable<StepResult["measure"]> = (sr.measure = { verdict: j.verdict, summary: j.summary, why: j.why });
-    if (j.verdict === "freeze") res.warnings.push(`측정: ${j.why} — ${sr.desc}: ${j.summary} (기능 판정과 따로)`);
-    if (j.verdict !== "invalid") return;
+    if (j.verdict === "ok") return;
+    if (j.verdict === "freeze") {
+      // 화면 열기의 멈춤은 한 번 더 열어 재현되는지 본다. 재현되지 않으면 첫 로드 비용·동시 부하로 보고 판정에서 뺀다(오류 U)
+      if (step.op !== "goto") {
+        m.why = `${j.why} — 이 동작은 다시 누르지 않아 재현은 확인하지 않음`;
+        freezeWarn(m.why, sr.desc, j.summary);
+        return;
+      }
+      const j2 = await remeasureGoto(step);
+      if (j2 && typeof j2 !== "string" && j2.verdict === "ok") {
+        m.verdict = "unconfirmed";
+        m.why = `${j.why} — 다시 열었을 때는 멈추지 않음(미재현: 첫 로드 비용·동시 부하로 보임)`;
+        m.remeasured = `멈춤 없음 — ${j2.summary}`;
+        ctx.emit({ type: "freeze-unconfirmed", case: c.id, i: sr.i });
+        return;
+      }
+      m.remeasured = typeof j2 === "string" ? j2 : j2 ? `${j2.verdict === "freeze" ? `재현됨 — ${j2.why}` : `무효(${j2.why})`} — ${j2.summary}` : undefined;
+      if (j2 && typeof j2 !== "string" && j2.verdict === "freeze") m.why = `${j.why} — 다시 열어도 멈춤(재현됨)`;
+      freezeWarn(m.why, sr.desc, j.summary);
+      return;
+    }
     // 창이 가려진 채 잰 것이라 무효다(오류 O): 창을 앞으로 가져와 보이게 한 뒤 다시 잰다
     const shown = await bringVisible(page);
     ctx.emit({ type: "measure-invalid", case: c.id, i: sr.i, why: j.why, shown });
@@ -352,23 +385,16 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       m.why = `${j.why} — 창을 보이게 했음. 이 동작은 다시 누르지 않으므로 다음 라운드에 재측정(다음 스텝부터는 보이는 창에서 잼)`;
       return;
     }
-    // 화면 열기는 다시 해도 상태가 바뀌지 않으니 그 자리에서 다시 잰다
-    try {
-      await page.goto(abs(step.url, cfg.baseUrl));
-    } catch (e: any) {
-      if (browserGone(e)) throw e;
-      m.why = `${j.why} — 재측정하려고 다시 열다 실패: ${String(e?.message ?? e).slice(0, 120)}`;
+    const j2 = await remeasureGoto(step);
+    if (typeof j2 === "string") {
+      m.why = `${j.why} — 재측정하려고 ${j2}`;
       return;
     }
-    await freezeArm(page);
-    await sleep(1500);
-    const again = await freezeRead(page);
-    if (!again) return;
-    const j2 = judgeFreeze(again, limitMs);
+    if (!j2) return;
     m.remeasured = `${j2.verdict === "ok" ? "멈춤 없음" : j2.verdict === "freeze" ? j2.why : `여전히 무효(${j2.why})`} — ${j2.summary}`;
     if (j2.verdict === "invalid") return;
     m.verdict = j2.verdict;
-    if (j2.verdict === "freeze") res.warnings.push(`측정(창이 보이게 된 뒤 재측정): ${j2.why} — ${sr.desc}: ${j2.summary} (기능 판정과 따로)`);
+    if (j2.verdict === "freeze") freezeWarn(j2.why, sr.desc, j2.summary, "(창이 보이게 된 뒤 재측정)");
   };
 
   let readyDone = !c.ready;
@@ -590,7 +616,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           throw new Error(`알 수 없는 스텝: ${s.op}`);
       }
       if (measureThis) {
-        if (s.op === "goto") await freezeArm(page); // 새 문서: 열린 뒤부터 잰다
+        if (s.op === "goto") await freezeEnsure(page); // 새 문서: 시작될 때 심은 측정기가 있으면 로드 중부터, 없으면 열린 뒤부터 잰다
         open = { sr, step: s };
       }
     } catch (e: any) {
