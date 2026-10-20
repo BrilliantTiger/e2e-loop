@@ -105,10 +105,12 @@ export const elementOf = (step: Step | undefined, c: Pick<Case, "title"> | undef
   return c?.title ?? fallback;
 };
 
-/** 제외 사유: 도구 오류 A~G 와 선행 결함에 막힘 H */
-export type ExcludedKind = ToolErrorKind | "H";
-export const EXCLUDED_LABEL: Record<ExcludedKind, string> = { ...TOOL_ERROR_LABEL, H: "선행 결함에 막힘" };
-const EXCLUDED_ACTION: Record<ExcludedKind, string> = { ...TOOL_ERROR_ACTION, H: "시험은 고치지 말고 선행 챕터의 제품 결함을 고친 뒤 다시 실행" };
+/** 제외 사유: 도구 오류(A~G·L~S·U), 선행 결함에 막힘 H, 챕터마다 같은 줄 반복 T(여러 챕터의 같은 줄을 합친 줄) */
+export type ExcludedKind = ToolErrorKind | "H" | "T";
+export const EXCLUDED_LABEL: Record<ExcludedKind, string> = { ...TOOL_ERROR_LABEL, H: "선행 결함에 막힘", T: "챕터마다 같은 줄 반복" };
+const EXCLUDED_ACTION: Record<ExcludedKind, string> = { ...TOOL_ERROR_ACTION, H: "시험은 고치지 말고 선행 챕터의 제품 결함을 고친 뒤 다시 실행", T: "한 번 고치면 모든 챕터에서 풀림" };
+/** 챕터를 넘어 합치는 사유(같은 화면·요소·동작·사유가 여러 챕터에서 되풀이되는 시험 쪽 잘못). 원인이 챕터마다 다른 것(H·M·N·R)과 측정(O·U)은 합치지 않는다 */
+const ACROSS_CHAPTERS = new Set<ExcludedKind>(["A", "B", "C", "D", "E", "F", "G", "L", "P", "Q", "S"]);
 
 export interface ExcludedRow {
   /** 제외 번호: <라운드>-X-<NN> (예: R07-X-03). 코멘트·추적에 쓴다 */
@@ -121,6 +123,9 @@ export interface ExcludedRow {
   count: number;
   /** 같은 (화면, 요소, 동작)이 앞 라운드들에서도 제외됐으면 몇 번째 라운드인가(2 이상일 때만) */
   nth?: number;
+  /** T(챕터마다 같은 줄 반복)로 합친 줄: 합친 챕터들과 원래 사유 */
+  chapters?: string[];
+  origKind?: ExcludedKind;
   title: string;
   chapter: string;
   screen: string;
@@ -231,7 +236,45 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
       rows.push(row);
     }
   }
-  return rows;
+  return mergeAcrossChapters(rows, round);
+}
+
+/**
+ * 챕터마다 같은 줄 반복(T): 같은 (화면, 요소, 동작, 사유)가 여러 챕터에서 나왔으면 한 줄로 합친다(예: 같은 모달의 같은 두 줄이 C9C·C9B2 에서 되풀이).
+ * 합친 줄의 사유는 T 이고 원래 사유(origKind)와 챕터들을 남긴다. 번호는 다시 매긴다.
+ */
+function mergeAcrossChapters(rows: ExcludedRow[], round: string): ExcludedRow[] {
+  const groups = new Map<string, ExcludedRow[]>();
+  for (const x of rows) {
+    if (!ACROSS_CHAPTERS.has(x.kind)) continue;
+    const k = [x.screen, x.element, x.verb, x.kind].join("\u0001");
+    groups.set(k, [...(groups.get(k) ?? []), x]);
+  }
+  const merged = new Map<ExcludedRow, ExcludedRow | null>();
+  for (const [k, list] of groups) {
+    const chapters = [...new Set(list.map((x) => x.chapter))];
+    if (chapters.length < 2) continue;
+    const first = list[0]!;
+    const row: ExcludedRow = {
+      ...first,
+      cases: [...new Set(list.flatMap((x) => x.cases))],
+      count: list.reduce((n, x) => n + x.count, 0),
+      chapter: chapters.join("·"),
+      chapters,
+      kind: "T",
+      origKind: first.kind,
+      key: `T\u0001${k}`,
+      reason: `T ${EXCLUDED_LABEL.T}(챕터 ${chapters.join("·")}): ${first.reason}`,
+      action: `${EXCLUDED_ACTION.T} — ${first.action}`,
+      note: `${first.note} · 챕터 ${chapters.length}곳에서 같은 줄`,
+    };
+    merged.set(first, row);
+    for (const x of list.slice(1)) merged.set(x, null);
+  }
+  if (!merged.size) return rows;
+  const out = rows.flatMap((x) => (merged.has(x) ? (merged.get(x) ? [merged.get(x)!] : []) : [x]));
+  out.forEach((x, i) => (x.no = `${round}-X-${String(i + 1).padStart(2, "0")}`));
+  return out;
 }
 
 /** (화면, 요소, 동작) 키: 라운드를 넘어 같은 자리의 반복을 셀 때 쓴다 */

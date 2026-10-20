@@ -83,7 +83,8 @@ test("등록: requires 는 이름 배열이어야 하고 자기 자신·순환·
 });
 
 const excl = (id: string, kind: "D" | "F", over: Partial<CaseResult> = {}) => res(id, "NA", { title: id, toolError: { kind, detail: "읽지 못함" }, steps: [{ i: 1, op: "expect", desc: "확인", status: "fail", ms: 1 }], ...over });
-const info = (r: CaseResult) => ({ chapter: r.id.startsWith("B") ? "C12" : "C44", screen: "/p", element: "#total", verb: "확인" });
+// 챕터가 다른 줄은 요소도 다르게 둔다(같은 요소면 챕터를 넘어 T 로 합쳐진다 — acrosschapters.test.ts)
+const info = (r: CaseResult) => ({ chapter: r.id.startsWith("B") ? "C12" : "C44", screen: "/p", element: r.id.startsWith("B") ? "#rows" : "#total", verb: "확인" });
 
 test("제외 줄: 같은 (챕터, 화면, 요소, 동작, 사유)는 한 줄로 합쳐 횟수를 세고, 줄마다 <라운드>-X-<NN> 번호가 붙는다", () => {
   const blocked = res("H-1", "NA", { blockedBy: { chapter: "C9", by: ["C9-1"], detail: "선행 결함에 막힘(C9-1, 챕터 C9)" } });
