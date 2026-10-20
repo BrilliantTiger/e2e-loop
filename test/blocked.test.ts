@@ -93,7 +93,7 @@ test("제외 줄: 같은 (챕터, 화면, 요소, 동작, 사유)는 한 줄로 
   expect(rows[3]!.reason).toContain("H 선행 결함에 막힘: 선행 결함에 막힘(C9-1, 챕터 C9)");
   expect(rows[3]!.note).toContain("도구 오류 아님");
   const tsv = excludedTsv(rows).split("\n");
-  expect(tsv[0]).toBe("번호\t케이스\t챕터\t횟수\t현상\t제외 사유\t처리\t비고\t증거");
+  expect(tsv[0]).toBe("번호\t케이스\t챕터\t횟수\t반복\t현상\t제외 사유\t처리\t비고\t증거");
   expect(tsv[1]!.split("\t").slice(0, 4)).toEqual(["R07-X-01", "A-1, A-2, A-3", "C44", "3"]);
   // 도구 오류 수에는 H 가 들어가지 않는다
   expect(toolErrorCount([excl("A-1", "D"), blocked])).toBe(1);

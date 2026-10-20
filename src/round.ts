@@ -13,6 +13,7 @@ import { issuesOf } from "./issues.ts";
 import { blockedCount, toolErrorCount } from "./toolerror.ts";
 import { prestartStatus } from "./prestart.ts";
 import { ChapterGuard, DefectGuard, chapterName } from "./chapter.ts";
+import { carriedE, carriedResult } from "./carry.ts";
 import { acquire, lockKeys, release, releaseAll } from "./locks.ts";
 import { cleanupOwn, cleanupStale, describeProcs, staleBrowserProcs, waitNoStale } from "./procs.ts";
 
@@ -191,6 +192,8 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
   const defects = new DefectGuard(chapterKey);
   let lastChapter = "";
   let heldLocks: string[] = [];
+  // 이전 라운드에서 E(기대 오류)로 제외됐고 기대를 고치지 않은 케이스는 돌리지 않는다
+  const carried = carriedE(project, selected);
   const meta: RoundMeta = {
     id, n, status: "running", startedAt: nowIso(), driver: driver.name, headless: cfg.headless,
     data: { decision: pre.decision, scope: cfg.data.resetScope },
@@ -264,8 +267,9 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         };
         let r: CaseResult;
         // 챕터를 시작하기 전: 이전 라운드가 남긴 브라우저 프로세스가 0개인가(막 닫히는 중일 수 있어 잠깐 기다린다)
-        const blockedBy = defects.blockedBy(c);
-        if (!blockedBy && c.type === "spec" && chapterKey(c) !== lastChapter) {
+        const carry = c.type === "spec" && (c.status ?? "active") === "active" && !c.skipReason ? carried.get(c.id) : undefined;
+        const blockedBy = carry ? undefined : defects.blockedBy(c);
+        if (!carry && !blockedBy && c.type === "spec" && chapterKey(c) !== lastChapter) {
           lastChapter = chapterKey(c);
           // 실행 중 잠금: 이 챕터가 쓰는 대상(탭·Dataset)을 다른 프로세스가 쓰는 중이면 누르지 않고 「동시 실행 거부」(오류 N)
           release(heldLocks);
@@ -288,7 +292,10 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
           }
         }
         const endedWhy = guard.skipReason(c);
-        if (blockedBy) {
+        if (carry) {
+          r = carriedResult(c, carry, nowIso());
+          emit({ type: "carried-e", case: c.id, from: carry.round });
+        } else if (blockedBy) {
           // 선행 챕터에 제품 결함이 있다: 이 케이스는 누르지 않고 「선행 결함에 막힘」 NA(H)로 둔다
           r = defects.naResult(c, blockedBy);
           emit({ type: "chapter-blocked", case: c.id, chapter: blockedBy.chapter, by: blockedBy.by.slice(0, 5) });

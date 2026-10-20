@@ -7,6 +7,7 @@ import { reconcile } from "./analysis/reconcile.ts";
 import { coverage } from "./coverage.ts";
 import { readIntake } from "./session.ts";
 import { missingBasis, type MissingBasis } from "./basis.ts";
+import { CARRIED_E_MARK, carriedE } from "./carry.ts";
 
 export interface SheetCase {
   id: string;
@@ -17,6 +18,8 @@ export interface SheetCase {
   risk?: string;
   status: string;
   skip?: string;
+  /** 이전 라운드 E 제외 — 기대 수정 필요(그 라운드) */
+  carriedE?: string;
 }
 
 export interface Sheet {
@@ -37,6 +40,8 @@ export interface Sheet {
     blockedCases: { id: string; reason: string }[];
     /** 기대 칸에 근거(basis)가 없는 케이스 */
     expectNoBasis: MissingBasis[];
+    /** 이전 라운드에서 E(기대 오류)로 제외됐는데 기대를 아직 안 고친 케이스 — 고치기 전에는 실행하지 않는다 */
+    carriedE: { id: string; round: string; detail: string }[];
   };
 }
 
@@ -55,13 +60,14 @@ const featureOf = (c: Case): string => c.feature ?? c.source_ref ?? "(기능 미
 export function buildSheet(p: Project): Sheet {
   const cfg = p.config();
   const cases = p.cases();
+  const carried = carriedE(p, cases);
   const byScreen = new Map<string, Map<string, SheetCase[]>>();
   for (const c of cases) {
     const sc = screenOf(c);
     const ft = featureOf(c);
     const f = byScreen.get(sc) ?? new Map<string, SheetCase[]>();
     const list = f.get(ft) ?? [];
-    list.push({ id: c.id, title: c.title, type: c.type, event: c.event, source_ref: c.source_ref, risk: c.risk, status: c.status ?? "active", skip: c.skipReason });
+    list.push({ id: c.id, title: c.title, type: c.type, event: c.event, source_ref: c.source_ref, risk: c.risk, status: c.status ?? "active", skip: c.skipReason, carriedE: carried.get(c.id)?.round });
     f.set(ft, list);
     byScreen.set(sc, f);
   }
@@ -107,6 +113,7 @@ export function buildSheet(p: Project): Sheet {
       uncoveredElements: cov?.elements.uncovered ?? 0,
       blockedCases: cases.filter((c) => c.status === "blocked").map((c) => ({ id: c.id, reason: c.reason ?? "(사유 없음)" })),
       expectNoBasis: missingBasis(cases),
+      carriedE: [...carried].map(([id, e]) => ({ id, round: e.round, detail: e.detail })),
     },
   };
   return sheet;
@@ -129,7 +136,7 @@ export function renderSheetMd(s: Sheet, opts: { full?: boolean } = {}): string {
     out.push(`## ${sc.screen} — 케이스 ${n}건${n === 0 ? " (눌러 볼 요소가 없는 화면. 열리는지는 다른 화면의 링크 케이스가 확인)" : ""}`);
     for (const f of sc.features) {
       out.push(`- **${f.feature}** (${f.cases.length}건)`);
-      for (const c of f.cases.slice(0, limit)) out.push(`  - ${c.id} ${c.title}${STATUS_MARK[c.status] ?? ""}${c.skip ? " [스킵]" : ""}${c.source_ref ? ` — 근거: ${c.source_ref}` : ""}`);
+      for (const c of f.cases.slice(0, limit)) out.push(`  - ${c.id} ${c.title}${STATUS_MARK[c.status] ?? ""}${c.skip ? " [스킵]" : ""}${c.carriedE ? ` [${CARRIED_E_MARK}(${c.carriedE})]` : ""}${c.source_ref ? ` — 근거: ${c.source_ref}` : ""}`);
       if (f.cases.length > limit) out.push(`  - … 외 ${f.cases.length - limit}건`);
     }
   }
@@ -141,6 +148,7 @@ export function renderSheetMd(s: Sheet, opts: { full?: boolean } = {}): string {
   if (g.eventsNotOnScreen.length) gapLines.push(`- 코드의 이벤트 중 화면에서 요소를 못 찾은 것 ${g.eventsNotOnScreen.length}건(로그인·특정 상태에서만 보일 수 있음): ${g.eventsNotOnScreen.slice(0, 5).map((e) => `${e.kind} ${e.hint} (${e.where})`).join(", ")}`);
   if (g.apisNeedingInput.length) gapLines.push(`- 요청 본문·값이 있어야 점검할 수 있는 API ${g.apisNeedingInput.length}건 — 기능정의서의 요청 예시로 케이스를 만든다: ${g.apisNeedingInput.slice(0, 6).map((a) => `${a.method} ${a.url}`).join(", ")}`);
   if (g.uncoveredElements) gapLines.push(`- 케이스가 없는 화면 요소 ${g.uncoveredElements}개`);
+  if (g.carriedE.length) gapLines.push(`- ⚠ ${CARRIED_E_MARK} ${g.carriedE.length}건 — 이전 라운드에서 E 로 제외됐고 기대·근거를 아직 안 고쳐, 고치기 전에는 실행하지 않고 NA(E)로 둔다: ${g.carriedE.slice(0, 8).map((x) => `${x.id}(${x.round})`).join(", ")}`);
   if (g.expectNoBasis.length) gapLines.push(`- ⚠ 기대 칸에 근거(basis: 기획서 POL · CCB 번호)가 없는 케이스 ${g.expectNoBasis.length}건(기대 ${g.expectNoBasis.reduce((n, x) => n + x.steps.length, 0)}칸) — 근거 없는 기대는 오류 E(기대가 기획서와 다름)의 원인이 된다: ${g.expectNoBasis.slice(0, 8).map((x) => `${x.id} ${x.steps.map((n) => "#" + n).join("")}`).join(", ")}`);
   if (g.blockedCases.length) gapLines.push(`- 보류 케이스 ${g.blockedCases.length}건: ${g.blockedCases.slice(0, 5).map((b) => `${b.id}(${b.reason})`).join(", ")}`);
   if (gapLines.length) out.push("", "## 빈틈과 주의", ...gapLines);
@@ -169,6 +177,7 @@ export function aSheet(p: Project, a: { confirm?: boolean; confirm_before_start?
     confirm_before_start: needConfirm,
     confirmed: !!sheet.confirmedAt,
     ready_to_start: ready && hasCases,
+    carried_e: sheet.gaps.carriedE.length ? `${CARRIED_E_MARK} ${sheet.gaps.carriedE.length}건 — 기대·근거(basis)를 고친 뒤 e2e_case_upsert 로 다시 등록해야 실행된다: ${sheet.gaps.carriedE.map((x) => x.id).join(", ")}` : undefined,
     expect_no_basis: sheet.gaps.expectNoBasis.length ? `기대 칸에 근거(basis)가 없는 케이스 ${sheet.gaps.expectNoBasis.length}건 — 근거를 채우거나 케이스를 blocked 로 두세요(오류 E)` : undefined,
     next: !hasCases
       ? "케이스가 없습니다. e2e_discover 와 e2e_case_upsert 로 시트를 채우세요."

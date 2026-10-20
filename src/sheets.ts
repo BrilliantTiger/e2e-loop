@@ -8,7 +8,7 @@ import { isIssue } from "./issues.ts";
 import { coverage } from "./coverage.ts";
 import { diffWithPrevious, fixHint, trend } from "./report.ts";
 import { readComments, type Comment } from "./comments.ts";
-import { blockedCount, elementOf, excludedAllTsv, excludedRows, excludedTsv, mergeExcludedAcross, symptomSentence, toolErrorCount, verbOf, type ExcludedRow } from "./toolerror.ts";
+import { blockedCount, elementOf, excludedAllTsv, excludedRows, excludedTsv, markRepeats, mergeExcludedAcross, symptomSentence, toolErrorCount, verbOf, type ExcludedRow } from "./toolerror.ts";
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const clip = (s: unknown, n = 300) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -350,7 +350,7 @@ export function renderAiMd(meta: RoundMeta, verdict: string, issues: AiIssue[], 
   }
   const toolRows = (extra.excluded ?? []).filter((x) => x.kind !== "H");
   const blockedRows = (extra.excluded ?? []).filter((x) => x.kind === "H");
-  const exLine = (x: ExcludedRow) => `- ${x.no} ${x.cases.length > 1 ? `${x.id} 외 ${x.cases.length - 1}건` : x.id} ${x.title}${x.count > 1 ? ` (×${x.count})` : ""} — [${x.kind}] ${x.reason} → ${x.action}${x.evidence ? ` (증거: ${x.evidence})` : ""}`;
+  const exLine = (x: ExcludedRow) => `- ${x.no} ${x.cases.length > 1 ? `${x.id} 외 ${x.cases.length - 1}건` : x.id} ${x.title}${x.count > 1 ? ` (×${x.count})` : ""}${x.nth ? ` · ${x.nth}회째` : ""} — [${x.kind}] ${x.reason} → ${x.action}${x.evidence ? ` (증거: ${x.evidence})` : ""}`;
   if (toolRows.length) L.push("", `## 도구 오류(NA) ${toolRows.length}줄 — 이슈가 아님, 제외 시트(excluded_issues.tsv)`, "시험 도구 탓에 판정하지 못한 것이다. 코드를 고치지 말고 시험(케이스)을 고쳐 다시 돌린다. 같은 (챕터, 화면, 요소, 동작, 사유)는 한 줄로 합쳤고 번호(<라운드>-X-<NN>)로 가리킨다.", ...toolRows.map(exLine));
   if (blockedRows.length) L.push("", `## 선행 결함에 막힘(H) ${blockedRows.length}줄 — 도구 오류가 아님, 제외 시트(excluded_issues.tsv)`, "선행 챕터의 제품 결함 때문에 돌리지 않은 것이다. 시험을 고치지 말고 선행 결함(이슈)을 고친 뒤 다시 돌린다.", ...blockedRows.map(exLine));
   if (extra.skipped.length) L.push("", `## 스킵 ${extra.skipped.length}건 (이슈 아님)`, ...extra.skipped.slice(0, 15).map((r) => `- ${r.id} ${r.title} — ${r.reason}`));
@@ -450,7 +450,7 @@ ${diff.prev ? `<h2>이전 라운드(${diff.prev})와 비교</h2><p>고쳐짐: ${
 ${applied.length ? `<h2>이 라운드에 반영한 사용자 요청 ${applied.length}건</h2><ul>${applied.map((f) => `<li>${esc(f.id)} ${esc(f.text)}${f.appliesTo === "now-in-flow" ? " (라운드 도중에 적용)" : ""}</li>`).join("")}</ul>` : ""}${meta.pendingFeedback?.length ? `<div class="tw">이 라운드 시작 때 아직 반영되지 않은 요청 ${meta.pendingFeedback.length}건: ${meta.pendingFeedback.map((f) => esc(f.id + " " + f.text)).join(" / ")}</div>` : ""}${meta.injected?.length ? `<div class="tw">라운드 도중 끼워 넣은 케이스 ${meta.injected.length}건: ${meta.injected.map(esc).join(", ")}</div>` : ""}
 <h2>이슈 ${issues.length}건</h2>
 ${issues.length ? `<table class="steps"><tr><th>순위</th><th>케이스</th><th>화면 · 기능</th><th>원인</th><th>힌트</th></tr>${issues.map((i) => `<tr><td>${i.priority ?? "-"} ${badge(i.status)}</td><td><b>${esc(i.title)}</b><br><span class="meta">${esc(i.id)}</span></td><td>${esc(i.screen ?? "-")} · ${esc(i.feature ?? "-")}</td><td>${esc(clip(i.actual, 200))}</td><td>${esc(i.hint)}</td></tr>`).join("")}</table>` : "<p>없음</p>"}
-${excluded.length ? `<h2>제외 ${excluded.length}줄 <small class="meta">(이슈가 아님 — 도구 오류 ${excluded.filter((x) => x.kind !== "H").length}줄 · 선행 결함에 막힘 ${excluded.filter((x) => x.kind === "H").length}줄. 같은 (챕터, 화면, 요소, 동작, 사유)는 한 줄. 제외 시트 excluded_issues.tsv)</small></h2><table class="steps"><tr><th>번호</th><th>케이스</th><th>현상</th><th>제외 사유</th><th>처리</th></tr>${excluded.map((x) => `<tr><td><b>${esc(x.no)}</b>${x.count > 1 ? `<br><span class="meta">×${x.count}</span>` : ""}</td><td><b>${esc(x.title)}</b><br><span class="meta">${esc(x.cases.length > 1 ? `${x.id} 외 ${x.cases.length - 1}건` : x.id)}</span></td><td>${esc(clip(x.symptom, 300))}</td><td>${esc(x.reason)}</td><td>${esc(x.action)}</td></tr>`).join("")}</table>` : ""}
+${excluded.length ? `<h2>제외 ${excluded.length}줄 <small class="meta">(이슈가 아님 — 도구 오류 ${excluded.filter((x) => x.kind !== "H").length}줄 · 선행 결함에 막힘 ${excluded.filter((x) => x.kind === "H").length}줄. 같은 (챕터, 화면, 요소, 동작, 사유)는 한 줄. 제외 시트 excluded_issues.tsv)</small></h2><table class="steps"><tr><th>번호</th><th>케이스</th><th>현상</th><th>제외 사유</th><th>처리</th></tr>${excluded.map((x) => `<tr><td><b>${esc(x.no)}</b>${x.count > 1 ? `<br><span class="meta">×${x.count}</span>` : ""}${x.nth ? `<br><span class="meta">${x.nth}회째</span>` : ""}</td><td><b>${esc(x.title)}</b><br><span class="meta">${esc(x.cases.length > 1 ? `${x.id} 외 ${x.cases.length - 1}건` : x.id)}</span></td><td>${esc(clip(x.symptom, 300))}</td><td>${esc(x.reason)}</td><td>${esc(x.action)}</td></tr>`).join("")}</table>` : ""}
 ${tasks.length ? `<h2>개발 작업 단위 <small class="meta">(자세한 내용은 ai-sheet.md)</small></h2>${tasks.map((t) => `<div class="task"><b>${t.id}. ${esc(t.title)}</b>${t.dependsOn.length ? ` · 선행 ${t.dependsOn.join(", ")}` : ""}<br><span class="meta">수용 기준: ${esc(t.acceptance.join(", "))}${t.regressionWatch.length ? ` · 회귀 주의 ${t.regressionWatch.length}건` : ""}</span></div>`).join("")}` : ""}
 <h2>커버리지</h2><p>화면 요소 ${cov.elements.total}개 중 케이스 없음 ${cov.elements.uncovered}개 · 케이스 ${cov.cases.total}건(기획서 기반 ${cov.cases.spec} / 자동 점검 ${cov.cases.probe})${cov.sources.some((x) => x.uncoveredSections.length) ? `<br>케이스 없는 문서 절: ${cov.sources.flatMap((x) => x.uncoveredSections.map((n) => esc(`${x.title}: ${n}`))).join(", ")}` : ""}</p>
 <h2>화면별 결과 <small class="meta">(화면 → 기능 단위 → 케이스, 영상·스크린샷 포함)</small></h2>
@@ -490,6 +490,8 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
       return { chapter: c?.chapter ?? `${screenOfCase(c)}|${c?.feature ?? c?.source_ref ?? "(기능 미지정)"}`, screen: screenOfCase(c), element: elementOf(stepDef, c ?? r, r.title), verb: verbOf(stepDef) };
     },
   });
+  // 같은 (화면, 요소, 동작)이 앞 라운드에서도 제외됐으면 「n회째」
+  markRepeats(excluded, project.rounds().filter((r) => r.n < meta.n).map((r) => ({ round: r.id, rows: project.readJson<ExcludedRow[]>(`rounds/${r.id}/excluded_issues.json`, []) })));
   const blockedN = blockedCount(results);
   const summaryLine = `이슈 ${issueCount} · 도구 오류(NA) ${toolErr} · 선행 결함에 막힘(H) ${blockedN} — 통과 ${s.PASS} · 실패 ${s.FAIL} · 불안정 ${s.FLAKY} · 검증 못 함 ${s.BLOCKED} · 스킵 ${s.SKIP} · 해당 없음 ${s.NA - toolErr - blockedN} / 전체 ${s.total}`;
   const diffLine = diff.prev ? `이전 ${diff.prev} 대비: 고쳐짐 ${diff.fixed.length} · 새로 깨짐 ${diff.regressed.length}${diff.regressed.length ? ` (회귀: ${diff.regressed.join(", ")})` : ""} · 계속 실패 ${diff.stillFailing.length} · 새 케이스 ${diff.newCases.length}` : undefined;

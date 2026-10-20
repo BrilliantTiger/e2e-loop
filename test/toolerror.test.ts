@@ -71,7 +71,7 @@ test("제외 시트에는 NA(도구 오류)만 오르고 사유에 A~E 가 표�
   expect(rows[0]!.kind).toBe("D");
   expect(rows[0]!.reason).toContain("D 화면이 그려지기 전에 읽음");
   expect(rows[0]!.symptom).toContain("/list에서 「#total」에 대해 「확인」 했더니");
-  expect(excludedTsv(rows).split("\n")[0]).toBe("번호\t케이스\t챕터\t횟수\t현상\t제외 사유\t처리\t비고\t증거");
+  expect(excludedTsv(rows).split("\n")[0]).toBe("번호\t케이스\t챕터\t횟수\t반복\t현상\t제외 사유\t처리\t비고\t증거");
   expect(toolErrorCount([na, plain])).toBe(1);
 });
 

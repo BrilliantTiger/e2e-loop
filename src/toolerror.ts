@@ -94,6 +94,8 @@ export interface ExcludedRow {
   cases: string[];
   /** 같은 (챕터, 화면, 요소, 동작, 사유)를 한 줄로 합친 횟수 */
   count: number;
+  /** 같은 (화면, 요소, 동작)이 앞 라운드들에서도 제외됐으면 몇 번째 라운드인가(2 이상일 때만) */
+  nth?: number;
   title: string;
   chapter: string;
   screen: string;
@@ -169,12 +171,26 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
   return rows;
 }
 
+/** (화면, 요소, 동작) 키: 라운드를 넘어 같은 자리의 반복을 셀 때 쓴다 */
+const placeKey = (x: Pick<ExcludedRow, "screen" | "element" | "verb">) => [x.screen, x.element, x.verb].join("\u0001");
+
+/** 앞 라운드들의 제외 줄을 보고, 같은 (화면, 요소, 동작)이 몇 번째 라운드에 다시 나왔는지 nth 를 붙인다 */
+export function markRepeats(rows: ExcludedRow[], prior: { round: string; rows: ExcludedRow[] }[]): ExcludedRow[] {
+  const seen = new Map<string, Set<string>>();
+  for (const { round, rows: pr } of prior) for (const x of pr) if (x.screen !== undefined) seen.set(placeKey(x), (seen.get(placeKey(x)) ?? new Set()).add(round));
+  for (const x of rows) {
+    const n = seen.get(placeKey(x))?.size ?? 0;
+    if (n > 0) x.nth = n + 1;
+  }
+  return rows;
+}
+
 const cell = (v: unknown) => String(v ?? "").replace(/[\t\r\n]+/g, " ");
 
-/** 제외 시트(탭 구분). 열: 번호 · 케이스 · 챕터 · 횟수 · 현상 · 제외 사유 · 처리 · 비고 · 증거 */
+/** 제외 시트(탭 구분). 열: 번호 · 케이스 · 챕터 · 횟수 · 반복 · 현상 · 제외 사유 · 처리 · 비고 · 증거 */
 export function excludedTsv(rows: ExcludedRow[]): string {
-  const head = ["번호", "케이스", "챕터", "횟수", "현상", "제외 사유", "처리", "비고", "증거"].join("\t");
-  return [head, ...rows.map((x) => [x.no, x.cases.join(", "), x.chapter, x.count, x.symptom, x.reason, x.action, x.note, x.evidence ?? ""].map(cell).join("\t"))].join("\n") + "\n";
+  const head = ["번호", "케이스", "챕터", "횟수", "반복", "현상", "제외 사유", "처리", "비고", "증거"].join("\t");
+  return [head, ...rows.map((x) => [x.no, x.cases.join(", "), x.chapter, x.count, x.nth ? `${x.nth}회째` : "", x.symptom, x.reason, x.action, x.note, x.evidence ?? ""].map(cell).join("\t"))].join("\n") + "\n";
 }
 
 /** 여러 라운드에 걸쳐 합친 제외 줄: 같은 줄이 다시 돌 때마다 새로 쌓이지 않고 횟수만 늘어난다 */
