@@ -48,6 +48,8 @@ export interface DatasetProfile {
   values?: Record<string, unknown>;
   /** 값의 근거(기획서 규칙 번호. 예: POL-CCB_048) */
   basis?: string;
+  /** 특성(예: dictFile: false — 사전 파일 없음). words 를 적으면 그 말이 든 기대를 그 특성에 기댄 기대로 본다. 스텝의 when 으로 기대를 특성에 따라 가른다 */
+  traits?: Record<string, boolean | string | number | { value: boolean | string | number; words?: string[] }>;
 }
 
 /** 준비 신호 하나. api 나 sel 중 하나를 쓴다 */
@@ -189,8 +191,8 @@ export interface ObservedApi {
 
 export type Verdict = "PASS" | "FAIL" | "FLAKY" | "BLOCKED" | "NA" | "SKIP";
 
-/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 · M 서버 비동기 계산이 안 끝났는데 누름 · N 같은 탭·같은 Dataset 에서 챕터 두 개가 동시에 돎 · O 창이 가려진 채 잰 멈춤 측정(측정 무효) · U 화면 열기의 멈춤이 재현되지 않음(첫 로드 비용·동시 부하) · P 판정식 안에 다른 Dataset 전용 값을 박음 */
-export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L" | "M" | "N" | "O" | "P" | "U";
+/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 · M 서버 비동기 계산이 안 끝났는데 누름 · N 같은 탭·같은 Dataset 에서 챕터 두 개가 동시에 돎 · O 창이 가려진 채 잰 멈춤 측정(측정 무효) · U 화면 열기의 멈춤이 재현되지 않음(첫 로드 비용·동시 부하) · P 판정식 안에 다른 Dataset 전용 값을 박음 · Q Dataset 특성 선언과 어긋난 기대 */
+export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L" | "M" | "N" | "O" | "P" | "Q" | "U";
 
 export interface StepResult {
   i: number;

@@ -84,3 +84,52 @@ test("e2e_dataset 으로 값·근거를 기록하고, 등록 때 박힌 값을 �
   A.aDataset({ project: root, name: "가", remove: true });
   expect(Object.keys(new Project(root).config().datasets!)).toEqual(["나"]);
 });
+
+// ---- 오류 Q: Dataset 특성(사전 파일 유무)과 어긋난 기대 ----
+import { datasetConflicts } from "../src/dataset.ts";
+import { isExpectation } from "../src/basis.ts";
+
+const TR: NonNullable<Config["datasets"]> = {
+  사전없음: { traits: { dictFile: { value: false, words: ["사전 파일", "_columns", "DATADIC"] } } },
+  사전있음: { traits: { dictFile: { value: true, words: ["사전 파일"] } } },
+};
+const dictExpect = { op: "expect", sel: "row=_columns", textContains: "사전 파일 줄 적용 완료", basis: "CCB-1510_010" };
+
+test("선언과 어긋난 기대를 찾는다: 없음(false)으로 선언된 특성의 말을 기대하거나, when 이 선언 안 된 특성을 쓰거나, dataset 없이 when 을 쓰면", () => {
+  expect(datasetConflicts({ dataset: "사전없음", steps: [{ op: "goto", url: "/keys" }, dictExpect] }, TR, isExpectation)[0]).toContain("#2: Dataset 「사전없음」 은 dictFile=false(없음)로 선언됐는데 기대에 「사전 파일」");
+  // 특성에 따라 가른 기대(when)는 이 Dataset 에서 쓰이지 않으니 어긋남이 아니다
+  expect(datasetConflicts({ dataset: "사전없음", steps: [{ ...dictExpect, when: { dictFile: true } }] }, TR, isExpectation)).toEqual([]);
+  expect(datasetConflicts({ dataset: "사전있음", steps: [dictExpect] }, TR, isExpectation)).toEqual([]);
+  expect(datasetConflicts({ dataset: "사전있음", steps: [{ ...dictExpect, when: { pii: true } }] }, TR, isExpectation)[0]).toContain("「pii」 이 Dataset 「사전있음」 에 선언돼 있지 않음");
+  expect(datasetConflicts({ steps: [{ ...dictExpect, when: { dictFile: true } }] }, TR, isExpectation)[0]).toContain("케이스에 dataset 이 없음");
+  // 기대가 아닌 스텝(클릭)의 글은 보지 않는다
+  expect(datasetConflicts({ dataset: "사전없음", steps: [{ op: "click", sel: "text=사전 파일 적용" }] }, TR, isExpectation)).toEqual([]);
+});
+
+test("실행: 어긋난 기대가 있으면 누르지 않고 NA(Q), when 이 맞지 않는 기대는 건너뛰고 나머지로 판정한다", async () => {
+  const clicks: string[] = [];
+  const ctx = fakeCtx({ click: async (s: string) => void clicks.push(s), text: async () => "지정 현황 19 / 19" });
+  ctx.cfg.datasets = TR;
+  const base = { title: "Key 목록", type: "spec" as const, source_ref: "기획서 1510", screen: "/keys", feature: "Key 목록", chapter: "C15" };
+  const bad = await runCase(ctx, { ...base, id: "Q-1", dataset: "사전없음", steps: [{ op: "goto", url: "/keys" }, { op: "click", sel: "#apply" }, dictExpect] });
+  expect(bad.status).toBe("NA");
+  expect(bad.toolError?.kind).toBe("Q");
+  expect(bad.reason).toContain("선언과 어긋난 기대");
+  expect(clicks).toEqual([]);
+  expect(bad.steps.length).toBe(0);
+  const ok = await runCase(ctx, { ...base, id: "Q-2", dataset: "사전없음", steps: [{ op: "goto", url: "/keys" }, { op: "click", sel: "#apply" }, { ...dictExpect, when: { dictFile: true } }, { op: "expect", sel: "#status", textContains: "19 / 19", basis: "CCB-1510_010" }] });
+  expect(ok.status).toBe("PASS");
+  expect(ok.steps[2]!.status).toBe("skip");
+  expect(ok.steps[2]!.desc).toContain("건너뜀: Dataset 「사전없음」 은 dictFile=false");
+  expect(clicks).toEqual(["#apply"]);
+});
+
+test("e2e_dataset 으로 특성을 선언하면 등록 때 어긋난 기대를 경고하고 시트에 올린다", () => {
+  const root = mkdtempSync(join(tmpdir(), "e2e-loop-dq-"));
+  new Project(root).ensure();
+  A.aDataset({ project: root, name: "사전없음", traits: { dictFile: { value: false, words: ["사전 파일"] } } });
+  expect(new Project(root).config().datasets!.사전없음!.traits!.dictFile).toEqual({ value: false, words: ["사전 파일"] });
+  const up = A.aCaseUpsert({ project: root, cases: [{ id: "Q-9", title: "사전 파일 줄", type: "spec", source_ref: "기획서 1510", dataset: "사전없음", steps: [{ op: "goto", url: "/keys" }, dictExpect] }] });
+  expect(up.warns.join("\n")).toContain("Q-9: #2: Dataset 「사전없음」 은 dictFile=false(없음)로 선언됐는데 기대에 「사전 파일」");
+  expect(buildSheet(new Project(root)).gaps.datasetConflicts.map((x) => x.id)).toEqual(["Q-9"]);
+});

@@ -15,7 +15,8 @@ import { MAX_WAIT_MS, SINGLE_STATE_WARNING, singleEndState, waitEndState } from 
 import { isRowSel, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, describeFound, labelOnly } from "./finders.ts";
 import { bringVisible, freezeArm, freezeEnsure, freezeRead, judgeFreeze } from "./freeze.ts";
-import { HARD_VALUE_WARNING, datasetOf, describeHard, fillDataset, hardValues, hardValuesIn, usesDataset } from "./dataset.ts";
+import { HARD_VALUE_WARNING, datasetConflicts, datasetOf, describeHard, fillDataset, hardValues, hardValuesIn, stepApplies, usesDataset } from "./dataset.ts";
+import { isExpectation } from "./basis.ts";
 
 export interface RunCtx {
   project: Project;
@@ -303,6 +304,15 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     res.reason = "그 밖의 파괴적 동작이라 데이터를 초기화하지 않는 회차에서는 실행하지 않음 — 규칙에 따른 스킵이며 이슈가 아님";
     return res;
   }
+  // Dataset 특성 선언과 어긋난 기대는 누르기 전에 막는다(오류 Q)
+  const conflicts = datasetConflicts(c, cfg.datasets, isExpectation);
+  if (conflicts.length) {
+    const detail = `Dataset 특성 선언과 어긋난 기대 — ${conflicts.join(" / ")}. 실행하지 않음`;
+    res.status = "NA";
+    res.toolError = { kind: "Q", detail };
+    res.reason = `도구 판정 불가(Q): ${detail}`;
+    return res;
+  }
   if (ctx.resetBeforeCase) await ctx.resetBeforeCase();
 
   const session = await ctx.driver.newSession(edir);
@@ -402,6 +412,14 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   for (let i = 0; i < steps.length; i++) {
     await closeMeasure();
     const s0 = steps[i]!;
+    // 이 Dataset 의 특성에 맞지 않는 기대(when)는 건너뛴다
+    if (s0.when) {
+      const ap = stepApplies(s0, datasetOf(cfg, c));
+      if (!ap.ok) {
+        res.steps.push({ i, op: s0.op, desc: `${describe(s0)} — 건너뜀: Dataset 「${c.dataset ?? "-"}」 은 ${ap.why ?? "특성이 다름"}`, status: "skip", ms: 0 });
+        continue;
+      }
+    }
     let s: Step = s0;
     const sr: StepResult = { i, op: s0.op, desc: describe(s0), status: "ok", ms: 0, at: Date.now() - t0 };
     const tStep = Date.now();

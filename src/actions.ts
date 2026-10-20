@@ -32,7 +32,7 @@ import { LABEL_ONLY_WARNING, labelOnly } from "./finders.ts";
 import { TOAST_WARNING, isToastStep } from "./toast.ts";
 import { SLICED_EVAL_WARNING, TRUNCATED_EXPECT_WARNING, looksTruncated, slicesValue } from "./judge.ts";
 import { BASIS_WARNING, isExpectation, missingBasis } from "./basis.ts";
-import { HARD_VALUE_WARNING, hardValues, usesDataset } from "./dataset.ts";
+import { HARD_VALUE_WARNING, datasetConflicts, hardValues, usesDataset } from "./dataset.ts";
 const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate", "prereq", "collect"]);
 const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check", "collect"]);
 
@@ -342,6 +342,8 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       if (hv.own.length) warns.push(`${c.id}: ${HARD_VALUE_WARNING(hv.own, true)}`);
       if (c.steps.some(usesDataset) && !ds) warns.push(`${c.id}: 스텝이 {{dataset.…}} 로 Dataset 값을 읽는데 케이스에 dataset 이 없음 — 실행하면 NA(P)`);
       else if (ds && !dsets?.[ds]) warns.push(`${c.id}: dataset 「${ds}」 이 설정에 없음 — e2e_dataset 으로 기록할 것`);
+      // Dataset 특성 선언과 어긋난 기대는 실행 전에 막힌다(오류 Q)
+      for (const x of datasetConflicts({ steps: c.steps, dataset: ds }, dsets, isExpectation)) warns.push(`${c.id}: ${x} — 고치기 전에는 실행하지 않고 NA(Q)`);
     }
     if (c.steps[0]!.op !== "goto" && !c.steps.some((s) => s.op === "goto")) warns.push(`${c.id}: goto 스텝이 없습니다. 케이스는 매번 새 브라우저에서 시작하므로 첫 스텝에서 이동해야 합니다.`);
     if ((c.type ?? "spec") === "spec" && !c.source_ref) warns.push(`${c.id}: source_ref(근거 위치)가 없습니다. 기획서의 어느 절/디자인의 어느 프레임인지 적어 두세요.`);
@@ -588,7 +590,7 @@ export function aStatus(a: { project?: string }) {
 }
 
 /** Dataset 마다 다른 것(전용 값·근거)을 기록·조회한다. 판정식에 박지 않고 스텝에서 {{dataset.<이름>}} 으로 읽는다(오류 P) */
-export function aDataset(a: { project?: string; name?: string; values?: Record<string, unknown>; basis?: string; remove?: boolean }) {
+export function aDataset(a: { project?: string; name?: string; values?: Record<string, unknown>; basis?: string; traits?: NonNullable<Config["datasets"]>[string]["traits"]; remove?: boolean }) {
   const p = proj(a.project);
   const cfg = p.config();
   const all = { ...(cfg.datasets ?? {}) };
@@ -596,11 +598,11 @@ export function aDataset(a: { project?: string; name?: string; values?: Record<s
     if (a.remove) delete all[a.name];
     else {
       const cur = all[a.name] ?? {};
-      all[a.name] = { ...cur, ...(a.values ? { values: { ...(cur.values ?? {}), ...a.values } } : {}), ...(a.basis !== undefined ? { basis: a.basis } : {}) };
+      all[a.name] = { ...cur, ...(a.values ? { values: { ...(cur.values ?? {}), ...a.values } } : {}), ...(a.traits ? { traits: { ...(cur.traits ?? {}), ...a.traits } } : {}), ...(a.basis !== undefined ? { basis: a.basis } : {}) };
     }
     p.saveConfig({ ...cfg, datasets: all });
   }
   const warns = Object.entries(all).flatMap(([n, d]) => (d.values && Object.keys(d.values).length && !d.basis?.trim() ? [`Dataset 「${n}」 의 값에 근거(basis: 기획서 규칙 번호)가 없음 — 값이 기획서 규칙에서 나왔는지 적을 것`] : []));
   const using = p.cases().filter((c) => c.dataset).reduce<Record<string, string[]>>((m, c) => ({ ...m, [c.dataset!]: [...(m[c.dataset!] ?? []), c.id] }), {});
-  return { datasets: all, cases_by_dataset: using, warns, usage: "케이스에 dataset 을 적고, 스텝 글에서 {{dataset.<이름>}} 으로 값을 읽는다(글 전체가 토큰이면 배열 그대로, eval 스크립트 안이면 JSON 으로 들어감)" };
+  return { datasets: all, cases_by_dataset: using, warns, usage: "케이스에 dataset 을 적고, 스텝 글에서 {{dataset.<이름>}} 으로 값을 읽는다(글 전체가 토큰이면 배열 그대로, eval 스크립트 안이면 JSON 으로 들어감). 특성(traits, 예: dictFile: { value: false, words: [\"사전 파일\"] })을 선언하면 스텝의 when(예: { dictFile: true })으로 기대를 가르고, 선언과 어긋난 기대는 실행 전에 막는다(NA Q)" };
 }

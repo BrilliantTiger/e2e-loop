@@ -139,8 +139,8 @@ server.registerTool("e2e_case_upsert", {
 
 server.registerTool("e2e_dataset", {
   title: "Dataset 설정",
-  description: "Dataset 마다 다른 값(예: 「안 보냄」이 의도된 표 목록)과 그 근거(기획서 규칙 번호)를 기록한다. 판정식(eval·기대 글)에 Dataset 전용 값을 박지 말고, 케이스에 dataset 을 적은 뒤 스텝 글에서 {{dataset.<이름>}} 으로 읽는다 — 박으면 다른 Dataset 에서 의도된 동작이 FAIL 로 나온다(오류 P). 인자 없이 부르면 지금 설정을 돌려준다.",
-  inputSchema: { project, name: z.string().optional(), values: z.record(z.string(), z.unknown()).optional().describe("전용 값. 예: { notSent: [\"표1\",\"표2\"] }"), basis: z.string().optional().describe("값의 근거(기획서 규칙 번호)"), remove: z.boolean().optional() },
+  description: "Dataset 마다 다른 값(예: 「안 보냄」이 의도된 표 목록)과 그 근거(기획서 규칙 번호)를 기록한다. 판정식(eval·기대 글)에 Dataset 전용 값을 박지 말고, 케이스에 dataset 을 적은 뒤 스텝 글에서 {{dataset.<이름>}} 으로 읽는다 — 박으면 다른 Dataset 에서 의도된 동작이 FAIL 로 나온다(오류 P). Dataset 특성(traits, 예: 사전 파일 유무)을 선언하면 스텝 when 으로 기대를 가르고, 선언과 어긋난 기대는 실행 전에 막는다(오류 Q). 인자 없이 부르면 지금 설정을 돌려준다.",
+  inputSchema: { project, name: z.string().optional(), values: z.record(z.string(), z.unknown()).optional().describe("전용 값. 예: { notSent: [\"표1\",\"표2\"] }"), basis: z.string().optional().describe("값의 근거(기획서 규칙 번호)"), traits: z.record(z.string(), z.union([z.boolean(), z.string(), z.number(), z.object({ value: z.union([z.boolean(), z.string(), z.number()]), words: z.array(z.string()).optional() })])).optional().describe("특성. 예: { dictFile: { value: false, words: [\"사전 파일\", \"_columns\"] } } — 스텝의 when 으로 기대를 가르고, false 로 선언된 특성의 말을 기대하면 실행 전에 막는다(오류 Q)"), remove: z.boolean().optional() },
 }, wrap(A.aDataset));
 
 server.registerTool("e2e_case_list", {
