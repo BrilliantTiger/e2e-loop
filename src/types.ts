@@ -28,7 +28,7 @@ export interface Case {
   feature?: string;
   /** 규칙이나 사용자 선택으로 일부러 돌리지 않는 케이스(결과는 SKIP) */
   skipReason?: string;
-  /** 긴 계산을 기다리는 케이스의 대기 상한(초). 끝 상태 대기(wait.endStates)의 전체 상한이 되고, 60초 무변화는 로그만 남기고 상한까지 기다린다. 예: 12분짜리 계산이면 720 이상 */
+  /** 긴 계산을 기다리는 케이스의 대기 상한(초). 끝 상태 대기(wait.endStates)의 전체 상한이 되고, 60초 무변화는 로그만 남기고 상한까지 기다린다. 진행 신호가 보이는 동안도 이 상한까지 기다린다(넘으면 NA L). 예: 12분짜리 계산이면 720 이상 */
   maxWaitSec?: number;
   /** 챕터 이름(예: "C9"). 없으면 화면|기능 단위가 챕터다. 다른 케이스의 `requires` 가 이 이름을 가리킨다 */
   chapter?: string;
@@ -155,8 +155,8 @@ export interface ObservedApi {
 
 export type Verdict = "PASS" | "FAIL" | "FLAKY" | "BLOCKED" | "NA" | "SKIP";
 
-/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 */
-export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G";
+/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 */
+export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L";
 
 export interface StepResult {
   i: number;

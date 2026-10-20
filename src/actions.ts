@@ -292,6 +292,11 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       if (s.op === "eval" && s.equals !== undefined && slicesValue(s.script)) warns.push(`${c.id} #${i + 1}: ${SLICED_EVAL_WARNING("eval")}`);
       if (s.op === "expect" && [s.text, s.textContains, s.value].some(looksTruncated)) warns.push(`${c.id} #${i + 1}: ${TRUNCATED_EXPECT_WARNING("expect")}`);
     }
+    const badProgress = c.steps.flatMap((s, i) => (s.progress !== undefined && !(s.progress === false || (typeof s.progress === "string" && s.progress.trim()) || (Array.isArray(s.progress) && s.progress.length && s.progress.every((x: unknown) => typeof x === "string" && x.trim()))) ? [`#${i + 1}`] : []));
+    if (badProgress.length) {
+      errors.push(`${c.id}: wait.progress ${badProgress.join(", ")} 는 진행 신호 선택자(글자 또는 글자 배열)이거나 false 여야 함`);
+      continue;
+    }
     const badPanel = c.steps.flatMap((s, i) => (s.panelTitle !== undefined && (typeof s.panelTitle !== "string" || !s.panelTitle.trim()) ? [`#${i + 1}`] : []));
     if (badPanel.length) {
       errors.push(`${c.id}: panelTitle ${badPanel.join(", ")} 은 비어 있지 않은 글자여야 함`);

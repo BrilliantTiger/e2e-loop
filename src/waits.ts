@@ -1,6 +1,7 @@
 // 끝 상태 집합 대기 (오류 A: 오지 않을 상태를 기다림).
 // 화면이 갈 수 있는 끝 상태(완료 · 확인 필요 · 막힘 · 오류 · 비활성 사유)를 모두 받아, 어느 하나가 보이면 끝낸다.
 // 15초마다 현재 상태를 로그에 남기고, 60초 동안 화면이 안 바뀌면 현재 상태를 남기고 대기 실패(도구 판정 불가)로 끝낸다.
+// 단, 화면에 진행 신호(「처리 중」·진행 막대·aria-busy 등)가 보이는 동안은 무변화여도 끝내지 않고 상한까지 기다린다(오류 L).
 import type { DPage } from "./drivers/index.ts";
 import { sleep } from "./probes.ts";
 import { ToolError } from "./toolerror.ts";
@@ -14,6 +15,8 @@ export interface EndStateWait {
   idleMs?: number;
   /** 전체 상한(ms). 기본 600000 */
   timeout?: number;
+  /** 진행 신호 선택자(예: "text=처리 중"). 이것이 보이는 동안은 무변화여도 끝내지 않는다. 적지 않아도 진행 막대·aria-busy·「처리 중」 같은 글자는 알아서 본다. false 면 알아서 보지 않는다 */
+  progress?: string | string[] | false;
 }
 
 export interface EndStateOpts {
@@ -33,6 +36,28 @@ export const MAX_WAIT_MS = 600000;
 /** 화면 서명: 주소 + 본문 글자 수 + 간단한 해시. 이 값이 그대로면 화면이 안 바뀐 것이다. */
 const SIGNATURE = `(() => { const t = (document.body && document.body.innerText) || ''; let h = 0; for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return location.pathname + location.search + '|' + t.length + '|' + h + '|' + document.getElementsByTagName('*').length; })()`;
 const SAMPLE = `(() => ((document.body && document.body.innerText) || '').replace(/\\s+/g, ' ').trim().slice(0, 160))()`;
+
+/** 화면에서 진행 신호를 알아서 찾는다: 보이는 진행 막대·aria-busy, 또는 「처리 중」 같은 글자. 찾으면 그 글자(짧게) */
+const PROGRESS = `(() => {
+  const vis = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  for (const el of document.querySelectorAll('[aria-busy="true"],[role="progressbar"],progress')) if (vis(el)) return 'progress:' + (el.getAttribute('aria-label') || el.getAttribute('aria-valuetext') || (el.tagName.toLowerCase() + (el.getAttribute('role') ? '[' + el.getAttribute('role') + ']' : ''))).slice(0, 60);
+  const m = ((document.body && document.body.innerText) || '').match(/(처리\\s?중|진행\\s?중|분석\\s?중|계산\\s?중|비식별\\s?중|생성\\s?중|업로드\\s?중|변환\\s?중|loading|processing|in progress)[^\\n]{0,40}/i);
+  return m ? 'progress:' + m[0].trim().slice(0, 60) : '';
+})()`;
+
+/** 지금 보이는 진행 신호. 적은 선택자가 먼저, 없으면 알아서 찾은 것. 없으면 null */
+async function progressSignal(p: DPage, w: Pick<EndStateWait, "progress">): Promise<string | null> {
+  if (w.progress) {
+    for (const one of ([] as string[]).concat(w.progress)) {
+      if ((await p.count(one).catch(() => 0)) > 0 && (await p.isVisible(one).catch(() => false))) return `「${one}」`;
+    }
+  }
+  if (w.progress === false) return null;
+  // 「progress:」 로 시작하는 답만 진행 신호로 본다(다른 값은 못 읽은 것)
+  const got = String((await p.evaluate<string>(PROGRESS).catch(() => "")) ?? "");
+  const auto = got.startsWith("progress:") ? got.slice(9).trim() : "";
+  return auto ? `「${auto}」` : null;
+}
 
 export const endStateNames = (w: Pick<EndStateWait, "endStates">) => Object.keys(w.endStates ?? {});
 
@@ -85,6 +110,14 @@ export async function waitEndState(p: DPage, w: EndStateWait, o: EndStateOpts = 
       lastLog = now;
       o.onLog?.(`대기 중 ${Math.round((now - t0) / 1000)}초 — 끝 상태(${names.join(" · ")}) 아직 없음. 화면: ${await sample()}`);
     }
+    if (now - changedAt >= idleMs) {
+      // 진행 신호가 보이면 서버가 아직 처리 중이다: 무변화로 끝내지 않고 상한까지 기다린다
+      const prog = await progressSignal(p, w);
+      if (prog) {
+        o.onLog?.(`화면이 ${Math.round(idleMs / 1000)}초 동안 안 바뀌었지만 진행 신호 ${prog} 가 보여 계속 기다림(상한 ${Math.round(cap / 1000)}초) — 현재 화면: ${await sample()}`);
+        changedAt = now;
+      }
+    }
     if (o.longWait && now - changedAt >= idleMs) {
       // 긴 계산: 무변화는 실패가 아니다. 현재 화면 글자를 남기고 다음 무변화 구간을 다시 센다
       o.onLog?.(`화면이 ${Math.round(idleMs / 1000)}초 동안 안 바뀜(긴 계산 대기, 상한 ${Math.round(cap / 1000)}초까지 계속) — 현재 화면: ${await sample()}`);
@@ -96,6 +129,12 @@ export async function waitEndState(p: DPage, w: EndStateWait, o: EndStateOpts = 
       throw new ToolError("A", msg);
     }
     if (now - t0 >= cap) {
+      const prog = await progressSignal(p, w);
+      if (prog) {
+        const msg = `${Math.round(cap / 1000)}초 상한까지 진행 신호 ${prog} 가 계속 보임 — 서버가 아직 처리 중일 수 있어 판정하지 않음. 케이스 maxWaitSec 를 처리 시간보다 길게 정할 것. 현재 화면: ${await sample()}`;
+        o.onLog?.(`대기 실패(도구 판정 불가): ${msg}`);
+        throw new ToolError("L", msg);
+      }
       const msg = `${Math.round(cap / 1000)}초 상한 안에 끝 상태(${names.join(" · ")})가 안 나타남. 현재 화면: ${await sample()}`;
       o.onLog?.(`대기 실패(도구 판정 불가): ${msg}`);
       throw new ToolError("A", msg);
