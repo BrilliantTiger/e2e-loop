@@ -159,8 +159,10 @@ export class PwDriver implements Driver {
       if (ts - last >= minGap) writeFrame(ts, e.data);
     });
     try {
-      const first: any = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 60 });
-      writeFrame(Date.now(), first.data);
+      // 첫 장은 있으면 좋은 것이다. 실제 Chrome 은 새 탭 직후 「Unable to capture screenshot」 으로 실패할 때가 있어,
+      // 그때도 스크린캐스트는 시작한다(예전에는 여기서 녹화를 통째로 포기해 첫 케이스의 영상이 빠졌다)
+      const first: any = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 60 }).catch(() => null);
+      if (first?.data) writeFrame(Date.now(), first.data);
       await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1 });
     } catch (e: any) {
       recErr = `영상 프레임 받기를 시작하지 못했습니다: ${String(e?.message ?? e).slice(0, 120)}`;
