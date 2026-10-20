@@ -23,7 +23,7 @@ sh install.sh
 
 `install.sh` 가 하는 일:
 
-1. `bun` 이 없으면 설치한다.
+1. `bun` 이 없으면 설치한다. **Bun 1.4.3 이상**이 필요하다(1.3.10 에서는 라운드 도중 브라우저가 조용히 사라져 라운드가 멈췄다). 낮으면 `bun upgrade`. `e2e_doctor`(`bun src/cli.ts doctor`)가 버전을 점검해 낮으면 경고한다.
 2. `bun install` 로 의존성을 설치한다.
 3. 환경을 점검한다: Playwright 브라우저, Chrome, Edge, Ego, ffmpeg, git, Orca, macOS 권한.
 4. 빠진 **Playwright 브라우저는 자동 설치**한다.

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { doctor } from "../src/env/install.ts";
 import { registerE2eLoop, serverCommand } from "../src/env/clients.ts";
-import { runChecks } from "../src/env/detect.ts";
+import { MIN_BUN, bunCheck, compareVersion, runChecks } from "../src/env/detect.ts";
 
 const stub = (dir: string, name: string, body: string) => {
   const p = join(dir, name);
@@ -89,4 +89,19 @@ test("클라이언트가 없으면 건너뛰고, dry-run 은 아무것도 등록
   stub(dir, "claude", `case "$1 $2" in "mcp get") exit 1;; esac; exit 0`);
   const planned = await registerE2eLoop({ env: envWith(dir), dryRun: true });
   expect(planned.find((r) => r.client === "claude")!.action).toBe("planned");
+});
+
+test("최소 Bun 버전: 낮으면 경고(수동 안내 bun upgrade), 같거나 높으면 ok, 지금 도는 Bun 도 점검에 나온다", async () => {
+  expect(compareVersion("1.3.10", "1.4.3")).toBeLessThan(0);
+  expect(compareVersion("1.4.3", "1.4.3")).toBe(0);
+  expect(compareVersion("1.10.0", "1.4.3")).toBeGreaterThan(0);
+  expect(compareVersion("1.4.3-canary.1", "1.4.3")).toBe(0);
+  const low = bunCheck("1.3.10");
+  expect(low.status).toBe("warn");
+  expect(low.fix).toBe("manual");
+  expect(low.manual).toContain("bun upgrade");
+  expect(low.detail).toContain(MIN_BUN);
+  expect(bunCheck("1.4.3").status).toBe("ok");
+  const all = await runChecks();
+  expect(all.find((c) => c.id === "bun")?.detail).toContain(Bun.version);
 });

@@ -68,11 +68,35 @@ export async function macPermissions(env: Env = process.env) {
   return { screenRecording: sr === "True", accessibility: ac === "True" };
 }
 
+/** 최소 Bun 버전. 1.3.10 은 앞서 닫은 브라우저가 있는 채로 새 브라우저를 띄우면 새 브라우저의 CDP 파이프가 닫혀
+ *  라운드가 멈췄다(Bun 1.4.3 에서는 재현 안 됨). 확인한 가장 낮은 정상 버전을 최소로 둔다. */
+export const MIN_BUN = "1.4.3";
+
+/** "1.4.3" 꼴 버전 비교: a < b 면 음수 */
+export function compareVersion(a: string, b: string): number {
+  const pa = a.split(/[.-]/).map((x) => parseInt(x, 10) || 0);
+  const pb = b.split(/[.-]/).map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+  return 0;
+}
+
+export function bunCheck(version: string = Bun.version): Check {
+  const ok = compareVersion(version, MIN_BUN) >= 0;
+  return ok
+    ? { id: "bun", name: "bun", status: "ok", detail: `bun ${version} (최소 ${MIN_BUN})`, fix: "none" }
+    : {
+        id: "bun", name: "bun", status: "warn", fix: "manual",
+        detail: `bun ${version} — 최소 ${MIN_BUN} 보다 낮음. 낮은 버전(1.3.10 확인)에서는 라운드 도중 브라우저가 조용히 사라져 라운드가 멈춘다`,
+        manual: "bun upgrade 로 올린 뒤 MCP 서버(또는 세션)를 다시 시작",
+        neededFor: "라운드 실행(브라우저를 여러 번 띄우는 모든 경우)",
+      };
+}
+
 export async function runChecks(env: Env = process.env): Promise<Check[]> {
   const checks: Check[] = [];
   const platform = process.platform;
 
-  checks.push({ id: "bun", name: "bun", status: "ok", detail: `bun ${Bun.version}`, fix: "none" });
+  checks.push(bunCheck());
 
   const pw = await checkPlaywrightChromium();
   checks.push({
