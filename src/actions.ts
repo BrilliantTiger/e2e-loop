@@ -33,7 +33,7 @@ import { TOAST_WARNING, isToastStep } from "./toast.ts";
 import { SLICED_EVAL_WARNING, TRUNCATED_EXPECT_WARNING, looksTruncated, slicesValue } from "./judge.ts";
 import { BASIS_WARNING, isExpectation, missingBasis } from "./basis.ts";
 import { HARD_VALUE_WARNING, datasetConflicts, hardValues, usesDataset } from "./dataset.ts";
-const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate", "prereq", "collect"]);
+const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate", "prereq", "condition", "collect"]);
 const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check", "collect"]);
 
 const dashboards = new Map<string, DashboardInfo>();
@@ -289,6 +289,13 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       errors.push(`${c.id}: 선행 조건 ${badPrereq.join(", ")} 에는 name(무엇을 찾았다는 조건인지)과 확인할 내용(sel + count·visible·text 등)이 필요함`);
       continue;
     }
+    const badCond = c.steps.flatMap((s, i) => (s.op === "condition" && !(typeof s.name === "string" && s.name.trim() && (typeof s.sel === "string" || (s.api && typeof s.api.url === "string"))) ? [`#${i + 1}`] : []));
+    if (badCond.length) {
+      errors.push(`${c.id}: 시험 조건 ${badCond.join(", ")} 에는 name(어떤 조건인지)과 확인할 것(api{url, json{경로:값}} 또는 sel + text·textContains)이 필요함`);
+      continue;
+    }
+    // 실패·중지·장애를 일부러 만드는 케이스(태그 fault)는 그 조건이 서는지 먼저 확인해야 한다
+    if ((c.tags ?? []).includes("fault") && !c.steps.some((s) => s.op === "condition")) warns.push(`${c.id}: 실패·장애를 일부러 만드는 케이스(태그 fault)에 시험 조건(condition 스텝)이 없음 — 장애가 실제로 생기는 경로인지 먼저 확인하지 않으면 조건이 안 섰을 때 가짜 FAIL 이 난다`);
     const badSel = c.steps.flatMap((s, i) => {
       if (typeof s.sel !== "string") return [];
       const why = rowByNumber(s.sel);

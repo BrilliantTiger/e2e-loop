@@ -70,6 +70,7 @@ export function describe(s: Step): string {
     case "probe": return `점검(${s.kind}) ${s.label ?? s.sel ?? ""}`;
     case "collect": return `여러 쪽 줄 모으기${t(s.sel)}`;
     case "prereq": return `선행 조건 「${s.name ?? "-"}」 확인`;
+    case "condition": return `시험 조건 「${s.name ?? "-"}」 확인`;
     case "gate": return `Gate 「${s.name ?? "-"}」 막힘이 정상 → ${s.resolve?.length ? "풀고" : "(사람이 풀기 전)"} 풀린 뒤 PASS 기준 확인`;
     default: return s.op;
   }
@@ -324,7 +325,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   const keepAllShots = !ctx.driver.capabilities.video;
   let failedAt = -1;
   let osBlocked: string | undefined;
-  let toolErr: { kind: ToolError["kind"]; detail: string; evidenceText?: string } | undefined;
+  let toolErr: { kind: ToolError["kind"]; detail: string; evidenceText?: string; sub?: "condition" } | undefined;
   let skipped: string | undefined;
   let prereqIncomplete: CaseResult["blockedBy"];
   const shot = async (name: string): Promise<string | undefined> => {
@@ -545,6 +546,14 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           }
           break;
         }
+        case "condition": {
+          // 시험 조건: 실패·중지·장애를 일부러 만드는 케이스는 그 장애가 실제로 생기는 조건인지 먼저 확인한다(예: 파일 내용이 바뀌어 장애 난 API 를 부르는 경로인가).
+          // 안 서면 FAIL 이 아니라 「시험 조건 불성립」 NA(F 의 하위 항목)로 두고 재시험 대기열에 올린다
+          const got = await readyNow(page, cfg, { name: s.name, api: s.api, sel: typeof s.sel === "string" ? s.sel : undefined, text: s.text, textContains: s.textContains });
+          if (!got.ok) throw new ToolError("F", `시험 조건 불성립: 「${s.name ?? "-"}」 — 지금 ${got.now}. 일부러 만드는 실패·장애가 이 조건에서는 생기지 않으므로 판정하지 않음(재시험 대기열)`, undefined, "condition");
+          sr.desc += ` — 성립(${got.now})`;
+          break;
+        }
         case "gate": {
           // 사람 결정이 필요한 Gate: 풀기 전에는 막혀 있는 것이 정상이고, 풀린 뒤가 PASS 기준이다
           const name = s.name ?? "-";
@@ -651,7 +660,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       failedAt = i;
       if (e?.name === "OsWindowRequired") osBlocked = String(e.message);
       if (e?.name === "PrereqIncomplete") prereqIncomplete = { chapter: e.chapter, by: [], detail: String(e.message) };
-      if (e?.name === "ToolError") toolErr = { kind: e.kind, detail: String(e.message), evidenceText: e.evidenceText };
+      if (e?.name === "ToolError") toolErr = { kind: e.kind, detail: String(e.message), evidenceText: e.evidenceText, ...(e.sub ? { sub: e.sub } : {}) };
       else if (!osBlocked && !skipped && !prereqIncomplete) {
         // 케이스가 예상하지 못한 대화상자가 먼저 떠서 막힌 것(예: 확인 모달)이면 사이트 결함이 아니라 NA — 모달 글자를 증거로 남긴다
         const dlg = await unexpectedDialog(page, s, steps);

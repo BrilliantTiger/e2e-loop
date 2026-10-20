@@ -52,16 +52,23 @@ const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
   U: "판정에서 뺌(제품 결함 아님) — 다음 라운드에도 멈추면 그때 멈춤으로 본다",
 };
 
+/** F 의 하위 항목: 일부러 만드는 실패·중지·장애의 조건이 이번에는 성립하지 않음 */
+export const CONDITION_LABEL = "시험 조건 불성립(일부러 만드는 실패·장애의 조건이 안 섬 — F 의 하위 항목)";
+const CONDITION_ACTION = "조건이 서도록 시험 데이터·절차를 바꿔(예: 내용이 바뀐 파일) 다음 라운드에 재시험 — 재시험 대기열(e2e_round_start retest=true)";
+
 /** 스텝이 던지면 케이스가 FAIL 이 아니라 NA(도구 판정 불가)로 끝난다. */
 export class ToolError extends Error {
   kind: ToolErrorKind;
   /** 증거로 남길 글자(예: 예상 못 한 대화상자의 글자) */
   evidenceText?: string;
-  constructor(kind: ToolErrorKind, msg: string, evidenceText?: string) {
+  /** F 의 하위 항목(condition = 시험 조건 불성립) */
+  sub?: "condition";
+  constructor(kind: ToolErrorKind, msg: string, evidenceText?: string, sub?: "condition") {
     super(msg);
     this.name = "ToolError";
     this.kind = kind;
     this.evidenceText = evidenceText;
+    this.sub = sub;
   }
 }
 
@@ -179,8 +186,8 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
       title: r.title,
       chapter, screen, element, verb, kind, key,
       symptom: symptomOf(r),
-      reason: kind === "H" ? `H ${EXCLUDED_LABEL.H}: ${r.blockedBy!.detail}` : `${kind} ${TOOL_ERROR_LABEL[kind]}: ${r.toolError!.detail}`,
-      action: EXCLUDED_ACTION[kind],
+      reason: kind === "H" ? `H ${EXCLUDED_LABEL.H}: ${r.blockedBy!.detail}` : `${kind} ${r.toolError?.sub === "condition" ? CONDITION_LABEL : TOOL_ERROR_LABEL[kind]}: ${r.toolError!.detail}`,
+      action: r.toolError?.sub === "condition" ? CONDITION_ACTION : EXCLUDED_ACTION[kind],
       note: kind === "H" ? "도구 오류 아님 — 선행 챕터의 제품 결함에 막혀 돌리지 않음" : "도구 판정 불가",
       evidence: [shot, r.toolError?.evidenceText].filter(Boolean).join(" · ") || undefined,
     };

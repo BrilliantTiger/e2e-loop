@@ -107,3 +107,62 @@ test("라운드: 선행 챕터의 도구 오류로 하위 챕터는 누르지 �
   const again: any = await A.aRoundStart({ project: root, data: "keep", headless: true, retest: true });
   expect(again.error).toContain("재시험 대기열이 비어 있습니다");
 }, 200000);
+
+// ---- F 의 하위 항목: 시험 조건 불성립(일부러 만드는 실패·장애의 조건이 안 섬) ----
+import { runCase } from "../src/runner.ts";
+import { ChapterGuard } from "../src/chapter.ts";
+import { excludedRows } from "../src/toolerror.ts";
+import { fakeCtx } from "./helpers/fake.ts";
+
+test("시험 조건이 안 서면(파일이 안 바뀌어 장애 난 API 를 안 부르는 경로) 누르지 않고 FAIL 이 아니라 「시험 조건 불성립」 NA(F), 챕터는 끝내지 않고 재시험 대기열(다음 라운드)로 간다", async () => {
+  let changed = false;
+  const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({ diff: { changed } }) });
+  try {
+    const clicks: string[] = [];
+    const ctx = fakeCtx({ click: async (s: string) => void clicks.push(s) });
+    ctx.cfg.baseUrl = `http://127.0.0.1:${srv.port}`;
+    const c: Case = { id: "C18-F1", title: "ccb-api 중지 중 Handoff — 실패 칩", type: "spec", source_ref: "절차서", chapter: "C18", tags: ["fault"], steps: [
+      { op: "goto", url: "/handoff" },
+      { op: "condition", name: "파일 내용이 바뀌어 ccb-api 를 부르는 경로", api: { url: "/api/diff", json: { "diff.changed": true } } },
+      { op: "click", sel: "#send" },
+      { op: "expect", sel: "row=ae", textContains: "실패", basis: "POL-057" },
+    ] };
+    const r = await runCase(ctx, c);
+    expect(r.status).toBe("NA");
+    expect(r.toolError).toMatchObject({ kind: "F", sub: "condition" });
+    expect(r.reason).toContain("시험 조건 불성립: 「파일 내용이 바뀌어 ccb-api 를 부르는 경로」");
+    expect(r.reason).toContain('diff.changed=false');
+    expect(clicks).toEqual([]);
+    const row = excludedRows([r], () => "-", { round: "R09" })[0]!;
+    expect(row.reason).toContain("F 시험 조건 불성립");
+    expect(row.action).toContain("다음 라운드에 재시험");
+    // 챕터를 끝내지 않는다 — 같은 챕터의 다음 케이스는 돈다
+    const g = new ChapterGuard((x) => x.chapter!);
+    g.settle(c, r);
+    expect(g.skipReason({ ...c, id: "C18-02" })).toBeUndefined();
+    // 재시험 대기열: 선행 챕터 없이 다음 라운드
+    const p = new Project(mkdtempSync(join(tmpdir(), "e2e-loop-rtc-")));
+    p.ensure();
+    updateRetest(p, "R09", [r], () => "C18");
+    expect(readRetest(p)).toMatchObject([{ case: "C18-F1", kind: "F" }]);
+    expect(readRetest(p)[0]!.after).toBeUndefined();
+    // 조건이 서면 그대로 누르고 판정한다
+    changed = true;
+    const ok = await runCase(ctx, { ...c, steps: c.steps.slice(0, 3) });
+    expect(ok.status).toBe("PASS");
+    expect(ok.steps[1]!.desc).toContain("성립(diff.changed=true)");
+    expect(clicks).toEqual(["#send"]);
+  } finally {
+    srv.stop(true);
+  }
+});
+
+test("등록: 시험 조건에 name·확인할 것이 없으면 거부, 장애를 일부러 만드는 케이스(태그 fault)에 시험 조건이 없으면 경고", () => {
+  const up = A.aCaseUpsert({ project: root, cases: [
+    { id: "F-BAD", title: "x", type: "spec", source_ref: "x", steps: [{ op: "goto", url: "/" }, { op: "condition", name: "조건" }] },
+    { id: "F-NOC", title: "x", type: "spec", source_ref: "x", tags: ["fault"], steps: [{ op: "goto", url: "/" }, { op: "expect", sel: "h1", textContains: "", basis: "POL-1" }] },
+  ] });
+  expect(up.errors.join()).toContain("F-BAD: 시험 조건 #2 에는 name");
+  expect(up.warns.join()).toContain("F-NOC: 실패·장애를 일부러 만드는 케이스(태그 fault)에 시험 조건(condition 스텝)이 없음");
+  A.aCaseSetStatus({ project: root, ids: ["F-NOC"], status: "na", reason: "시험용" });
+});

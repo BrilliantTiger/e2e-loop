@@ -46,6 +46,8 @@ export class ChapterGuard {
   settle(c: Case, r: CaseResult): CaseResult {
     if (!this.guarded(c)) return r;
     const key = this.keyOf(c);
+    // 시험 조건 불성립은 그 케이스만의 일이라 챕터를 끝내지 않는다(재시험 대기열로 간다)
+    if (r.status === "NA" && r.toolError?.kind === "F" && r.toolError.sub === "condition") return r;
     if (r.status === "NA" && r.toolError?.kind === "F") {
       this.ended.set(key, r.toolError.detail);
       return r;

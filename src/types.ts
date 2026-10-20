@@ -236,7 +236,7 @@ export interface CaseResult {
   /** 사용자가 이슈로 승격한 경고 때문에 실패로 바뀐 것 */
   promoted?: boolean;
   /** 시험 도구 탓에 판정하지 못한 것(status 는 NA). 이슈가 아니라 제외 시트로 간다 */
-  toolError?: { kind: ToolErrorKind; detail: string; /** 예상 못 한 대화상자의 글자 같은 증거 */ evidenceText?: string };
+  toolError?: { kind: ToolErrorKind; detail: string; /** 예상 못 한 대화상자의 글자 같은 증거 */ evidenceText?: string; /** F 의 하위 항목: condition = 시험 조건 불성립(일부러 만드는 실패·장애의 조건이 안 섬) */ sub?: "condition" };
   /** 선행 챕터의 제품 결함에 막혀 돌리지 않은 것(status 는 NA, 사유 H). 도구 오류가 아니다 — 제외 시트로 간다 */
   blockedBy?: { chapter: string; by: string[]; detail: string };
   /** 선행 챕터가 도구 오류(NA)로 끝나 돌리지 않은 것(사유 R): 선행 챕터를 다시 시험한 뒤 재시험 대기열에서 돈다 */
