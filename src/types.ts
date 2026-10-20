@@ -191,8 +191,8 @@ export interface ObservedApi {
 
 export type Verdict = "PASS" | "FAIL" | "FLAKY" | "BLOCKED" | "NA" | "SKIP";
 
-/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 · M 서버 비동기 계산이 안 끝났는데 누름 · N 같은 탭·같은 Dataset 에서 챕터 두 개가 동시에 돎 · O 창이 가려진 채 잰 멈춤 측정(측정 무효) · U 화면 열기의 멈춤이 재현되지 않음(첫 로드 비용·동시 부하) · P 판정식 안에 다른 Dataset 전용 값을 박음 · Q Dataset 특성 선언과 어긋난 기대 */
-export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L" | "M" | "N" | "O" | "P" | "Q" | "U";
+/** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 · M 서버 비동기 계산이 안 끝났는데 누름 · N 같은 탭·같은 Dataset 에서 챕터 두 개가 동시에 돎 · O 창이 가려진 채 잰 멈춤 측정(측정 무효) · U 화면 열기의 멈춤이 재현되지 않음(첫 로드 비용·동시 부하) · P 판정식 안에 다른 Dataset 전용 값을 박음 · Q Dataset 특성 선언과 어긋난 기대 · R 선행 챕터가 도구 오류로 끝나 하위 챕터를 돌리지 않음 */
+export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "U";
 
 export interface StepResult {
   i: number;
@@ -239,6 +239,8 @@ export interface CaseResult {
   toolError?: { kind: ToolErrorKind; detail: string; /** 예상 못 한 대화상자의 글자 같은 증거 */ evidenceText?: string };
   /** 선행 챕터의 제품 결함에 막혀 돌리지 않은 것(status 는 NA, 사유 H). 도구 오류가 아니다 — 제외 시트로 간다 */
   blockedBy?: { chapter: string; by: string[]; detail: string };
+  /** 선행 챕터가 도구 오류(NA)로 끝나 돌리지 않은 것(사유 R): 선행 챕터를 다시 시험한 뒤 재시험 대기열에서 돈다 */
+  retest?: { after: string; by: string[] };
   /** 증거 파일의 기록(커밋·시각·케이스 id·해시) */
   evidence?: { file: string; sha256: string; rawSha256?: string }[];
   durationMs: number;

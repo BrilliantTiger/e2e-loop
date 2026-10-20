@@ -14,6 +14,7 @@ import { blockedCount, toolErrorCount } from "./toolerror.ts";
 import { prestartStatus } from "./prestart.ts";
 import { ChapterGuard, DefectGuard, chapterName } from "./chapter.ts";
 import { carriedE, carriedResult } from "./carry.ts";
+import { readRetest, retestSelection, updateRetest } from "./retest.ts";
 import { acquire, lockKeys, release, releaseAll } from "./locks.ts";
 import { cleanupOwn, cleanupStale, describeProcs, staleBrowserProcs, waitNoStale } from "./procs.ts";
 
@@ -42,6 +43,8 @@ export interface StartOpts {
   headless?: boolean;
   only?: string[]; // 케이스 id 목록(부분 실행)
   onlyFailed?: boolean; // 직전 회차에서 FAIL 이었던 것만 다시
+  /** 재시험 대기열(선행 도구 오류로 돌리지 않은 케이스)과 그 선행 챕터만 다시(부분 회차) */
+  retest?: boolean;
   /** 같은 이슈가 repeatLimit(기본 7)라운드 연속이라고 사용자에게 올린 뒤, 사용자가 계속하기로 했을 때 */
   acknowledgeRepeated?: boolean;
   /** 이전 라운드가 남긴 브라우저 프로세스를 사용자 확인 뒤 나무째 끊고 시작한다 */
@@ -134,6 +137,7 @@ export function precheck(project: Project, opts: StartOpts): { ok: true; decisio
         ],
       },
     };
+  if (opts.retest && !readRetest(project).length) return { ok: false, error: "재시험 대기열이 비어 있습니다(선행 도구 오류로 돌리지 않은 케이스가 없음). retest 없이 시작하세요." };
   if (d === "reset" && !cfg.data.resetCommand) return { ok: false, error: "data=reset 인데 resetCommand 가 없습니다. e2e_init 으로 초기화 명령을 설정하거나, 직접 초기화했다면 manual-reset-done 으로 시작하세요." };
   return { ok: true, decision: d };
 }
@@ -169,6 +173,10 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
   let scope: "full" | "partial" = "full";
   if (opts.only?.length) {
     selected = cases.filter((c) => opts.only!.includes(c.id));
+    scope = "partial";
+  } else if (opts.retest) {
+    // 선행 챕터를 먼저 다시 시험하고(원래 순서), 대기열의 하위 케이스를 이어서 돌린다
+    selected = retestSelection(project, cases, (c) => chapterName(c, featureKey));
     scope = "partial";
   } else if (opts.onlyFailed) {
     const prev = [...project.rounds()].reverse().find((r) => r.status === "finished");
@@ -269,7 +277,9 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         // 챕터를 시작하기 전: 이전 라운드가 남긴 브라우저 프로세스가 0개인가(막 닫히는 중일 수 있어 잠깐 기다린다)
         const carry = c.type === "spec" && (c.status ?? "active") === "active" && !c.skipReason ? carried.get(c.id) : undefined;
         const blockedBy = carry ? undefined : defects.blockedBy(c);
-        if (!carry && !blockedBy && c.type === "spec" && chapterKey(c) !== lastChapter) {
+        // 선행 챕터가 제품 FAIL 이 아니라 도구 오류(NA)로 끝났으면 이 챕터의 증거가 생기지 않는다(사유 R)
+        const toolBlocked = carry || blockedBy ? undefined : defects.toolBlockedBy(c);
+        if (!carry && !blockedBy && !toolBlocked && c.type === "spec" && chapterKey(c) !== lastChapter) {
           lastChapter = chapterKey(c);
           // 실행 중 잠금: 이 챕터가 쓰는 대상(탭·Dataset)을 다른 프로세스가 쓰는 중이면 누르지 않고 「동시 실행 거부」(오류 N)
           release(heldLocks);
@@ -299,6 +309,10 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
           // 선행 챕터에 제품 결함이 있다: 이 케이스는 누르지 않고 「선행 결함에 막힘」 NA(H)로 둔다
           r = defects.naResult(c, blockedBy);
           emit({ type: "chapter-blocked", case: c.id, chapter: blockedBy.chapter, by: blockedBy.by.slice(0, 5) });
+        } else if (toolBlocked) {
+          // 누르지 않고 「선행 도구 오류로 미실행」 NA(R) — 재시험 대기열로 간다
+          r = defects.toolNaResult(c, toolBlocked);
+          emit({ type: "chapter-retest", case: c.id, chapter: toolBlocked.chapter, by: toolBlocked.by.slice(0, 5) });
         } else if (endedWhy) {
           // 챕터가 이미 끝났다(선행 조건 실패 · 읽기 실패 연속): 뒤 동작을 누르지 않고 NA(F)로 둔다
           r = guard.naResult(c, endedWhy);
@@ -352,6 +366,10 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
       }
       project.writeJson(`rounds/${id}/meta.json`, meta);
       rmSync(project.p("running.json"), { force: true });
+      // 재시험 대기열: 이번에 돈 케이스는 빼고, 선행 도구 오류로 돌리지 않은 케이스는 넣는다
+      try {
+        updateRetest(project, id, results, (cid) => chapterKey(selected.find((x) => x.id === cid) ?? ({ id: cid, title: "", type: "spec", steps: [] } as Case)));
+      } catch {}
       try {
         writeReports(project, meta, results);
       } catch (e: any) {

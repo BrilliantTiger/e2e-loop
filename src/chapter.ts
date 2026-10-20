@@ -102,6 +102,9 @@ export function blockedLabel(b: { chapter: string; by: string[] }): string {
 export class DefectGuard {
   private failed = new Map<string, string[]>();
   private root = new Map<string, { chapter: string; by: string[] }>();
+  /** 선행 챕터의 도구 오류(NA) — 사유 R */
+  private toolFailed = new Map<string, string[]>();
+  private toolRoot = new Map<string, { chapter: string; by: string[] }>();
   constructor(private nameOf: (c: Case) => string) {}
 
   private applies = (c: Case) => c.type === "spec" && (c.status ?? "active") === "active" && !c.skipReason;
@@ -117,6 +120,17 @@ export class DefectGuard {
     return undefined;
   }
 
+  /** 선행 챕터가 도구 오류(NA)로 끝나 이 케이스를 돌리지 않는가(사유 R). 제품 결함(H)이 먼저다 */
+  toolBlockedBy(c: Case): { chapter: string; by: string[] } | undefined {
+    if (!this.applies(c) || !c.requires?.length) return undefined;
+    for (const need of c.requires) {
+      const f = this.toolFailed.get(need);
+      const by = f?.length ? { chapter: need, by: f } : this.toolRoot.get(need);
+      if (by) return by;
+    }
+    return undefined;
+  }
+
   /** 결과를 기록한다. 제품 FAIL(도구 오류가 아닌 FAIL)이면 챕터의 결함으로, 막힌 NA(H)면 뿌리 결함을 이어 받는다 */
   record(c: Case, r: CaseResult) {
     if (!this.applies(c)) return;
@@ -125,7 +139,22 @@ export class DefectGuard {
       this.failed.set(name, [...(this.failed.get(name) ?? []), c.id]);
     } else if (r.blockedBy && !this.root.has(name)) {
       this.root.set(name, { chapter: r.blockedBy.chapter, by: r.blockedBy.by });
+    } else if (r.retest) {
+      if (!this.toolRoot.has(name)) this.toolRoot.set(name, { chapter: r.retest.after, by: r.retest.by });
+    } else if (r.status === "NA" && r.toolError) {
+      this.toolFailed.set(name, [...(this.toolFailed.get(name) ?? []), c.id]);
     }
+  }
+
+  /** 선행 도구 오류로 돌리지 않은 케이스의 결과: 누르지 않고 NA(R), 재시험 대기열로 간다 */
+  toolNaResult(c: Case, b: { chapter: string; by: string[] }): CaseResult {
+    const more = b.by.length > 1 ? ` 외 ${b.by.length - 1}건` : "";
+    const detail = `선행 도구 오류로 미실행(${b.by[0] ?? "-"}${more}, 챕터 ${b.chapter}) — 선행 챕터가 도구 오류(NA)로 끝나 이 챕터의 증거가 생기지 않음. 선행 챕터를 다시 시험한 뒤 재시험 대기열로 실행`;
+    return {
+      id: c.id, title: c.title, type: c.type, event: c.event, source_ref: c.source_ref, element: c.element, risk: c.risk,
+      status: "NA", reason: `도구 판정 불가(R): ${detail}`, toolError: { kind: "R", detail }, retest: { after: b.chapter, by: b.by },
+      warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(),
+    };
   }
 
   /** 막힌 케이스의 결과: 누르지 않고 NA(H) 로 둔다 */

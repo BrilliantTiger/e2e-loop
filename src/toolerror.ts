@@ -9,6 +9,7 @@
 //   O 창이 가려진 채 잰 멈춤 측정(측정만 무효 — 기능 판정은 따로 남는다)
 //   P 판정식(eval·기대 글) 안에 다른 Dataset 전용 값을 박아, 이 Dataset 의 의도된 동작을 FAIL 로 봄
 //   Q Dataset 특성 선언(traits)과 어긋난 기대 — 실행 전에 막는다(누르지 않음)
+//   R 선행 챕터가 제품 FAIL 이 아니라 도구 오류(NA)로 끝나 하위 챕터를 돌리지 않음(H 의 변형) — 재시험 대기열로 간다
 //   U 화면 열기에서 잰 멈춤이 다시 열면 재현되지 않음(첫 로드 비용·동시 부하 — 판정에서 뺀다)
 //   H 선행 챕터의 제품 결함에 막혀 돌리지 않음(도구 오류가 아니라 제품 결함의 여파)
 import type { Case, CaseResult, Step, StepResult, ToolErrorKind } from "./types.ts";
@@ -29,6 +30,7 @@ export const TOOL_ERROR_LABEL: Record<ToolErrorKind, string> = {
   O: "측정 무효(창 가림 — 가려진 창에서 잰 멈춤 측정)",
   P: "판정식 안의 Dataset 전용 값(다른 Dataset 의 예외 목록을 박아 의도된 동작을 FAIL 로 봄)",
   Q: "Dataset 특성 선언과 어긋난 기대(예: 사전 파일이 없는 Dataset 에 사전 파일 줄을 기대)",
+  R: "선행 도구 오류로 미실행(선행 챕터가 도구 오류 NA 로 끝나 하위 증거가 없음)",
   U: "멈춤 미재현(화면 열기의 멈춤이 다시 열면 안 남 — 첫 로드 비용·동시 부하)",
 };
 
@@ -46,6 +48,7 @@ const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
   O: "창이 보이게 된 뒤 재측정 — 시험 창을 다른 창으로 가리지 않음(기능 판정은 그대로)",
   P: "Dataset 전용 값을 e2e_dataset 의 values 에 두고(근거: 기획서 규칙) 스텝에서 {{dataset.<이름>}} 으로 읽도록 고쳐 다시 실행",
   Q: "Dataset 특성(e2e_dataset 의 traits)에 맞게 기대를 when 으로 가르거나 고쳐 다시 등록 — 고치기 전에는 실행하지 않음",
+  R: "선행 챕터의 도구 오류(시험)를 고쳐 그 챕터를 다시 시험한 뒤 재시험 대기열로 실행(e2e_round_start retest=true)",
   U: "판정에서 뺌(제품 결함 아님) — 다음 라운드에도 멈추면 그때 멈춤으로 본다",
 };
 

@@ -8,6 +8,7 @@ import { isIssue } from "./issues.ts";
 import { coverage } from "./coverage.ts";
 import { diffWithPrevious, fixHint, trend } from "./report.ts";
 import { readComments, type Comment } from "./comments.ts";
+import { describeRetest, readRetest } from "./retest.ts";
 import { blockedCount, elementOf, excludedAllTsv, excludedRows, excludedTsv, freezeUnconfirmedCount, markRepeats, measureInvalidCount, mergeExcludedAcross, symptomSentence, toolErrorCount, verbOf, type ExcludedRow } from "./toolerror.ts";
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -478,6 +479,8 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
   const applied = project.feedback().filter((f) => f.appliesFrom === meta.id && (f.status === "done" || f.appliesTo === "now-in-flow")).map((f) => ({ id: f.id, text: f.text, appliesTo: f.appliesTo }));
   const notes = [...(meta.error ? [meta.error] : []), ...(meta.evidenceWarnings ?? []).map((w) => `증거: ${w}`)];
   if (meta.pendingFeedback?.length) notes.push(`이 라운드 시작 때 아직 반영 안 된 사용자 요청 ${meta.pendingFeedback.length}건: ${meta.pendingFeedback.map((f) => `${f.id} ${f.text.slice(0, 40)}`).join(" / ")}`);
+  const queue = readRetest(project);
+  if (queue.length) notes.push(`재시험 대기열 ${queue.length}건 — ${describeRetest(queue)}. 선행 챕터의 시험(도구 오류)을 고친 뒤 e2e_round_start retest=true 로 선행 챕터와 함께 다시 돌린다(사유 R)`);
   if (meta.injected?.length) notes.push(`라운드 도중 끼워 넣은 케이스 ${meta.injected.length}건(이 라운드는 완료 근거 아님): ${meta.injected.join(", ")}`);
   const toolErr = toolErrorCount(results);
   const setupN = cfg.auth?.setupSteps?.length ?? 0;
@@ -512,7 +515,9 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
     pendingFeedback: meta.pendingFeedback ?? [], injected: meta.injected ?? [], appliedFeedback: applied,
     tasks, issues, tool_error_count: toolErr, blocked_by_defect_count: blockedN,
     // 멈춤 측정: 기능 판정과 따로. freeze 는 1초 넘게 멈춘 스텝(경고), measure_invalid 는 창이 가려져 무효가 된 측정 수(O, 제외 시트)
-    measure: { freeze: freezes, measure_invalid: measureNa, freeze_unconfirmed: unconfirmed }, excluded: excluded.map((x) => ({ ...x, comments: readComments(project).filter((c) => x.cases.includes(c.case)).map((c) => ({ id: c.id, author: c.author, text: c.text, status: c.status })) })),
+    measure: { freeze: freezes, measure_invalid: measureNa, freeze_unconfirmed: unconfirmed },
+    // 재시험 대기열: 선행 챕터가 도구 오류로 끝나 돌리지 않은 케이스(사유 R). 선행 챕터를 고친 뒤 e2e_round_start retest=true
+    retest_queue: readRetest(project), excluded: excluded.map((x) => ({ ...x, comments: readComments(project).filter((c) => x.cases.includes(c.case)).map((c) => ({ id: c.id, author: c.author, text: c.text, status: c.status })) })),
     skipped: skipped.map((r) => ({ id: r.id, title: r.title, reason: r.reason })),
     warnings: warned.map((r) => ({ id: r.id, title: r.title, warnings: r.warnings })),
     coverage: { elements: { total: cov.elements.total, uncovered: cov.elements.uncovered }, cases: cov.cases, uncoveredSections: cov.sources.flatMap((x) => x.uncoveredSections.map((n) => `${x.title}: ${n}`)) },

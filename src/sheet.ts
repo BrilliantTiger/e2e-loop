@@ -9,6 +9,7 @@ import { readIntake } from "./session.ts";
 import { missingBasis, type MissingBasis, isExpectation } from "./basis.ts";
 import { CARRIED_E_MARK, carriedE } from "./carry.ts";
 import { datasetConflicts, describeHard, hardValues } from "./dataset.ts";
+import { describeRetest, readRetest, type RetestEntry } from "./retest.ts";
 
 export interface SheetCase {
   id: string;
@@ -47,6 +48,8 @@ export interface Sheet {
     datasetValues: { id: string; detail: string; foreign: boolean }[];
     /** Dataset 특성 선언과 어긋난 기대(오류 Q) — 고치기 전에는 실행하지 않는다 */
     datasetConflicts: { id: string; detail: string }[];
+    /** 재시험 대기열(사유 R): 선행 챕터를 다시 시험한 뒤 돌릴 케이스 */
+    retestQueue: RetestEntry[];
   };
 }
 
@@ -124,6 +127,7 @@ export function buildSheet(p: Project): Sheet {
         const list = [...hv.foreign, ...hv.own];
         return list.length ? [{ id: c.id, detail: describeHard(list), foreign: hv.foreign.length > 0 }] : [];
       }),
+      retestQueue: readRetest(p),
       datasetConflicts: cases.filter((c) => (c.status ?? "active") === "active").flatMap((c) => {
         const x = datasetConflicts(c, cfg.datasets, isExpectation);
         return x.length ? [{ id: c.id, detail: x.join(" / ") }] : [];
@@ -163,6 +167,7 @@ export function renderSheetMd(s: Sheet, opts: { full?: boolean } = {}): string {
   if (g.apisNeedingInput.length) gapLines.push(`- 요청 본문·값이 있어야 점검할 수 있는 API ${g.apisNeedingInput.length}건 — 기능정의서의 요청 예시로 케이스를 만든다: ${g.apisNeedingInput.slice(0, 6).map((a) => `${a.method} ${a.url}`).join(", ")}`);
   if (g.uncoveredElements) gapLines.push(`- 케이스가 없는 화면 요소 ${g.uncoveredElements}개`);
   if (g.carriedE.length) gapLines.push(`- ⚠ ${CARRIED_E_MARK} ${g.carriedE.length}건 — 이전 라운드에서 E 로 제외됐고 기대·근거를 아직 안 고쳐, 고치기 전에는 실행하지 않고 NA(E)로 둔다: ${g.carriedE.slice(0, 8).map((x) => `${x.id}(${x.round})`).join(", ")}`);
+  if (g.retestQueue.length) gapLines.push(`- 재시험 대기열 ${g.retestQueue.length}건(사유 R, 선행 챕터가 도구 오류로 끝나 돌리지 않음) — ${describeRetest(g.retestQueue)}. 선행 챕터의 시험을 고친 뒤 e2e_round_start retest=true`);
   if (g.datasetConflicts.length) gapLines.push(`- ⚠ Dataset 특성 선언과 어긋난 기대 ${g.datasetConflicts.length}건 — 고치기 전에는 실행하지 않고 NA(Q): ${g.datasetConflicts.slice(0, 6).map((x) => `${x.id}(${x.detail.slice(0, 120)})`).join(", ")}`);
   if (g.datasetValues.length) gapLines.push(`- ⚠ 판정식에 Dataset 전용 값이 박힌 케이스 ${g.datasetValues.length}건 — 다른 Dataset 에서 의도된 동작이 FAIL 로 나온다(오류 P). e2e_dataset 의 values 에 두고 {{dataset.<이름>}} 으로 읽을 것: ${g.datasetValues.slice(0, 8).map((x) => `${x.id}(${x.detail}${x.foreign ? ", 다른 Dataset 값" : ""})`).join(", ")}`);
   if (g.expectNoBasis.length) gapLines.push(`- ⚠ 기대 칸에 근거(basis: 기획서 POL · CCB 번호)가 없는 케이스 ${g.expectNoBasis.length}건(기대 ${g.expectNoBasis.reduce((n, x) => n + x.steps.length, 0)}칸) — 근거 없는 기대는 오류 E(기대가 기획서와 다름)의 원인이 된다: ${g.expectNoBasis.slice(0, 8).map((x) => `${x.id} ${x.steps.map((n) => "#" + n).join("")}`).join(", ")}`);
@@ -194,6 +199,7 @@ export function aSheet(p: Project, a: { confirm?: boolean; confirm_before_start?
     confirmed: !!sheet.confirmedAt,
     ready_to_start: ready && hasCases,
     carried_e: sheet.gaps.carriedE.length ? `${CARRIED_E_MARK} ${sheet.gaps.carriedE.length}건 — 기대·근거(basis)를 고친 뒤 e2e_case_upsert 로 다시 등록해야 실행된다: ${sheet.gaps.carriedE.map((x) => x.id).join(", ")}` : undefined,
+    retest_queue: sheet.gaps.retestQueue.length ? `재시험 대기열 ${sheet.gaps.retestQueue.length}건 — 선행 챕터의 시험(도구 오류)을 고친 뒤 e2e_round_start retest=true 로 선행 챕터와 함께 다시 돌린다(사유 R): ${describeRetest(sheet.gaps.retestQueue)}` : undefined,
     dataset_conflicts: sheet.gaps.datasetConflicts.length ? `Dataset 특성 선언과 어긋난 기대 ${sheet.gaps.datasetConflicts.length}건 — when 으로 가르거나 기대를 고쳐 다시 등록(오류 Q, 고치기 전에는 실행 안 함): ${sheet.gaps.datasetConflicts.map((x) => x.id).join(", ")}` : undefined,
     dataset_values: sheet.gaps.datasetValues.length ? `판정식에 Dataset 전용 값이 박힌 케이스 ${sheet.gaps.datasetValues.length}건 — e2e_dataset 에 값을 두고 {{dataset.<이름>}} 으로 읽도록 고친 뒤 다시 등록(오류 P): ${sheet.gaps.datasetValues.map((x) => `${x.id}(${x.detail})`).join(", ")}` : undefined,
     expect_no_basis: sheet.gaps.expectNoBasis.length ? `기대 칸에 근거(basis)가 없는 케이스 ${sheet.gaps.expectNoBasis.length}건 — 근거를 채우거나 케이스를 blocked 로 두세요(오류 E)` : undefined,
