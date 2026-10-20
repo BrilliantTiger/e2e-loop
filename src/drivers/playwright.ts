@@ -17,6 +17,9 @@ class PwPage implements DPage {
     await this.page.goto(url, { waitUntil: "load", timeout: 30000 });
     await this.page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => {});
   }
+  async front() {
+    await this.page.bringToFront();
+  }
   async reload() {
     await this.page.reload({ waitUntil: "load" });
     await this.page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => {});

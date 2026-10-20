@@ -6,8 +6,9 @@
 //   N 같은 탭·같은 Dataset 에서 챕터 두 개가 동시에 돎(잠금 소유자가 따로 있음)
 //   M 서버 비동기 계산이 안 끝났는데 누름(준비 신호가 상한 안에 안 옴)
 //   L 진행 신호가 보이는데 무변화 종료 규칙·상한으로 끝냄(대기 상한이 처리 시간보다 짧음)
+//   O 창이 가려진 채 잰 멈춤 측정(측정만 무효 — 기능 판정은 따로 남는다)
 //   H 선행 챕터의 제품 결함에 막혀 돌리지 않음(도구 오류가 아니라 제품 결함의 여파)
-import type { Case, CaseResult, Step, ToolErrorKind } from "./types.ts";
+import type { Case, CaseResult, Step, StepResult, ToolErrorKind } from "./types.ts";
 
 export type { ToolErrorKind };
 
@@ -22,6 +23,7 @@ export const TOOL_ERROR_LABEL: Record<ToolErrorKind, string> = {
   L: "무변화 종료 규칙이 너무 짧음(진행 중인데 끝냄)",
   M: "선행 계산 미완료(서버 비동기 계산이 안 끝났는데 누름)",
   N: "동시 실행(같은 탭·같은 Dataset 에서 챕터 두 개가 동시에 돎)",
+  O: "측정 무효(창 가림 — 가려진 창에서 잰 멈춤 측정)",
 };
 
 const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
@@ -35,6 +37,7 @@ const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
   L: "케이스 maxWaitSec 를 서버 처리 시간보다 길게 정하고, 진행 신호를 wait.progress 로 적어 다시 실행",
   M: "서버 계산이 끝날 때까지 기다린 뒤 다시 실행(준비 신호 ready 의 상한 timeoutSec 를 늘리거나 선행 계산을 먼저 끝냄)",
   N: "같은 대상을 쓰는 앞 챕터(잠금 소유자)가 끝난 뒤 다시 실행 — 같은 탭·Dataset 을 쓰는 라운드를 동시에 돌리지 않음",
+  O: "창이 보이게 된 뒤 재측정 — 시험 창을 다른 창으로 가리지 않음(기능 판정은 그대로)",
 };
 
 /** 스텝이 던지면 케이스가 FAIL 이 아니라 NA(도구 판정 불가)로 끝난다. */
@@ -118,6 +121,8 @@ const isExcludedNa = (r: Pick<CaseResult, "status" | "toolError" | "blockedBy">)
 
 /** 도구 오류(NA A~G)로 제외된 결과의 수. 「해당 없음」(케이스 status:"na")과 선행 결함에 막힌 것(H)은 세지 않는다. */
 export const toolErrorCount = (results: Pick<CaseResult, "status" | "toolError">[]): number => results.filter(isToolNa).length;
+/** 창이 가려진 채 재서 무효가 된 멈춤 측정의 수(O). 케이스의 기능 판정과 따로 센다 */
+export const measureInvalidCount = (results: Pick<CaseResult, "steps">[]): number => results.reduce((n, r) => n + r.steps.filter((s) => s.measure?.verdict === "invalid").length, 0);
 /** 선행 챕터의 제품 결함에 막혀 돌리지 않은 결과의 수(H). 도구 오류가 아니다. */
 export const blockedCount = (results: Pick<CaseResult, "status" | "blockedBy">[]): number => results.filter(isBlockedNa).length;
 
@@ -132,7 +137,7 @@ export interface ExcludedInfo {
  * 제외 시트의 줄. symptomOf 는 결과 하나의 「현상」 문장을 만들어 주는 함수.
  * 같은 (챕터, 화면, 요소, 동작, 사유)는 한 줄로 합치고 횟수를 센다. 줄마다 <라운드>-X-<NN> 번호를 붙인다.
  */
-export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) => string, ctx: { round?: string; info?: (r: CaseResult) => ExcludedInfo } = {}): ExcludedRow[] {
+export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) => string, ctx: { round?: string; info?: (r: CaseResult) => ExcludedInfo; /** 측정 무효(O) 줄의 자리: 그 스텝의 화면·요소·동작 */ stepInfo?: (r: CaseResult, s: StepResult) => ExcludedInfo } = {}): ExcludedRow[] {
   const round = ctx.round ?? "R00";
   const rows: ExcludedRow[] = [];
   const byKey = new Map<string, ExcludedRow>();
@@ -167,6 +172,39 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
     };
     byKey.set(key, row);
     rows.push(row);
+  }
+  // 측정 무효(O): 기능 판정과 따로, 창이 가려진 채 잰 스텝을 줄로 올린다(그 케이스의 기능 판정은 그대로)
+  for (const r of results) {
+    for (const s of r.steps) {
+      if (s.measure?.verdict !== "invalid") continue;
+      const info = ctx.stepInfo?.(r, s) ?? {};
+      const chapter = info.chapter ?? "";
+      const screen = info.screen ?? "";
+      const element = info.element ?? s.desc;
+      const verb = info.verb ?? "실행";
+      const key = [chapter, screen, element, verb, "O"].join("\u0001");
+      const hit = byKey.get(key);
+      if (hit) {
+        hit.count++;
+        if (!hit.cases.includes(r.id)) hit.cases.push(r.id);
+        continue;
+      }
+      const row: ExcludedRow = {
+        no: `${round}-X-${String(rows.length + 1).padStart(2, "0")}`,
+        id: r.id,
+        cases: [r.id],
+        count: 1,
+        title: r.title,
+        chapter, screen, element, verb, kind: "O", key,
+        symptom: `${screen}에서 「${element}」 「${verb}」 중 멈춤 측정 — ${s.measure.summary}`,
+        reason: `O ${TOOL_ERROR_LABEL.O}: ${s.measure.why ?? "-"}`,
+        action: EXCLUDED_ACTION.O,
+        note: `측정만 무효 — 기능 판정은 ${r.status}(따로 남음)${s.measure.remeasured ? ` · 재측정: ${s.measure.remeasured}` : ""}`,
+        evidence: s.shot,
+      };
+      byKey.set(key, row);
+      rows.push(row);
+    }
   }
   return rows;
 }

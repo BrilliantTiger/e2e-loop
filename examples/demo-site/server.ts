@@ -65,6 +65,9 @@ Bun.serve({
     if (u.pathname === "/items")
       return html(layout("항목", `<h1>항목</h1><ul id="list">${items.map((i) => `<li>${i.name} <button class="del" data-id="${i.id}">삭제</button></li>`).join("")}</ul><p id="count"></p><a href="/">홈으로</a>`, `fetch('/api/items').then(r=>r.json()).then(j=>{document.querySelector('#count').textContent='총 '+j.length+'개';});
 document.querySelectorAll('.del').forEach(b=>b.onclick=async()=>{await fetch('/api/items/'+b.dataset.id,{method:'DELETE'});location.reload();});`));
+    // 멈춤 측정 시험용(링크하지 않음): 「오래 걸림」은 1.3초 동안 화면을 붙잡고, 「바로」는 곧장 글을 바꾼다
+    if (u.pathname === "/busy")
+      return html(layout("멈춤", `<h1>멈춤</h1><button id="slow">오래 걸림</button><button id="fast">바로</button><p id="out"></p>`, `document.querySelector('#slow').onclick=()=>{const t=performance.now();while(performance.now()-t<1300){}document.querySelector('#out').textContent='끝';};document.querySelector('#fast').onclick=()=>{document.querySelector('#out').textContent='바로 끝';};`));
     if (u.pathname === "/anim")
       return html(layout("애니메이션", `<h1>애니메이션</h1><div id="box" style="position:fixed;top:140px;left:0;width:80px;height:80px;background:#c33"></div>`, `let x=0;const b=document.querySelector('#box');const f=()=>{x=(x+9)%1400;b.style.left=x+'px';requestAnimationFrame(f)};requestAnimationFrame(f);`));
     if (u.pathname === "/upload")

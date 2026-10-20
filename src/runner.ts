@@ -14,6 +14,7 @@ import { SLICED_EVAL_WARNING, looksTruncated, slicesValue } from "./judge.ts";
 import { MAX_WAIT_MS, SINGLE_STATE_WARNING, singleEndState, waitEndState } from "./waits.ts";
 import { isRowSel, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, describeFound, labelOnly } from "./finders.ts";
+import { bringVisible, freezeArm, freezeRead, judgeFreeze } from "./freeze.ts";
 
 export interface RunCtx {
   project: Project;
@@ -36,6 +37,8 @@ export interface RunCtx {
 
 /** 대상 요소를 누르거나 채우는 동작(누르기 전 대기를 쓸 수 있는 스텝) */
 const ACT_OPS = new Set(["click", "dblclick", "hover", "fill", "select", "check", "press"]);
+/** 멈춤을 재는 스텝: 화면을 열거나 누르는 동작 */
+const MEASURE_OPS = new Set(["goto", "click", "dblclick", "fill", "select", "check", "press"]);
 
 const safe = (s: string) => s.replace(/[^\w.-]+/g, "_").slice(0, 80);
 
@@ -324,8 +327,53 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     }
   };
 
+  // 멈춤 측정: 누르는 스텝마다 잰다(기능 판정과 따로). 누른 뒤 이어지는 처리까지 담도록 다음 스텝을 시작하기 전에 읽는다
+  const measuring = (cfg.freeze?.mode ?? "on") === "on";
+  const limitMs = cfg.freeze?.limitMs ?? 1000;
+  let open: { sr: StepResult; step: Step } | undefined;
+  const closeMeasure = async () => {
+    if (!open) return;
+    const { sr, step } = open;
+    open = undefined;
+    const raw = await freezeRead(page);
+    if (!raw) return; // 문서가 바뀌어(다른 화면으로 이동) 잰 것이 없다
+    const j = judgeFreeze(raw, limitMs);
+    const m: NonNullable<StepResult["measure"]> = (sr.measure = { verdict: j.verdict, summary: j.summary, why: j.why });
+    if (j.verdict === "freeze") res.warnings.push(`측정: ${j.why} — ${sr.desc}: ${j.summary} (기능 판정과 따로)`);
+    if (j.verdict !== "invalid") return;
+    // 창이 가려진 채 잰 것이라 무효다(오류 O): 창을 앞으로 가져와 보이게 한 뒤 다시 잰다
+    const shown = await bringVisible(page);
+    ctx.emit({ type: "measure-invalid", case: c.id, i: sr.i, why: j.why, shown });
+    if (!shown) {
+      m.why = `${j.why} — 창을 앞으로 가져오지 못해 재측정 못 함`;
+      return;
+    }
+    if (step.op !== "goto") {
+      m.why = `${j.why} — 창을 보이게 했음. 이 동작은 다시 누르지 않으므로 다음 라운드에 재측정(다음 스텝부터는 보이는 창에서 잼)`;
+      return;
+    }
+    // 화면 열기는 다시 해도 상태가 바뀌지 않으니 그 자리에서 다시 잰다
+    try {
+      await page.goto(abs(step.url, cfg.baseUrl));
+    } catch (e: any) {
+      if (browserGone(e)) throw e;
+      m.why = `${j.why} — 재측정하려고 다시 열다 실패: ${String(e?.message ?? e).slice(0, 120)}`;
+      return;
+    }
+    await freezeArm(page);
+    await sleep(1500);
+    const again = await freezeRead(page);
+    if (!again) return;
+    const j2 = judgeFreeze(again, limitMs);
+    m.remeasured = `${j2.verdict === "ok" ? "멈춤 없음" : j2.verdict === "freeze" ? j2.why : `여전히 무효(${j2.why})`} — ${j2.summary}`;
+    if (j2.verdict === "invalid") return;
+    m.verdict = j2.verdict;
+    if (j2.verdict === "freeze") res.warnings.push(`측정(창이 보이게 된 뒤 재측정): ${j2.why} — ${sr.desc}: ${j2.summary} (기능 판정과 따로)`);
+  };
+
   let readyDone = !c.ready;
   for (let i = 0; i < steps.length; i++) {
+    await closeMeasure();
     const s0 = steps[i]!;
     let s: Step = s0;
     const sr: StepResult = { i, op: s0.op, desc: describe(s0), status: "ok", ms: 0, at: Date.now() - t0 };
@@ -375,6 +423,8 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
           if (!sr.found) sr.found = `글자 「${w.text ?? ""}」 (켜진 뒤에 누름)`;
         }
       }
+      const measureThis = measuring && MEASURE_OPS.has(s.op);
+      if (measureThis && s.op !== "goto") await freezeArm(page);
       switch (s.op) {
         case "goto": {
           await page.goto(abs(s.url, cfg.baseUrl));
@@ -539,6 +589,10 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
         default:
           throw new Error(`알 수 없는 스텝: ${s.op}`);
       }
+      if (measureThis) {
+        if (s.op === "goto") await freezeArm(page); // 새 문서: 열린 뒤부터 잰다
+        open = { sr, step: s };
+      }
     } catch (e: any) {
       if (browserGone(e)) throw e; // 라운드가 브라우저를 다시 띄워 이 케이스를 한 번 더 돌린다
       sr.status = "fail";
@@ -575,6 +629,7 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     }
   }
 
+  await closeMeasure().catch(() => {});
   // 케이스가 끝났을 때 남은 오류 신호
   const d = await page.drain().catch(() => ({ console: [], pageErrors: [], failedRequests: [] }));
   res.console = d.console;

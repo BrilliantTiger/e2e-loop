@@ -33,6 +33,7 @@ const call = async (m) => {
     }
     case "goto": await page.goto(m.url); await page.waitForLoadState("load").catch(() => {}); return null;
     case "reload": await page.reload(); return null;
+    case "front": if (typeof page.bringToFront === "function") await page.bringToFront(); return null;
     case "click": await page.click(m.sel, { timeout: m.timeout, label: m.label }); return null;
     case "dblclick": await page.dblclick(m.sel, { timeout: m.timeout }); return null;
     case "hover": await page.hover(m.sel, { timeout: m.timeout }); return null;
@@ -128,6 +129,9 @@ class EgoPage implements DPage {
   async goto(url: string) {
     await this.call({ op: "goto", url }, 45000);
     await this.hooks();
+  }
+  async front() {
+    await this.call({ op: "front" }, 8000);
   }
   async reload() {
     await this.call({ op: "reload" }, 45000);

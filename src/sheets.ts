@@ -8,7 +8,7 @@ import { isIssue } from "./issues.ts";
 import { coverage } from "./coverage.ts";
 import { diffWithPrevious, fixHint, trend } from "./report.ts";
 import { readComments, type Comment } from "./comments.ts";
-import { blockedCount, elementOf, excludedAllTsv, excludedRows, excludedTsv, markRepeats, mergeExcludedAcross, symptomSentence, toolErrorCount, verbOf, type ExcludedRow } from "./toolerror.ts";
+import { blockedCount, elementOf, excludedAllTsv, excludedRows, excludedTsv, markRepeats, measureInvalidCount, mergeExcludedAcross, symptomSentence, toolErrorCount, verbOf, type ExcludedRow } from "./toolerror.ts";
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const clip = (s: unknown, n = 300) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -381,7 +381,7 @@ export function renderHuman(project: Project, meta: RoundMeta, verdict: string, 
   let vid = 0;
   const caseBlock = (r: CaseResult) => {
     const steps = r.steps
-      .map((x) => `<tr class="${x.status}"><td>${x.i + 1}</td><td>${esc(x.desc)}${x.found ? `<br><span class="meta">찾은 요소: ${esc(x.found)}</span>` : ""}</td><td>${x.status === "ok" ? "통과" : x.status === "fail" ? "실패" : "건너뜀"}</td><td>${x.ms}ms</td><td>${x.shot ? `<a href="${esc(x.shot)}" target="_blank"><img loading="lazy" src="${esc(x.shot)}"></a>` : ""}</td></tr>${x.error ? `<tr class="err"><td></td><td colspan="4">${esc(x.error)}</td></tr>` : ""}${x.api ? `<tr class="api"><td></td><td colspan="4">API ${esc(x.api.method)} ${esc(x.api.url)} → ${x.api.status ?? "-"}${x.api.responseBody ? ` · ${esc(clip(x.api.responseBody, 160))}` : ""}</td></tr>` : ""}`)
+      .map((x) => `<tr class="${x.status}"><td>${x.i + 1}</td><td>${esc(x.desc)}${x.found ? `<br><span class="meta">찾은 요소: ${esc(x.found)}</span>` : ""}${x.measure && x.measure.verdict !== "ok" ? `<br><span class="meta">측정 ${x.measure.verdict === "freeze" ? "멈춤" : "무효(O, 창 가림)"}: ${esc(x.measure.why ?? "")} — ${esc(x.measure.summary)}${x.measure.remeasured ? ` · 재측정: ${esc(x.measure.remeasured)}` : ""}</span>` : ""}</td><td>${x.status === "ok" ? "통과" : x.status === "fail" ? "실패" : "건너뜀"}</td><td>${x.ms}ms</td><td>${x.shot ? `<a href="${esc(x.shot)}" target="_blank"><img loading="lazy" src="${esc(x.shot)}"></a>` : ""}</td></tr>${x.error ? `<tr class="err"><td></td><td colspan="4">${esc(x.error)}</td></tr>` : ""}${x.api ? `<tr class="api"><td></td><td colspan="4">API ${esc(x.api.method)} ${esc(x.api.url)} → ${x.api.status ?? "-"}${x.api.responseBody ? ` · ${esc(clip(x.api.responseBody, 160))}` : ""}</td></tr>` : ""}`)
       .join("");
     const sig = [...r.pageErrors.map((e) => `JS 오류: ${e}`), ...r.failedRequests.map((e) => `요청: ${e}`), ...r.console.map((e) => `console.error: ${e}`)];
     const chs = loadChapters(rdir, r);
@@ -442,7 +442,7 @@ table.tt{border-collapse:collapse;font-size:13px;margin-bottom:16px}.tt td,.tt t
 <h1>E2E ${meta.id} 결과 <span class="v ${verdict}">${verdict === "PASS" ? "통과" : verdict === "PASS_WITH_SKIPS" ? "통과(스킵 있음)" : verdict === "FAIL" ? "이슈 있음" : "미완료"}</span></h1>
 <div class="meta">${esc(meta.baseUrl)} · ${meta.scope === "full" ? "전체 라운드" : "부분 라운드"} · 브라우저 ${esc(meta.driver)} · 데이터 ${esc(meta.data.decision)} · 코드 ${esc(meta.code.head ?? "-")} · ${esc(meta.startedAt)} ~ ${esc(meta.finishedAt ?? "")}</div>
 ${meta.error ? `<div class="tw">⚠ ${esc(meta.error)}</div>` : ""}${(meta.evidenceWarnings ?? []).map((w) => `<div class="tw">증거: ${esc(w)}</div>`).join("")}
-<div class="cards"><div class="card"><b style="color:var(--pass)">${s.PASS}</b>통과</div><div class="card"><b style="color:var(--fail)">${s.FAIL}</b>실패</div><div class="card"><b>${s.FLAKY}</b>불안정</div><div class="card"><b>${s.BLOCKED}</b>검증 못 함</div><div class="card"><b>${s.SKIP}</b>스킵</div><div class="card"><b>${s.NA - toolErrorCount(results) - blockedCount(results)}</b>해당 없음</div><div class="card"><b>${toolErrorCount(results)}</b>도구 오류(NA)</div><div class="card"><b>${blockedCount(results)}</b>선행 결함에 막힘(H)</div><div class="card"><b>${s.total}</b>전체</div><div class="card"><b>${warned.length}</b>경고</div></div>
+<div class="cards"><div class="card"><b style="color:var(--pass)">${s.PASS}</b>통과</div><div class="card"><b style="color:var(--fail)">${s.FAIL}</b>실패</div><div class="card"><b>${s.FLAKY}</b>불안정</div><div class="card"><b>${s.BLOCKED}</b>검증 못 함</div><div class="card"><b>${s.SKIP}</b>스킵</div><div class="card"><b>${s.NA - toolErrorCount(results) - blockedCount(results)}</b>해당 없음</div><div class="card"><b>${toolErrorCount(results)}</b>도구 오류(NA)</div><div class="card"><b>${blockedCount(results)}</b>선행 결함에 막힘(H)</div>${measureInvalidCount(results) ? `<div class="card"><b>${measureInvalidCount(results)}</b>측정 무효(O)</div>` : ""}<div class="card"><b>${s.total}</b>전체</div><div class="card"><b>${warned.length}</b>경고</div></div>
 <h2>이슈 추이 <small class="meta">(이슈 = 실패 + 불안정 + 검증 못 한 것, 스킵은 제외. 0 이 되면 종료)</small></h2>
 <div class="trend">${tr.map((t) => `<div class="tb"><div class="bar" style="height:${Math.round(6 + (t.issues / maxIssues) * 80)}px;background:${t.issues ? "var(--fail)" : "var(--pass)"}"></div><b>${t.issues}</b><span>${t.round}${t.scope === "partial" ? "·부분" : ""}</span></div>`).join("")}</div>
 <table class="tt"><tr><th>라운드</th><th>이슈</th><th>실패</th><th>불안정</th><th>검증 못 함</th><th>스킵</th><th>도구 오류(NA)</th><th>선행 결함에 막힘</th><th>통과</th><th>전체</th></tr>${tr.map((t) => `<tr><td>${t.round}${t.scope === "partial" ? " (부분)" : ""}</td><td><b>${t.issues}</b></td><td>${t.fail}</td><td>${t.flaky}</td><td>${t.blocked}</td><td>${t.skip}</td><td>${t.toolError}</td><td>${t.blockedByDefect}</td><td>${t.pass}</td><td>${t.total}</td></tr>`).join("")}</table>
@@ -489,11 +489,19 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
       const stepDef = failStep ? c?.steps[failStep.i - setupN] : c?.steps.at(-1);
       return { chapter: c?.chapter ?? `${screenOfCase(c)}|${c?.feature ?? c?.source_ref ?? "(기능 미지정)"}`, screen: screenOfCase(c), element: elementOf(stepDef, c ?? r, r.title), verb: verbOf(stepDef) };
     },
+    stepInfo: (r, sr) => {
+      const c = cases.find((x) => x.id === r.id);
+      const all = [...(cfg.auth?.setupSteps ?? []), ...(c?.steps ?? [])];
+      const stepDef = all[sr.i];
+      return { chapter: c?.chapter ?? `${screenOfCase(c)}|${c?.feature ?? c?.source_ref ?? "(기능 미지정)"}`, screen: screenOfCase(c), element: elementOf(stepDef, c ?? r, r.title), verb: verbOf(stepDef) };
+    },
   });
   // 같은 (화면, 요소, 동작)이 앞 라운드에서도 제외됐으면 「n회째」
   markRepeats(excluded, project.rounds().filter((r) => r.n < meta.n).map((r) => ({ round: r.id, rows: project.readJson<ExcludedRow[]>(`rounds/${r.id}/excluded_issues.json`, []) })));
   const blockedN = blockedCount(results);
-  const summaryLine = `이슈 ${issueCount} · 도구 오류(NA) ${toolErr} · 선행 결함에 막힘(H) ${blockedN} — 통과 ${s.PASS} · 실패 ${s.FAIL} · 불안정 ${s.FLAKY} · 검증 못 함 ${s.BLOCKED} · 스킵 ${s.SKIP} · 해당 없음 ${s.NA - toolErr - blockedN} / 전체 ${s.total}`;
+  const measureNa = measureInvalidCount(results);
+  const freezes = results.flatMap((r) => r.steps.filter((x) => x.measure?.verdict === "freeze").map((x) => ({ case: r.id, title: r.title, step: x.i + 1, desc: x.desc, why: x.measure!.why, summary: x.measure!.summary, status: r.status })));
+  const summaryLine = `이슈 ${issueCount} · 도구 오류(NA) ${toolErr} · 선행 결함에 막힘(H) ${blockedN}${measureNa ? ` · 측정 무효(O) ${measureNa}` : ""}${freezes.length ? ` · 멈춤 측정 ${freezes.length}` : ""} — 통과 ${s.PASS} · 실패 ${s.FAIL} · 불안정 ${s.FLAKY} · 검증 못 함 ${s.BLOCKED} · 스킵 ${s.SKIP} · 해당 없음 ${s.NA - toolErr - blockedN} / 전체 ${s.total}`;
   const diffLine = diff.prev ? `이전 ${diff.prev} 대비: 고쳐짐 ${diff.fixed.length} · 새로 깨짐 ${diff.regressed.length}${diff.regressed.length ? ` (회귀: ${diff.regressed.join(", ")})` : ""} · 계속 실패 ${diff.stillFailing.length} · 새 케이스 ${diff.newCases.length}` : undefined;
   const trendLine = tr.map((t) => `${t.round}${t.scope === "partial" ? "(부분)" : ""}=${t.issues}${t.toolError ? `(도구 오류 ${t.toolError})` : ""}${t.blockedByDefect ? `(선행 결함에 막힘 ${t.blockedByDefect})` : ""}`).join(" → ");
 
@@ -501,7 +509,9 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
     round: meta.id, verdict, scope: meta.scope, driver: meta.driver, data: meta.data, startedAt: meta.startedAt, finishedAt: meta.finishedAt,
     error: meta.error ?? null, code: meta.code, summary: s, issue_count: issueCount, diff, trend: tr,
     pendingFeedback: meta.pendingFeedback ?? [], injected: meta.injected ?? [], appliedFeedback: applied,
-    tasks, issues, tool_error_count: toolErr, blocked_by_defect_count: blockedN, excluded: excluded.map((x) => ({ ...x, comments: readComments(project).filter((c) => x.cases.includes(c.case)).map((c) => ({ id: c.id, author: c.author, text: c.text, status: c.status })) })),
+    tasks, issues, tool_error_count: toolErr, blocked_by_defect_count: blockedN,
+    // 멈춤 측정: 기능 판정과 따로. freeze 는 1초 넘게 멈춘 스텝(경고), measure_invalid 는 창이 가려져 무효가 된 측정 수(O, 제외 시트)
+    measure: { freeze: freezes, measure_invalid: measureNa }, excluded: excluded.map((x) => ({ ...x, comments: readComments(project).filter((c) => x.cases.includes(c.case)).map((c) => ({ id: c.id, author: c.author, text: c.text, status: c.status })) })),
     skipped: skipped.map((r) => ({ id: r.id, title: r.title, reason: r.reason })),
     warnings: warned.map((r) => ({ id: r.id, title: r.title, warnings: r.warnings })),
     coverage: { elements: { total: cov.elements.total, uncovered: cov.elements.uncovered }, cases: cov.cases, uncoveredSections: cov.sources.flatMap((x) => x.uncoveredSections.map((n) => `${x.title}: ${n}`)) },

@@ -53,6 +53,8 @@ export interface DPage {
   upload(sel: string, filePath: string): Promise<void>;
   /** sel 을 눌러 시작된 다운로드를 dir 에 저장한다. timeoutMs 안에 다운로드가 없으면 null */
   download(sel: string, dir: string, timeoutMs: number): Promise<{ filename: string; size: number; path: string } | null>;
+  /** 창(탭)을 앞으로 가져온다. 가려진 창에서는 브라우저가 그리기·타이머를 늦춰 멈춤 측정이 무효가 된다(오류 O) */
+  front?(): Promise<void>;
 }
 
 export interface Session {
