@@ -172,7 +172,7 @@ What to do:
 
 - Before saying it is finished, call `e2e_complete_check`. Say it is finished only when `complete: true`.
 - If the round limit is reached, escalate to the user.
-- If the same issue appears in 3 rounds in a row (`repeatLimit`, default 3), escalate to the user. If the user decides that a table needs more rounds before escalation, record it with `e2e_prestart repeatLimit` (for example 7). Never raise it on your own.
+- If the same issue appears in 7 rounds in a row (`repeatLimit`, default 7), escalate to the user. If the user wants a different limit, record it with `e2e_prestart repeatLimit` (2 or more). Never change it on your own.
 - Delete the test accounts you created when you finish (`e2e_account`).
 
 ## Do not

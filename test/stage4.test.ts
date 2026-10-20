@@ -148,8 +148,9 @@ test("라운드 상한: 전체 라운드가 상한에 닿으면 사용자에게 
   expect((precheck(p, { data: "keep" }) as any).ok).toBe(true);
 });
 
-test("같은 이슈가 3라운드 연속이면 사용자에게 올리고, 계속하기로 하면 같은 이슈로는 다시 묻지 않는다", () => {
+test("같은 이슈가 반복 한도(여기선 3으로 정함)만큼 연속이면 사용자에게 올리고, 계속하기로 하면 같은 이슈로는 다시 묻지 않는다", () => {
   const p = readyProject();
+  p.saveConfig({ ...p.config(), repeatLimit: 3 });
   for (const n of [1, 2]) addRound(p, n, [res("A", "FAIL"), res("B", n === 1 ? "FAIL" : "PASS")]);
   expect(repeatedIssues(p)).toEqual([]); // 2번뿐
   addRound(p, 3, [res("A", "FAIL"), res("B", "FAIL")]);
@@ -161,6 +162,7 @@ test("같은 이슈가 3라운드 연속이면 사용자에게 올리고, 계속
   expect((precheck(p, { data: "keep" }) as any).ok).toBe(true); // 이미 올렸으니 같은 이슈로는 다시 막지 않음
   // 스킵은 이슈가 아니므로 반복 이슈에 들지 않는다
   const q = readyProject();
+  q.saveConfig({ ...q.config(), repeatLimit: 3 });
   for (const n of [1, 2, 3]) addRound(q, n, [res("A", "SKIP"), res("B", "PASS")]);
   expect(repeatedIssues(q)).toEqual([]);
 });

@@ -67,7 +67,7 @@ server.registerTool("e2e_prestart", {
   description: "1라운드를 시작하기 전에 사용자에게 한 번에 물어야 할 것을 확인하고 답을 기록한다: ① 데이터 초기화(기본 안 함=keep, 초기화=reset 이면 초기화 명령을 프로젝트마다 한 번 등록) ② 라운드 상한(기본 10, 전체 라운드만 센다) ③ 로그인·테스트 계정(만들라고 하면 만드는 방법 — 화면·API·DB 스크립트 — 을 먼저 묻는다) ④ '영상·스크린샷에 화면이 그대로 남으니 테스트 데이터와 테스트 계정만 입력하라'는 안내. 인자 없이 부르면 남은 질문 목록만 돌려준다. 모두 마쳐야 e2e_round_start 가 시작된다.",
   inputSchema: {
     commentResponder: z.enum(["off", "answer", "fix"]).optional().describe("현황판 코멘트에 일회용 AI 로 자동 응답할지(기본 off). 사용자가 켜겠다고 한 경우에만 기록한다. answer=코드를 읽고 분석해 답만, fix=answer + 오너의 수정 지시는 코드까지"), responderAgent: z.enum(["claude", "codex"]).optional(),
-    project, dataPolicy: z.enum(["ask", "reset", "keep"]).optional(), resetCommand: z.string().optional(), resetCwd: z.string().optional(), maxRounds: z.number().optional(), repeatLimit: z.number().optional().describe("같은 이슈가 연속 몇 라운드면 사용자에게 올릴지(기본 3). 사용자가 더 돌리기로 했을 때만 올린다(예: 7)"),
+    project, dataPolicy: z.enum(["ask", "reset", "keep"]).optional(), resetCommand: z.string().optional(), resetCwd: z.string().optional(), maxRounds: z.number().optional(), repeatLimit: z.number().optional().describe("같은 이슈가 연속 몇 라운드면 사용자에게 올릴지(기본 7). 사용자가 정한 값만 기록한다(2 이상)"),
     login: z.enum(["none", "provided"]).optional(), loginSetupSteps: z.array(step).optional().describe("케이스마다 맨 앞에서 실행할 로그인 스텝"), loginLocalStorage: z.record(z.string(), z.string()).optional(),
     account: z.object({ mode: z.enum(["none", "provided", "create"]), method: z.enum(["ui", "api", "db-script"]).optional(), note: z.string().optional() }).optional(),
     acknowledged: z.boolean().optional().describe("화면 노출 안내를 사용자에게 했을 때 true"),
@@ -158,7 +158,7 @@ server.registerTool("e2e_coverage", {
 server.registerTool("e2e_round_start", {
   title: "회차 시작",
   description: "전체 케이스를 처음부터 한 회차 실행한다(백그라운드). 시작 전에 데이터를 초기화할지 그대로 갈지 반드시 사용자에게 확인해야 한다 — data 를 주지 않고 정책이 ask 면 질문 선택지(needs_decision)가 돌아온다. data: reset(초기화 후 시작, 파괴적 동작도 점검) / keep(그대로, 파괴적 동작은 SKIP) / manual-reset-done(사용자가 직접 초기화 완료). 실시간 대시보드 주소가 함께 돌아온다. 회차가 도는 동안에는 코드·케이스를 고치지 않는다.",
-  inputSchema: { project, data: z.enum(["reset", "keep", "manual-reset-done"]).optional(), driver: z.enum(["auto", "ego", "chrome", "edge", "chromium"]).optional(), headless: z.boolean().optional(), only: z.array(z.string()).optional().describe("지정한 케이스만(부분 회차 — 완료 판정에는 쓸 수 없음)"), onlyFailed: z.boolean().optional().describe("직전 회차 실패 케이스만 다시(부분 회차)"), acknowledge_repeated: z.boolean().optional().describe("같은 이슈가 3라운드 연속이라 사용자에게 올렸고 사용자가 계속하기로 했을 때만 true"), cleanup_browsers: z.boolean().optional().describe("이전 라운드가 남긴 브라우저 프로세스가 있다고 사용자에게 알렸고 사용자가 끊기로 했을 때만 true(노드 스크립트·브라우저를 나무째 끊고 0개를 다시 확인)"), open: z.boolean().optional().describe("대시보드를 브라우저로 열기") },
+  inputSchema: { project, data: z.enum(["reset", "keep", "manual-reset-done"]).optional(), driver: z.enum(["auto", "ego", "chrome", "edge", "chromium"]).optional(), headless: z.boolean().optional(), only: z.array(z.string()).optional().describe("지정한 케이스만(부분 회차 — 완료 판정에는 쓸 수 없음)"), onlyFailed: z.boolean().optional().describe("직전 회차 실패 케이스만 다시(부분 회차)"), acknowledge_repeated: z.boolean().optional().describe("같은 이슈가 repeatLimit(기본 7)라운드 연속이라 사용자에게 올렸고 사용자가 계속하기로 했을 때만 true"), cleanup_browsers: z.boolean().optional().describe("이전 라운드가 남긴 브라우저 프로세스가 있다고 사용자에게 알렸고 사용자가 끊기로 했을 때만 true(노드 스크립트·브라우저를 나무째 끊고 0개를 다시 확인)"), open: z.boolean().optional().describe("대시보드를 브라우저로 열기") },
 }, wrap(((a: any) => A.aRoundStart({ ...a, acknowledgeRepeated: a.acknowledge_repeated, cleanupBrowsers: a.cleanup_browsers })) as any));
 
 server.registerTool("e2e_round_status", {
