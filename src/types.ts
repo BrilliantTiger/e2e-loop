@@ -91,6 +91,10 @@ export interface Config {
     cookies?: { name: string; value: string; url?: string; domain?: string; path?: string }[];
     /** 케이스마다 맨 앞에 실행할 스텝(로그인 등) */
     setupSteps?: Step[];
+    /** 로그인 화면 주소(정규식). 시험 도중 이 화면으로 튕기면 로그인 만료(오류 V) */
+    loginPath?: string;
+    /** 심을 토큰의 남은 시간이 이보다 짧으면(분) 시작하지 않는다. 기본 240 */
+    minRemainingMin?: number;
   };
   crawl: {
     maxPages: number;
@@ -192,7 +196,7 @@ export interface ObservedApi {
 export type Verdict = "PASS" | "FAIL" | "FLAKY" | "BLOCKED" | "NA" | "SKIP";
 
 /** 도구 오류의 원인: A 오지 않을 상태를 기다림 · B 줄 번호 재사용 · C 요소 찾는 방법이 화면과 다름 · D 그리기 전에 읽음 · E 기대가 기획서와 다름 · F 앞 단계가 실패했는데 뒤 단계를 계속 누름 · G 판정용 문자열을 잘라서 비교 · L 진행 중인데 무변화 종료 규칙으로 끝냄 · M 서버 비동기 계산이 안 끝났는데 누름 · N 같은 탭·같은 Dataset 에서 챕터 두 개가 동시에 돎 · O 창이 가려진 채 잰 멈춤 측정(측정 무효) · U 화면 열기의 멈춤이 재현되지 않음(첫 로드 비용·동시 부하) · P 판정식 안에 다른 Dataset 전용 값을 박음 · Q Dataset 특성 선언과 어긋난 기대 · R 선행 챕터가 도구 오류로 끝나 하위 챕터를 돌리지 않음 · S 기획서와 화면설계서가 다른 기대 */
-export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "U";
+export type ToolErrorKind = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "U" | "V";
 
 export interface StepResult {
   i: number;

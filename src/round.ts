@@ -15,6 +15,7 @@ import { prestartStatus } from "./prestart.ts";
 import { ChapterGuard, DefectGuard, chapterName } from "./chapter.ts";
 import { carriedE, carriedResult } from "./carry.ts";
 import { readRetest, retestSelection, updateRetest } from "./retest.ts";
+import { tokenProblem } from "./authexp.ts";
 import { acquire, lockKeys, release, releaseAll } from "./locks.ts";
 import { cleanupOwn, cleanupStale, describeProcs, staleBrowserProcs, waitNoStale } from "./procs.ts";
 
@@ -137,6 +138,9 @@ export function precheck(project: Project, opts: StartOpts): { ok: true; decisio
         ],
       },
     };
+  // 남은 시간이 짧은 토큰을 그대로 쓰면 시험 도중 만료돼 로그인 화면으로 튕긴다(오류 V)
+  const tp = tokenProblem(cfg);
+  if (tp) return { ok: false, error: tp };
   if (opts.retest && !readRetest(project).length) return { ok: false, error: "재시험 대기열이 비어 있습니다(선행 도구 오류로 돌리지 않은 케이스가 없음). retest 없이 시작하세요." };
   if (d === "reset" && !cfg.data.resetCommand) return { ok: false, error: "data=reset 인데 resetCommand 가 없습니다. e2e_init 으로 초기화 명령을 설정하거나, 직접 초기화했다면 manual-reset-done 으로 시작하세요." };
   return { ok: true, decision: d };

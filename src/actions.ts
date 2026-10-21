@@ -58,7 +58,7 @@ export async function aDoctor(a: { fix?: boolean; confirm?: string[]; dryRun?: b
 export async function aInit(a: {
   project?: string; baseUrl?: string; driver?: DriverName; headless?: boolean; dataPolicy?: "ask" | "reset" | "keep";
   resetCommand?: string; resetCwd?: string; resetScope?: "round" | "case"; codeRoot?: string;
-  authLocalStorage?: Record<string, string>; authSetupSteps?: Step[]; destructivePattern?: string; acceptedSkips?: string[];
+  authLocalStorage?: Record<string, string>; authSetupSteps?: Step[]; authLoginPath?: string; authMinRemainingMin?: number; destructivePattern?: string; acceptedSkips?: string[];
   crawl?: Partial<Config["crawl"]>; probes?: "auto" | "off"; dashboardPort?: number; viewport?: { width: number; height: number }; evidenceLimitMB?: number;
 }) {
   const p = proj(a.project);
@@ -74,6 +74,8 @@ export async function aInit(a: {
   if (a.codeRoot) c.codeRoot = a.codeRoot;
   if (a.authLocalStorage) c.auth = { ...(c.auth ?? {}), localStorage: a.authLocalStorage };
   if (a.authSetupSteps) c.auth = { ...(c.auth ?? {}), setupSteps: a.authSetupSteps };
+  if (a.authLoginPath !== undefined) c.auth = { ...(c.auth ?? {}), loginPath: a.authLoginPath || undefined };
+  if (a.authMinRemainingMin !== undefined) c.auth = { ...(c.auth ?? {}), minRemainingMin: a.authMinRemainingMin };
   if (a.destructivePattern) c.destructivePattern = a.destructivePattern;
   if (a.acceptedSkips) c.acceptedSkips = a.acceptedSkips;
   if (a.crawl) c.crawl = { ...c.crawl, ...a.crawl };

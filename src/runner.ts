@@ -17,6 +17,7 @@ import { LABEL_ONLY_WARNING, describeFound, labelOnly } from "./finders.ts";
 import { bringVisible, freezeArm, freezeEnsure, freezeRead, judgeFreeze } from "./freeze.ts";
 import { HARD_VALUE_WARNING, datasetConflicts, datasetOf, describeHard, fillDataset, hardValues, hardValuesIn, stepApplies, usesDataset } from "./dataset.ts";
 import { basisDiffers, basisText, hasBasis, isExpectation } from "./basis.ts";
+import { onLoginScreen, unauthorized } from "./authexp.ts";
 
 export interface RunCtx {
   project: Project;
@@ -480,6 +481,11 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       switch (s.op) {
         case "goto": {
           await page.goto(abs(s.url, cfg.baseUrl));
+          // 로그인 화면으로 튕겼으면 로그인이 만료된 것이다 — 그 화면에서 읽지 않는다(오류 V)
+          if (cfg.auth?.loginPath) {
+            const at = new URL(await page.url(), cfg.baseUrl).pathname;
+            if (onLoginScreen(cfg, at, new URL(abs(s.url, cfg.baseUrl)).pathname)) throw new ToolError("V", `로그인 화면(${at})으로 튕김 — ${s.url} 로 갔는데 로그인이 만료돼 판정하지 않음`);
+          }
           // 선행 챕터에 기대는 케이스가 목표 화면으로 갔는데 다른 화면(예: 선행 단계 화면)에 머물면 선행 단계가 안 끝난 것이다.
           // 그 화면에서 읽기를 60초씩 기다리지 않고 바로 「선행 미완료」 NA(H)로 끝낸다
           if (c.requires?.length && c.screen && screenMatches(new URL(abs(s.url, cfg.baseUrl)).pathname, c.screen)) {
@@ -715,6 +721,16 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
     // 도구가 할 수 없는 일이지 사이트의 결함이 아니다 — 검증하지 못한 것으로 둔다
     res.status = "BLOCKED";
     res.reason = osBlocked;
+  }
+  // 실패한 뒤 화면이 로그인 화면이거나 401 을 받았다면 시험 도중 로그인이 만료된 것이다 — 결함으로 세지 않는다(오류 V)
+  // 튕긴 화면에서 값을 못 읽은 것(D)도 로그인 만료 탓이다
+  if (failedAt >= 0 && (!toolErr || toolErr.kind === "D") && !osBlocked && !skipped && cfg.auth) {
+    const at = await page.url().then((u) => new URL(u, cfg.baseUrl).pathname).catch(() => "");
+    const u401 = unauthorized(d.failedRequests);
+    if ((at && onLoginScreen(cfg, at)) || u401.length) {
+      toolErr = { kind: "V", detail: `로그인 만료 — ${at && onLoginScreen(cfg, at) ? `로그인 화면(${at})으로 튕김` : ""}${u401.length ? `${at && onLoginScreen(cfg, at) ? " · " : ""}401 받음: ${u401.slice(0, 3).join(", ")}` : ""}. 판정하지 않음: ${String(res.steps[failedAt]?.error ?? "").slice(0, 160)}` };
+      prereqIncomplete = undefined;
+    }
   }
   // 판정식에 다른 Dataset 전용 값(예: 다른 Dataset 의 「안 보냄」 표 목록)을 박았다면 이 Dataset 의 의도된 동작을 FAIL 로 본 것일 수 있다(오류 P)
   const hard = hardValues(c, cfg.datasets);

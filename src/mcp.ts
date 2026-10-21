@@ -113,6 +113,8 @@ server.registerTool("e2e_init", {
     resetCwd: z.string().optional(), resetScope: z.enum(["round", "case"]).optional(), codeRoot: z.string().optional().describe("회차 도중 코드 변경 감지용 git 저장소 경로(기본: 프로젝트 루트)"),
     authLocalStorage: z.record(z.string(), z.string()).optional().describe("로그인 토큰 등 미리 심을 localStorage. 값에 ${ENV} 사용 가능"),
     authSetupSteps: z.array(step).optional().describe("케이스마다 맨 앞에서 실행할 스텝(로그인 등)"),
+    authLoginPath: z.string().optional().describe("로그인 화면 주소(정규식, 예: ^/login). 시험 도중 이 화면으로 튕기면 로그인 만료 NA(V). 빈 문자열이면 제거"),
+    authMinRemainingMin: z.number().optional().describe("심을 토큰(JWT)의 남은 시간이 이보다 짧으면(분) 라운드를 시작하지 않음. 기본 240"),
     destructivePattern: z.string().optional(), acceptedSkips: z.array(z.string()).optional(),
     crawl: z.object({ maxPages: z.number().optional(), maxDepth: z.number().optional(), seeds: z.array(z.string()).optional(), ignore: z.array(z.string()).optional(), reveal: z.boolean().optional(), maxRevealPerPage: z.number().optional() }).optional(),
     probes: z.enum(["auto", "off"]).optional(), evidenceLimitMB: z.number().optional().describe("증거(영상·스크린샷) 보관 용량 상한(MB, 기본 4096)"), dashboardPort: z.number().optional(), viewport: z.object({ width: z.number(), height: z.number() }).optional(),
