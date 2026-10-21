@@ -13,6 +13,7 @@
 //   S 근거가 기획서가 아니라 화면설계서이고 둘이 다른 기대 — 어느 쪽을 따를지 정해질 때까지 결함으로 세지 않는다
 //   U 화면 열기에서 잰 멈춤이 다시 열면 재현되지 않음(첫 로드 비용·동시 부하 — 판정에서 뺀다)
 //   V 로그인 만료(남은 토큰을 다시 써 시험 도중 만료 — 로그인 화면으로 튕기거나 401)
+//   X 확인 없는 통과(마지막 동작 뒤에 결과 기대가 없어 「오류 없음」만으로 PASS 로 봄)
 //   H 선행 챕터의 제품 결함에 막혀 돌리지 않음(도구 오류가 아니라 제품 결함의 여파)
 import type { Case, CaseResult, Step, StepResult, ToolErrorKind } from "./types.ts";
 
@@ -36,6 +37,7 @@ export const TOOL_ERROR_LABEL: Record<ToolErrorKind, string> = {
   S: "근거가 서로 다른 기대(기획서와 화면설계서가 다른데 어느 쪽을 따를지 정해지지 않음)",
   U: "멈춤 미재현(화면 열기의 멈춤이 다시 열면 안 남 — 첫 로드 비용·동시 부하)",
   V: "로그인 만료(남은 토큰을 다시 써 시험 도중 만료 — 로그인 화면으로 튕김·401)",
+  X: "확인 없는 통과(마지막 동작 뒤에 결과 기대가 없어 「오류 없음」만으로는 통과로 볼 수 없음)",
 };
 
 const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
@@ -56,6 +58,7 @@ const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
   S: "어느 쪽(기획서·화면설계서)을 따를지 사람이 정해 그쪽 근거로 기대를 고치고 differs 를 지운 뒤 다시 실행",
   U: "판정에서 뺌(제품 결함 아님) — 다음 라운드에도 멈추면 그때 멈춤으로 본다",
   V: "브라우저에서 새로 로그인해 토큰을 바꾼 뒤(남은 시간이 라운드보다 길게) 다시 실행 — 하위 챕터는 재시험 대기열(R)로 돈다",
+  X: "마지막 동작 뒤에 근거 있는 결과 기대(고른 값·저장된 값·안내가 사라짐 등)를 넣어 다시 실행 — 고를 값은 정규식·첫 후보가 아니라 근거의 값으로",
 };
 
 /** F 의 하위 항목: 일부러 만드는 실패·중지·장애의 조건이 이번에는 성립하지 않음 */
@@ -108,7 +111,7 @@ export const elementOf = (step: Step | undefined, c: Pick<Case, "title"> | undef
   return c?.title ?? fallback;
 };
 
-/** 제외 사유: 도구 오류(A~G·L~S·U·V), 선행 결함에 막힘 H, 챕터마다 같은 줄 반복 T(여러 챕터의 같은 줄을 합친 줄) */
+/** 제외 사유: 도구 오류(A~G·L~S·U·V·X), 선행 결함에 막힘 H, 챕터마다 같은 줄 반복 T(여러 챕터의 같은 줄을 합친 줄) */
 export type ExcludedKind = ToolErrorKind | "H" | "T";
 export const EXCLUDED_LABEL: Record<ExcludedKind, string> = { ...TOOL_ERROR_LABEL, H: "선행 결함에 막힘", T: "챕터마다 같은 줄 반복" };
 const EXCLUDED_ACTION: Record<ExcludedKind, string> = { ...TOOL_ERROR_ACTION, H: "시험은 고치지 말고 선행 챕터의 제품 결함을 고친 뒤 다시 실행", T: "한 번 고치면 모든 챕터에서 풀림" };

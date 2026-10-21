@@ -91,7 +91,7 @@ test("스텝에 panelTitle 을 쓰면 그 패널 제목이 뜬 뒤에 누른다"
     },
     click: async (s) => void log.push("click " + s),
   });
-  const r = await runCase(ctx, mk("P-OK", [{ op: "goto", url: "/p" }, { op: "click", sel: "#save", panelTitle: "대상 상세" }]));
+  const r = await runCase(ctx, mk("P-OK", [{ op: "goto", url: "/p" }, { op: "click", sel: "#save", panelTitle: "대상 상세" }, { op: "expect", sel: "#done", visible: true, basis: "POL-1" }]));
   expect(r.status).toBe("PASS");
   expect(polls).toBeGreaterThanOrEqual(3);
   expect(log).toEqual(["click #save"]);

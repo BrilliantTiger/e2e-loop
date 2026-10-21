@@ -42,6 +42,7 @@ test("prereq 스텝: 조건을 채우면 뒤 스텝이 그대로 돈다", async 
     { op: "goto", url: "/list" },
     { op: "prereq", name: "대상 줄을 찾았다", sel: "#row", count: 1 },
     { op: "click", sel: "#del" },
+    { op: "expect", sel: "#done", visible: true, basis: "POL-1" },
   ]));
   expect(r.status).toBe("PASS");
   expect(clicked).toEqual(["#del"]);

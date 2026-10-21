@@ -31,7 +31,7 @@ import { ROW_BY_NUMBER_HELP, rowByNumber, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, labelOnly } from "./finders.ts";
 import { TOAST_WARNING, isToastStep } from "./toast.ts";
 import { SLICED_EVAL_WARNING, TRUNCATED_EXPECT_WARNING, looksTruncated, slicesValue } from "./judge.ts";
-import { BASIS_WARNING, basisProblem, hasBasis, isExpectation, missingBasis } from "./basis.ts";
+import { BASIS_WARNING, basisProblem, hasBasis, isExpectation, missingBasis, uncheckedAction } from "./basis.ts";
 import { HARD_VALUE_WARNING, datasetConflicts, hardValues, usesDataset } from "./dataset.ts";
 const OPS = new Set(["goto", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "expect", "api", "screenshot", "eval", "probe", "gate", "prereq", "condition", "collect"]);
 const NEEDS_SEL = new Set(["click", "dblclick", "hover", "fill", "select", "check", "collect"]);
@@ -361,6 +361,11 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       else if (ds && !dsets?.[ds]) warns.push(`${c.id}: dataset 「${ds}」 이 설정에 없음 — e2e_dataset 으로 기록할 것`);
       // Dataset 특성 선언과 어긋난 기대는 실행 전에 막힌다(오류 Q)
       for (const x of datasetConflicts({ steps: c.steps, dataset: ds }, dsets, isExpectation)) warns.push(`${c.id}: ${x} — 고치기 전에는 실행하지 않고 NA(Q)`);
+    }
+    // 마지막 동작 뒤에 결과 기대가 없으면 「오류 없음」만으로 PASS 가 되지 않는다(오류 X)
+    if (c.type === "spec") {
+      const k = uncheckedAction(c.steps);
+      if (k !== undefined) warns.push(`${c.id}: 마지막 동작 #${k + 1} 뒤에 결과 기대가 없음 — 「오류 없음」만으로는 통과로 보지 않고 NA(X). 고른 값·저장된 결과를 근거와 대조하는 기대를 넣을 것`);
     }
     if (c.steps[0]!.op !== "goto" && !c.steps.some((s) => s.op === "goto")) warns.push(`${c.id}: goto 스텝이 없습니다. 케이스는 매번 새 브라우저에서 시작하므로 첫 스텝에서 이동해야 합니다.`);
     if ((c.type ?? "spec") === "spec" && !c.source_ref) warns.push(`${c.id}: source_ref(근거 위치)가 없습니다. 기획서의 어느 절/디자인의 어느 프레임인지 적어 두세요.`);

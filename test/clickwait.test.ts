@@ -49,7 +49,7 @@ test("업로드 모달: 「세는 중」이 사라지고 단추가 켜진 뒤에
     },
     click: async (s) => void log.push(`click ${s} tick=${tick}`),
   });
-  const r = await runCase(ctx, mk("U-1", [{ op: "goto", url: "/up" }, { op: "click", sel: "#upload", waitGone: "text=세는 중", waitEnabled: true }]));
+  const r = await runCase(ctx, mk("U-1", [{ op: "goto", url: "/up" }, { op: "click", sel: "#upload", waitGone: "text=세는 중", waitEnabled: true }, { op: "expect", sel: "#done", visible: true, basis: "POL-1" }]));
   expect(r.status).toBe("PASS");
   expect(log.length).toBe(1);
   expect(Number(log[0]!.split("tick=")[1])).toBeGreaterThanOrEqual(5);
@@ -73,8 +73,8 @@ test("토스트 expect 는 참고로만: 없거나 달라도 케이스는 통과
     { op: "goto", url: "/up" },
     { op: "click", sel: "#del" },
     { op: "expect", sel: ".Toastify__toast", text: "삭제되었습니다" },
-    { op: "api", method: "GET", url: "http://127.0.0.1:1/x", status: 200 },
-  ].slice(0, 3)));
+    { op: "expect", sel: "#done", visible: true, basis: "POL-1" },
+  ]));
   expect(r.status).toBe("PASS");
   expect(r.warnings.some((w) => w.startsWith("토스트 참고(판정 아님)"))).toBe(true);
   expect(r.steps[2]!.desc).toContain("토스트 참고만");

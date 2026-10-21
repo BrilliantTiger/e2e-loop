@@ -14,6 +14,20 @@ export function isExpectation(s: Step): boolean {
   return false;
 }
 
+/** 결과를 바꾸는 동작(누름·입력·고름·쓰기 API) */
+export function isAction(s: Step): boolean {
+  if (["click", "dblclick", "fill", "select", "check", "press"].includes(s.op)) return true;
+  return s.op === "api" && String(s.method ?? "GET").toUpperCase() !== "GET";
+}
+
+/** 마지막 동작 뒤에 결과 기대가 없으면 그 동작의 번호(0부터). 동작이 없거나 뒤에 기대가 있으면 undefined (오류 X) */
+export function uncheckedAction(steps: Step[]): number | undefined {
+  let last = -1;
+  for (let i = 0; i < steps.length; i++) if (isAction(steps[i]!)) last = i;
+  if (last < 0) return undefined;
+  return steps.slice(last + 1).some(isExpectation) ? undefined : last;
+}
+
 /** 근거: 글 하나(기획서 번호 또는 화면설계서 번호) 또는 { plan: 기획서, design: 화면설계서, differs: 둘이 다를 때 무엇이 다른지 } */
 export type Basis = string | { plan?: string; design?: string; differs?: string };
 

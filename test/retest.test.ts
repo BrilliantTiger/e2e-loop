@@ -148,7 +148,7 @@ test("시험 조건이 안 서면(파일이 안 바뀌어 장애 난 API 를 안
     expect(readRetest(p)[0]!.after).toBeUndefined();
     // 조건이 서면 그대로 누르고 판정한다
     changed = true;
-    const ok = await runCase(ctx, { ...c, steps: c.steps.slice(0, 3) });
+    const ok = await runCase(ctx, { ...c, steps: [...c.steps.slice(0, 3), { op: "expect", sel: "#done", visible: true, basis: "POL-1" }] });
     expect(ok.status).toBe("PASS");
     expect(ok.steps[1]!.desc).toContain("성립(diff.changed=true)");
     expect(clicks).toEqual(["#send"]);

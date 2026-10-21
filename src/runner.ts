@@ -16,7 +16,7 @@ import { isRowSel, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, describeFound, labelOnly } from "./finders.ts";
 import { freezeArm, freezeEnsure, freezeRead, judgeFreeze } from "./freeze.ts";
 import { HARD_VALUE_WARNING, datasetConflicts, datasetOf, describeHard, fillDataset, hardValues, hardValuesIn, stepApplies, usesDataset } from "./dataset.ts";
-import { basisDiffers, basisText, hasBasis, isExpectation } from "./basis.ts";
+import { basisDiffers, basisText, hasBasis, isExpectation, uncheckedAction } from "./basis.ts";
 import { onLoginScreen, unauthorized } from "./authexp.ts";
 
 export interface RunCtx {
@@ -752,6 +752,12 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   // 기획서와 화면설계서가 다르다고 적은 기대가 어긋났으면 어느 쪽이 맞는지 정해지지 않은 것이다 — 결함으로 세지 않는다(오류 S)
   if (failedAt >= 0 && !toolErr && !osBlocked && !skipped && !prereqIncomplete && basisDiffers(steps[failedAt])) {
     toolErr = { kind: "S", detail: `근거가 서로 다른 기대가 어긋남(${basisText(steps[failedAt]!.basis)}) — 어느 쪽을 따를지 정해지지 않아 판정하지 않음: ${String(res.steps[failedAt]?.error ?? "").slice(0, 200)}` };
+  }
+  // 마지막 동작 뒤에 결과 기대가 없으면 「오류 없음」만으로는 통과가 아니다 — 고른 값이 틀려도 PASS 로 남는다(오류 X)
+  if (c.type === "spec" && failedAt < 0 && !toolErr && !osBlocked && !skipped && res.status === "PASS") {
+    const ran = res.steps.filter((x) => x.status === "ok").map((x) => steps[x.i]!);
+    const k = uncheckedAction(ran);
+    if (k !== undefined) toolErr = { kind: "X", detail: `확인 없는 통과 — 마지막 동작(${describe(ran[k]!)}) 뒤에 결과 기대가 없어 「오류 없음」만으로는 통과로 보지 않음. 고른 값·저장된 결과를 근거와 대조하는 기대를 넣을 것` };
   }
   // 화면 글이 빈 것이 사이트의 JS 오류·서버 5xx 와 함께 나왔다면 도구 탓이 아니라 사이트의 결함이다 — FAIL 로 둔다
   const siteFault = res.pageErrors.length > 0 || res.failedRequests.some((r) => /^(5\d\d|ERR)\b/.test(r));
