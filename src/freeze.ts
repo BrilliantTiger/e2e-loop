@@ -160,15 +160,3 @@ export async function freezeRead(page: DPage): Promise<FreezeRaw | null> {
     return null;
   }
 }
-
-/** 창을 앞으로 가져와 보이고 포커스를 받을 때까지(최대 waitMs) 기다린다. 보이게 됐으면 true */
-export async function bringVisible(page: DPage, waitMs = 5000): Promise<boolean> {
-  await page.front?.().catch(() => {});
-  const t0 = Date.now();
-  for (;;) {
-    const st = await page.evaluate<{ v: boolean; f: boolean }>(`({ v: document.visibilityState === 'visible', f: document.hasFocus() })`).catch(() => ({ v: false, f: false }));
-    if (st.v && st.f) return true;
-    if (Date.now() - t0 >= waitMs) return false;
-    await new Promise((r) => setTimeout(r, 250));
-  }
-}

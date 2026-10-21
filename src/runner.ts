@@ -14,7 +14,7 @@ import { SLICED_EVAL_WARNING, looksTruncated, slicesValue } from "./judge.ts";
 import { MAX_WAIT_MS, SINGLE_STATE_WARNING, singleEndState, waitEndState } from "./waits.ts";
 import { isRowSel, translateSel } from "./rows.ts";
 import { LABEL_ONLY_WARNING, describeFound, labelOnly } from "./finders.ts";
-import { bringVisible, freezeArm, freezeEnsure, freezeRead, judgeFreeze } from "./freeze.ts";
+import { freezeArm, freezeEnsure, freezeRead, judgeFreeze } from "./freeze.ts";
 import { HARD_VALUE_WARNING, datasetConflicts, datasetOf, describeHard, fillDataset, hardValues, hardValuesIn, stepApplies, usesDataset } from "./dataset.ts";
 import { basisDiffers, basisText, hasBasis, isExpectation } from "./basis.ts";
 import { onLoginScreen, unauthorized } from "./authexp.ts";
@@ -77,7 +77,17 @@ export function describe(s: Step): string {
   }
 }
 
-async function runExpect(p: DPage, s: Step, base: string) {
+/** 요소가 입력 칸이면 그 값, 아니면 안에 든 입력 칸(input·textarea·select)의 값. 입력 칸 값은 innerText 에 실리지 않는다(오류 W) */
+async function fieldValues(p: DPage, sel: string): Promise<string[]> {
+  return p
+    .evaluate<string[]>(`(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; if (!e) return []; const isF = (x) => /^(INPUT|TEXTAREA|SELECT)$/.test(x.tagName) && !['hidden', 'password', 'button', 'submit', 'reset'].includes(x.type); const val = (x) => x.tagName === 'SELECT' ? (x.selectedOptions[0] ? x.selectedOptions[0].text : '') : (x.type === 'checkbox' || x.type === 'radio' ? '' : x.value); const fs = isF(e) ? [e] : [...e.querySelectorAll('input,textarea,select')].filter(isF); return fs.map((x) => String(val(x) ?? '').trim()).filter(Boolean); })()`)
+    .then((v) => (Array.isArray(v) ? v.map(String) : []))
+    .catch(() => []);
+}
+const fieldNote = (f: string[]) => `입력 칸 값으로 확인(${f.slice(0, 3).map((v) => `「${v.slice(0, 40)}」`).join(" ")}) — 입력 칸 값은 화면 글(innerText)에 안 실림`;
+
+async function runExpect(p: DPage, s: Step, base: string): Promise<string[]> {
+  const notes: string[] = [];
   const errs: string[] = [];
   /** 실제 칸이 비었거나 undefined·NaN — 사이트의 결함이 아니라 도구가 화면을 못 읽은 것(D) */
   const blanks: string[] = [];
@@ -114,11 +124,19 @@ async function runExpect(p: DPage, s: Step, base: string) {
     }
     if (s.text !== undefined) {
       const t = await p.text(sel).catch((e) => `<<${e}>>`);
-      if (t !== s.text) mismatch(s.text, t, `텍스트가 다름: 기대 "${s.text}" / 실제 "${t}" (${lab})`);
+      if (t !== s.text) {
+        const f = await fieldValues(p, sel);
+        if (f.some((v) => v === s.text)) notes.push(fieldNote(f));
+        else mismatch(s.text, t, `텍스트가 다름: 기대 "${s.text}" / 실제 "${t}"${f.length ? ` · 입력 칸 값 ${f.map((v) => `「${v}」`).join(" ")}` : ""} (${lab})`);
+      }
     }
     if (s.textContains !== undefined) {
       const t = await p.text(sel).catch((e) => `<<${e}>>`);
-      if (!t.includes(s.textContains)) mismatch(s.textContains, t, `텍스트에 "${s.textContains}" 없음: "${t.slice(0, 80)}" (${lab})`);
+      if (!t.includes(s.textContains)) {
+        const f = await fieldValues(p, sel);
+        if (f.some((v) => v.includes(s.textContains))) notes.push(fieldNote(f));
+        else mismatch(s.textContains, t, `텍스트에 "${s.textContains}" 없음: "${t.slice(0, 80)}"${f.length ? ` · 입력 칸 값 ${f.map((v) => `「${v}」`).join(" ")}` : ""} (${lab})`);
+      }
     }
     if (s.value !== undefined) {
       const v = await p.value(sel).catch((e) => `<<${e}>>`);
@@ -141,6 +159,7 @@ async function runExpect(p: DPage, s: Step, base: string) {
   if (errs.length) throw new Error(errs.join(" | "));
   if (blanks.length) throw new ToolError("D", `실제 값을 읽지 못함(빈 칸·undefined·NaN) — ${blanks.join(" | ")}`);
   if (truncs.length) throw new ToolError("G", `기대한 글이 잘린 글(…)이라 전체 글과 비교할 수 없음 — ${truncs.join(" | ")}`);
+  return notes;
 }
 
 /** 상태코드 기대값: 숫자, 숫자 배열, "2xx" "3xx", "<400" */
@@ -387,27 +406,10 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       freezeWarn(m.why, sr.desc, j.summary);
       return;
     }
-    // 창이 가려진 채 잰 것이라 무효다(오류 O): 창을 앞으로 가져와 보이게 한 뒤 다시 잰다
-    const shown = await bringVisible(page);
-    ctx.emit({ type: "measure-invalid", case: c.id, i: sr.i, why: j.why, shown });
-    if (!shown) {
-      m.why = `${j.why} — 창을 앞으로 가져오지 못해 재측정 못 함`;
-      return;
-    }
-    if (step.op !== "goto") {
-      m.why = `${j.why} — 창을 보이게 했음. 이 동작은 다시 누르지 않으므로 다음 라운드에 재측정(다음 스텝부터는 보이는 창에서 잼)`;
-      return;
-    }
-    const j2 = await remeasureGoto(step);
-    if (typeof j2 === "string") {
-      m.why = `${j.why} — 재측정하려고 ${j2}`;
-      return;
-    }
-    if (!j2) return;
-    m.remeasured = `${j2.verdict === "ok" ? "멈춤 없음" : j2.verdict === "freeze" ? j2.why : `여전히 무효(${j2.why})`} — ${j2.summary}`;
-    if (j2.verdict === "invalid") return;
-    m.verdict = j2.verdict;
-    if (j2.verdict === "freeze") freezeWarn(j2.why, sr.desc, j2.summary, "(창이 보이게 된 뒤 재측정)");
+    // 창이 가려진 채 잰 것이라 무효다(오류 O): 측정만 NA 로 두고 다음 라운드에 보이는 창에서 다시 잰다.
+    // 시험 창을 앞으로 끌어오지 않는다 — 사용자의 마우스·포커스를 뺏는다(Round 12 사용자 쪽 지시)
+    ctx.emit({ type: "measure-invalid", case: c.id, i: sr.i, why: j.why });
+    m.why = `${j.why} — 시험 창을 앞으로 끌어오지 않음(사용자 포커스를 뺏지 않음). 창이 보일 때 다음 라운드에 재측정`;
   };
 
   let readyDone = !c.ready;
@@ -481,6 +483,11 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
       switch (s.op) {
         case "goto": {
           await page.goto(abs(s.url, cfg.baseUrl));
+          // 손으로 쓴 케이스가 없는 주소(404)로 갔으면 사이트 결함이 아니라 케이스 주소가 틀린 것이다(오류 C). 404 를 기대하는 스텝(status: 404)은 그대로 둔다
+          if (c.type === "spec" && s.status !== 404 && !allowErrors) {
+            const code = await page.evaluate<number | undefined>(`(() => { const n = performance.getEntriesByType('navigation')[0]; return n && n.responseStatus; })()`).catch(() => undefined);
+            if (code === 404) throw new ToolError("C", `없는 주소로 감(404): ${s.url} — 케이스의 주소가 화면 주소와 다름. 화면 목록(기획서·코드의 경로)과 맞춰 고칠 것`);
+          }
           // 로그인 화면으로 튕겼으면 로그인이 만료된 것이다 — 그 화면에서 읽지 않는다(오류 V)
           if (cfg.auth?.loginPath) {
             const at = new URL(await page.url(), cfg.baseUrl).pathname;
@@ -525,7 +532,10 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
               sr.desc += " — 토스트 참고만(판정 안 함)";
               res.warnings.push(`토스트 참고(판정 아님): ${String(e?.message ?? e).slice(0, 160)}`);
             }
-          } else await runExpect(page, s, cfg.baseUrl);
+          } else {
+            const notes = await runExpect(page, s, cfg.baseUrl);
+            if (notes.length) sr.desc += ` — ${notes.join("; ")}`;
+          }
           break;
         case "collect": {
           // 목록이 여러 쪽이면 모든 쪽을 돌며 같은 이름 줄을 모은다(첫 줄·pop() 으로 읽지 않는다)

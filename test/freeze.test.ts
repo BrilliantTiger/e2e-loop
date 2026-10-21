@@ -33,45 +33,35 @@ test("측정 판정: 멈춤 없음 · Long Task 로 설명되는 1초 넘는 멈
 
 const mk = (id: string, steps: Case["steps"]): Case => ({ id, title: id, type: "spec", source_ref: "기획서 1", screen: "/visit", feature: "Visit key", chapter: "C22", steps });
 
-test("가려진 창: 측정만 NA(O), 창을 앞으로 가져와 화면 열기는 그 자리에서 다시 재고, 누름은 다음 라운드 재측정. 기능 판정은 PASS 그대로", async () => {
+test("가려진 창: 측정만 NA(O), 시험 창을 앞으로 끌어오지 않고(사용자 포커스를 뺏지 않음) 다음 라운드에 재측정. 기능 판정은 PASS 그대로", async () => {
   const log: string[] = [];
-  let reads = 0;
   let front = 0;
   let gotos = 0;
-  const hidden = raw({ hidden: true, gaps: [[0, 1008]] });
   const ctx = fakeCtx({
     goto: async () => void gotos++,
     front: async () => void front++,
-    evaluate: async (expr: string): Promise<any> => {
-      if (expr.includes("const gaps = z.gaps.slice()")) return [hidden, raw({}), hidden][reads++] ?? raw({});
-      if (expr.includes("v: document.visibilityState")) return { v: front > 0, f: front > 0 };
-      return true;
-    },
+    evaluate: async (expr: string): Promise<any> => (expr.includes("const gaps = z.gaps.slice()") ? raw({ hidden: true, gaps: [[0, 1008]] }) : true),
   }, log);
   const r = await runCase(ctx, mk("O-1", [{ op: "goto", url: "/visit" }, { op: "click", sel: "#open" }, { op: "expect", sel: "#out", text: "", basis: "POL-1" }]));
   expect(r.status).toBe("PASS"); // 기능 판정은 측정과 따로
-  expect(front).toBeGreaterThanOrEqual(1);
-  expect(gotos).toBe(2); // 화면 열기를 창이 보인 뒤 한 번 더
-  expect(r.steps[0]!.measure).toMatchObject({ verdict: "ok" });
-  expect(r.steps[0]!.measure!.remeasured).toContain("멈춤 없음");
+  expect(front).toBe(0); // 창을 끌어오지 않는다
+  expect(gotos).toBe(1); // 가려진 채로 다시 열어 재지 않는다
+  expect(r.steps[0]!.measure?.verdict).toBe("invalid");
   expect(r.steps[1]!.measure?.verdict).toBe("invalid");
+  expect(r.steps[1]!.measure?.why).toContain("시험 창을 앞으로 끌어오지 않음");
   expect(r.steps[1]!.measure?.why).toContain("다음 라운드에 재측정");
   expect(log.some((l) => l.includes('"type":"measure-invalid"'))).toBe(true);
-  expect(measureInvalidCount([r])).toBe(1);
+  expect(measureInvalidCount([r])).toBe(2);
   expect(toolErrorCount([r])).toBe(0); // 케이스가 NA 가 된 것은 아니다
   const rows = excludedRows([r], () => "-", { round: "R09", stepInfo: (_r, s) => ({ chapter: "C22", screen: "/visit", element: s.i === 1 ? "#open" : "/visit", verb: s.i === 1 ? "클릭" : "이동" }) });
-  expect(rows.length).toBe(1);
-  expect(rows[0]).toMatchObject({ no: "R09-X-01", kind: "O", element: "#open", verb: "클릭" });
-  expect(rows[0]!.reason).toContain("측정 무효(창 가림");
-  expect(rows[0]!.note).toContain("기능 판정은 PASS");
-  expect(rows[0]!.action).toContain("창이 보이게 된 뒤 재측정");
+  expect(rows.length).toBe(2);
+  expect(rows[1]).toMatchObject({ kind: "O", element: "#open", verb: "클릭" });
+  expect(rows[1]!.reason).toContain("측정 무효(창 가림");
+  expect(rows[1]!.note).toContain("기능 판정은 PASS");
+  expect(rows[1]!.action).toContain("창이 보이게 된 뒤 재측정");
 });
 
-test("창을 앞으로 가져오지 못하면 재측정하지 않고 그 까닭을 남긴다. 측정을 끄면(freeze.mode=off) 재지 않는다", async () => {
-  const ctx = fakeCtx({ evaluate: async (expr: string): Promise<any> => (expr.includes("const gaps = z.gaps.slice()") ? raw({ hidden: true }) : expr.includes("v: document.visibilityState") ? { v: false, f: false } : true) });
-  const r = await runCase(ctx, mk("O-2", [{ op: "goto", url: "/visit" }, { op: "expect", sel: "#out", text: "", basis: "POL-1" }]));
-  expect(r.steps[0]!.measure?.verdict).toBe("invalid");
-  expect(r.steps[0]!.measure?.why).toContain("앞으로 가져오지 못해");
+test("측정을 끄면(freeze.mode=off) 재지 않는다", async () => {
   const off = fakeCtx({ evaluate: async (): Promise<any> => raw({ hidden: true }) });
   off.cfg.freeze = { mode: "off" };
   const r2 = await runCase(off, mk("O-3", [{ op: "goto", url: "/visit" }, { op: "click", sel: "#open" }]));
