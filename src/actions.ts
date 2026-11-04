@@ -22,6 +22,7 @@ import { completeCheck } from "./gate.ts";
 import { dashboardToken, startDashboard, type DashboardInfo } from "./dashboard.ts";
 import { addFeedback, resolveFeedback } from "./feedback.ts";
 import { trend } from "./report.ts";
+import { exportReport } from "./export.ts";
 import { evidenceSources, intake, readIntake, readSession, sessionStart, shq, type Material, type SessionStartOpts } from "./session.ts";
 
 export const proj = (p?: string) => new Project(p ?? process.env.E2E_PROJECT ?? process.cwd());
@@ -504,6 +505,12 @@ export function aRoundReport(a: { project?: string; round?: string; format?: "md
   if (a.format === "paths") return { round: r.id, ...paths, sheets: "사람용: report.html (영상·스크린샷·이슈 추이, 브라우저로 열기) / AI용: ai-sheet.md(읽기용)·ai-sheet.json(구조) — 이슈별 재현 단계·기대값·실제값·API·콘솔·증거 위치·의심 코드와 개발 작업 단위" };
   if (a.format === "json") return JSON.parse(readFileSync(paths.ai_json, "utf8"));
   return { round: r.id, markdown: readFileSync(paths.ai_md, "utf8"), human_report: paths.human };
+}
+
+/** 끝난 라운드의 보고서를 PDF · 엑셀용 CSV · 한 파일 HTML 로 내보낸다(rounds/<라운드>/export/) */
+export async function aReportExport(a: { project?: string; round?: string; formats?: unknown; format?: unknown }) {
+  const r = await exportReport(proj(a.project), { round: a.round, formats: a.formats ?? a.format });
+  return { ...r, next: "사람에게 내보낸 파일 경로를 알려 준다. 현황판에서도 같은 파일을 받을 수 있다(머리의 「내보내기」)" };
 }
 
 export function aCompleteCheck(a: { project?: string }) {

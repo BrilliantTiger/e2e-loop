@@ -46,6 +46,7 @@ const HELP = `e2e-loop — 웹 E2E 회차 루프
   coverage                               커버리지
   round [--data reset|keep|manual-reset-done] [--only '["id"]'] [--onlyFailed]   한 회차 실행(끝날 때까지 기다림)
   report [--round R01] [--format md|json|paths]
+  export [--round R01] [--format pdf,csv,html]   보고서 내보내기(PDF · 엑셀용 CSV · 한 파일 HTML, 생략하면 셋 다)
   check                                  완료 판정
   feedback --text "요청" [--apply now --mode restart|in-flow|next]
   status                                 현재 상태와 다음 행동
@@ -81,6 +82,7 @@ switch (cmd) {
     break;
   }
   case "report": print(A.aRoundReport({ ...flags, project } as any)); break;
+  case "export": print(await A.aReportExport({ project, round: flags.round, formats: flags.format })); break;
   case "check": print(A.aCompleteCheck({ project })); break;
   case "feedback": print(A.aFeedback({ ...flags, project } as any)); break;
   case "status": print(A.aStatus({ project })); break;

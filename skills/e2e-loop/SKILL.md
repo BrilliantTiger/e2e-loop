@@ -164,7 +164,7 @@ A new comment pings your terminal (count only), and `e2e_status` and `e2e_round_
 
 Every round writes two sheets in `.e2e/rounds/<round>/`:
 
-- **Human sheet** `report.html`: summary cards, the issue trend per round, the issue list, then screen -> feature unit -> case results with videos (chapter buttons) and screenshots.
+- **Human sheet** `report.html`: summary cards, the issue flow chart per round (above the axis: still open, reopened, new; below the axis: fixed) with the trend table, the issue history (every case that was ever an issue, with its status in each round, the round it first appeared, and the round it was fixed), this round's issues, then screen -> feature unit -> case results with videos (chapter buttons) and screenshots. The dashboard shows the same chart and issue history.
 - **AI sheet** `ai-sheet.md` (and `ai-sheet.json`): for every issue it has the reproduction steps, expected value, actual value, API requests and responses, console logs, screenshot and video location (with the video time), and suspect code location (when code analysis exists). It is split into **development tasks**, each with a fix scope, acceptance criteria (cases that must pass), prerequisite tasks, and regression watch.
 
 What to do:
@@ -173,6 +173,7 @@ What to do:
 - Tell the user the counts **separately**: "issues N, tool errors (NA) M, blocked by a prior defect (H) K". A tool error and an H row are not issues. It goes to the excluded sheet `excluded_issues.tsv` (and `ai-sheet.md`), with the cause A to G, L, M, N, P, Q, R, S, V, or X (tool error), O or U (freeze measurement only, counted apart from tool errors), H (blocked by a prior defect), or T (the same row repeated in several chapters). Each row has a number `<round>-X-<NN>` (for example `R07-X-03`); use it to comment on or track the row (a dashboard comment may carry the number in place of a case id and keeps it as `ref`; `e2e_comments` with `case` set to the number finds those comments). Rows with the same chapter, screen, element, action, and cause are merged into one row with a count, and `.e2e/excluded_all.tsv` merges them across rounds (count and rounds seen), so a rerun does not pile up the same row again. The dashboard shows the two counts separately. The issue text ("symptom") has this form: "On <screen>, for <element>, after <action>, <actual> appeared. Expected <expected>."
 - If M is not 0, fix the cases as in the rehearsal and run again. An unexpected dialog (for example a confirm modal) is also recorded as a tool error, with the dialog text as evidence.
 - Tell the user the human sheet path and the dashboard address.
+- When the user asks for the report as a file, or wants to share it, call `e2e_report_export`. It writes to `.e2e/rounds/<round>/export/`: `pdf` (A4 document with the chart, the issue history, and the issue cases' screenshots), `csv` (three files for Excel: this round's issues, the issue history across rounds, and the counts per round), and `html` (one HTML file with the screenshots inside, which opens anywhere). Videos are not included. Without `formats` it writes all three. Tell the user the file paths. The dashboard header has the same export links.
 - Hand the AI sheet to the development agent. Tell it to work task by task and to confirm each task with a partial round (`verify` in the task).
 
 ### 8. Fix

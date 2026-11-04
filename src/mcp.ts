@@ -183,6 +183,12 @@ server.registerTool("e2e_round_report", {
   inputSchema: { project, round: z.string().optional(), format: z.enum(["md", "json", "paths"]).optional() },
 }, wrap(A.aRoundReport));
 
+server.registerTool("e2e_report_export", {
+  title: "보고서 내보내기",
+  description: "끝난 라운드의 보고서를 파일로 내보낸다. pdf = 그래프·이슈 목록·이슈 케이스 스크린샷이 든 문서(A4). csv = 엑셀용 세 파일(이번 라운드 이슈 목록 · 이슈별 라운드 이력 · 라운드별 수, UTF-8 BOM). html = 스크린샷을 파일 안에 넣은 한 파일 HTML(메일로 보내 어디서나 열림). 영상은 넣지 않는다. round 를 생략하면 마지막으로 끝난 라운드, formats 를 생략하면 셋 다. 파일은 .e2e/rounds/<라운드>/export/ 에 쓴다. 사람이 보고서를 달라고 하거나 공유하려 하면 이 도구로 만들고 경로를 알려 준다.",
+  inputSchema: { project, round: z.string().optional(), formats: z.array(z.enum(["pdf", "csv", "html"])).optional() },
+}, wrap(A.aReportExport));
+
 server.registerTool("e2e_complete_check", {
   title: "완료 판정",
   description: "이슈가 0 에 수렴했는지 기록으로만 판정한다. 마지막 회차가 전체 회차이고, 회차 도중 코드 변경이 없고, 케이스 정의가 그대로이고, FAIL 0, 검증 못 한 SKIP 0 일 때만 complete=true. 말로 완료를 선언하기 전에 반드시 호출한다.",

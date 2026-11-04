@@ -150,9 +150,9 @@ export function flowChartSvg(rounds: RoundFlow[]): string {
   return `<div class="flow"><svg role="img" aria-label="라운드별 이슈 흐름" width="${width}" height="${height.toFixed(0)}" viewBox="0 0 ${width} ${height.toFixed(0)}"><line class="ax" x1="${left}" x2="${width - left}" y1="${y0.toFixed(1)}" y2="${y0.toFixed(1)}"/>${bars}</svg></div>${LEGEND}`;
 }
 
-const STATUS_KO: Record<string, string> = { FAIL: "실패", FLAKY: "불안정", BLOCKED: "검증 못 함", PASS: "통과", SKIP: "스킵", NA: "해당 없음" };
+export const STATUS_KO: Record<string, string> = { FAIL: "실패", FLAKY: "불안정", BLOCKED: "검증 못 함", PASS: "통과", SKIP: "스킵", NA: "해당 없음" };
 const STATUS_MARK: Record<string, string> = { FAIL: "실패", FLAKY: "불안", BLOCKED: "검증X", PASS: "✓", SKIP: "스킵", NA: "N/A" };
-const NOW_KO: Record<HistoryNow, string> = { open: "남음", fixed: "고쳐짐", other: "판정 안 됨" };
+export const NOW_KO: Record<HistoryNow, string> = { open: "남음", fixed: "고쳐짐", other: "판정 안 됨" };
 
 /** 이슈 목록(라운드별 이력). 이슈였던 적이 있는 케이스마다 라운드별 상태 칸을 붙인다. 열은 최근 maxRounds 라운드까지 */
 export function issueHistoryHtml(flow: IssueFlow, maxRounds = 12): string {

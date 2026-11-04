@@ -1,6 +1,6 @@
 // 라운드 결과물 두 가지: 사람용 시트(report.html — 영상·스크린샷 포함)와 AI용 시트(ai-sheet.md·ai-sheet.json — 이슈별 상세와 단계별 개발 작업 단위).
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 import type { Case, CaseResult, RoundMeta, Step, StepResult } from "./types.ts";
 import type { Project } from "./store.ts";
 import { loadAnalyses } from "./analysis/store.ts";
@@ -398,8 +398,34 @@ function loadChapters(rdir: string, r: CaseResult): { title: string; startMs: nu
   }
 }
 
-export function renderHuman(project: Project, meta: RoundMeta, verdict: string, applied: { id: string; text: string; appliesTo: string }[], results: CaseResult[], cases: Case[], issues: AiIssue[], tasks: DevTask[], tr: ReturnType<typeof trend>, diff: ReturnType<typeof diffWithPrevious>, excluded: ExcludedRow[] = []): string {
+/** 내보내기(한 파일 HTML·PDF)에서 스크린샷을 파일 안에 넣을 때의 용량 예산 */
+export interface Embed {
+  /** 넣을 수 있는 스크린샷 용량 합계(바이트) */
+  limit: number;
+  used: number;
+  /** 예산을 넘어 뺀 장수 */
+  skipped: number;
+}
+const IMG_MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
+
+/** 이슈 케이스의 스크린샷만 data URI 로 넣는다. 라운드 폴더 밖 경로·없는 파일·예산 초과는 넣지 않는다 */
+function embedShot(e: Embed, rdir: string, shot: string, issue: boolean): string {
+  if (!issue) return "";
+  const full = resolve(rdir, shot);
+  const mime = IMG_MIME[shot.split(".").pop()?.toLowerCase() ?? ""];
+  if (!mime || (full !== resolve(rdir) && !full.startsWith(resolve(rdir) + sep)) || !existsSync(full)) return `<span class="meta">${esc(shot)}</span>`;
+  const size = statSync(full).size;
+  if (e.used + size > e.limit) {
+    e.skipped++;
+    return `<span class="meta">${esc(shot)}</span>`;
+  }
+  e.used += size;
+  return `<img src="data:${mime};base64,${readFileSync(full).toString("base64")}">`;
+}
+
+export function renderHuman(project: Project, meta: RoundMeta, verdict: string, applied: { id: string; text: string; appliesTo: string }[], results: CaseResult[], cases: Case[], issues: AiIssue[], tasks: DevTask[], tr: ReturnType<typeof trend>, diff: ReturnType<typeof diffWithPrevious>, excluded: ExcludedRow[] = [], opts: { embed?: Embed } = {}): string {
   const rdir = project.roundDir(meta.id);
+  const embed = opts.embed;
   const cfg = project.config();
   const s = meta.summary!;
   const byId = new Map(cases.map((c) => [c.id, c]));
@@ -409,17 +435,19 @@ export function renderHuman(project: Project, meta: RoundMeta, verdict: string, 
   let vid = 0;
   const caseBlock = (r: CaseResult) => {
     const steps = r.steps
-      .map((x) => `<tr class="${x.status}"><td>${x.i + 1}</td><td>${esc(x.desc)}${x.found ? `<br><span class="meta">찾은 요소: ${esc(x.found)}</span>` : ""}${x.measure && x.measure.verdict !== "ok" ? `<br><span class="meta">측정 ${x.measure.verdict === "freeze" ? "멈춤" : x.measure.verdict === "unconfirmed" ? "멈춤 미재현(U)" : "무효(O, 창 가림)"}: ${esc(x.measure.why ?? "")} — ${esc(x.measure.summary)}${x.measure.remeasured ? ` · 재측정: ${esc(x.measure.remeasured)}` : ""}</span>` : ""}</td><td>${x.status === "ok" ? "통과" : x.status === "fail" ? "실패" : "건너뜀"}</td><td>${x.ms}ms</td><td>${x.shot ? `<a href="${esc(x.shot)}" target="_blank"><img loading="lazy" src="${esc(x.shot)}"></a>` : ""}</td></tr>${x.error ? `<tr class="err"><td></td><td colspan="4">${esc(x.error)}</td></tr>` : ""}${x.api ? `<tr class="api"><td></td><td colspan="4">API ${esc(x.api.method)} ${esc(x.api.url)} → ${x.api.status ?? "-"}${x.api.responseBody ? ` · ${esc(clip(x.api.responseBody, 160))}` : ""}</td></tr>` : ""}`)
+      .map((x) => `<tr class="${x.status}"><td>${x.i + 1}</td><td>${esc(x.desc)}${x.found ? `<br><span class="meta">찾은 요소: ${esc(x.found)}</span>` : ""}${x.measure && x.measure.verdict !== "ok" ? `<br><span class="meta">측정 ${x.measure.verdict === "freeze" ? "멈춤" : x.measure.verdict === "unconfirmed" ? "멈춤 미재현(U)" : "무효(O, 창 가림)"}: ${esc(x.measure.why ?? "")} — ${esc(x.measure.summary)}${x.measure.remeasured ? ` · 재측정: ${esc(x.measure.remeasured)}` : ""}</span>` : ""}</td><td>${x.status === "ok" ? "통과" : x.status === "fail" ? "실패" : "건너뜀"}</td><td>${x.ms}ms</td><td>${!x.shot ? "" : embed ? embedShot(embed, rdir, x.shot, isIssue(r, cfg)) : `<a href="${esc(x.shot)}" target="_blank"><img loading="lazy" src="${esc(x.shot)}"></a>`}</td></tr>${x.error ? `<tr class="err"><td></td><td colspan="4">${esc(x.error)}</td></tr>` : ""}${x.api ? `<tr class="api"><td></td><td colspan="4">API ${esc(x.api.method)} ${esc(x.api.url)} → ${x.api.status ?? "-"}${x.api.responseBody ? ` · ${esc(clip(x.api.responseBody, 160))}` : ""}</td></tr>` : ""}`)
       .join("");
     const sig = [...r.pageErrors.map((e) => `JS 오류: ${e}`), ...r.failedRequests.map((e) => `요청: ${e}`), ...r.console.map((e) => `console.error: ${e}`)];
     const chs = loadChapters(rdir, r);
     const id = `v${++vid}`;
-    const video = r.video
+    const video = r.video && embed
+      ? `<p class="meta">영상: ${esc(r.video)} (내보낸 파일에는 넣지 않음 — 라운드 폴더에 있음)</p>`
+      : r.video
       ? `<video id="${id}" controls preload="none" src="${esc(r.video)}"></video>${chs.length ? `<div class="chs">${chs.map((c) => `<button onclick="var v=document.getElementById('${id}');v.currentTime=${(c.startMs / 1000).toFixed(2)};v.play()">${sec(c.startMs)} ${esc(c.title)}</button>`).join("")}</div>` : ""}`
       : "";
     return `<details class="case ${r.status}" ${isIssue(r, cfg) ? "open" : ""}><summary>${badge(r.status, !!r.toolError, !!r.blockedBy)} <b>${esc(r.title)}</b> <span class="m">${esc(r.id)} · ${r.durationMs}ms${r.warnings.length ? ` · 경고 ${r.warnings.length}` : ""}</span></summary>
       <div class="body">${r.reason ? `<p class="reason">${esc(r.reason)}</p>` : ""}${r.source_ref ? `<p>근거: ${esc(r.source_ref)}</p>` : ""}${r.retries ? `<p>재시도 ${r.retries.n}번: 통과 ${r.retries.pass} · 실패 ${r.retries.fail}</p>` : ""}
-      ${video}${r.trace ? `<p><a href="${esc(r.trace)}">trace.zip</a> (<code>bunx playwright show-trace</code>)</p>` : ""}
+      ${video}${r.trace ? (embed ? `<p class="meta">trace: ${esc(r.trace)}</p>` : `<p><a href="${esc(r.trace)}">trace.zip</a> (<code>bunx playwright show-trace</code>)</p>`) : ""}
       <table class="steps"><tr><th>#</th><th>단계</th><th>결과</th><th>시간</th><th>화면</th></tr>${steps}</table>
       ${r.warnings.length ? `<ul class="warn">${r.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
       ${sig.length ? `<ul class="sig">${sig.slice(0, 12).map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}</div></details>`;
@@ -466,9 +494,11 @@ ${FLOW_CSS}
 table.tt{border-collapse:collapse;font-size:13px;margin-bottom:16px}.tt td,.tt th{border:1px solid var(--line);padding:3px 10px;text-align:right}.tt th:first-child,.tt td:first-child{text-align:left}
 .tw{background:#fff3cd;color:#664d03;border:1px solid #ffe69c;padding:8px 12px;border-radius:8px;margin:12px 0}
 .task{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:6px 0;background:var(--card)}
+@media print{@page{margin:12mm}body{font-size:12px}main{max-width:none;padding:0}.chs,video{display:none}details.case,.task,.flow,.hist tr{break-inside:avoid}}
 </style></head><body><main>
 <h1>E2E ${meta.id} 결과 <span class="v ${verdict}">${verdict === "PASS" ? "통과" : verdict === "PASS_WITH_SKIPS" ? "통과(스킵 있음)" : verdict === "FAIL" ? "이슈 있음" : "미완료"}</span></h1>
 <div class="meta">${esc(meta.baseUrl)} · ${meta.scope === "full" ? "전체 라운드" : "부분 라운드"} · 브라우저 ${esc(meta.driver)} · 데이터 ${esc(meta.data.decision)} · 코드 ${esc(meta.code.head ?? "-")} · ${esc(meta.startedAt)} ~ ${esc(meta.finishedAt ?? "")}</div>
+${embed ? `<div class="meta">내보낸 시각 ${esc(new Date().toISOString())} · 스크린샷은 이슈 케이스 것만 파일 안에 넣었고, 영상은 넣지 않았습니다(라운드 폴더에 있음)${embed.skipped ? ` · 용량 상한(${Math.round(embed.limit / 1048576)}MB)을 넘어 스크린샷 ${embed.skipped}장은 뺐습니다` : ""}</div>` : ""}
 ${meta.error ? `<div class="tw">⚠ ${esc(meta.error)}</div>` : ""}${(meta.evidenceWarnings ?? []).map((w) => `<div class="tw">증거: ${esc(w)}</div>`).join("")}
 <div class="cards"><div class="card"><b style="color:var(--pass)">${s.PASS}</b>통과</div><div class="card"><b style="color:var(--fail)">${s.FAIL}</b>실패</div><div class="card"><b>${s.FLAKY}</b>불안정</div><div class="card"><b>${s.BLOCKED}</b>검증 못 함</div><div class="card"><b>${s.SKIP}</b>스킵</div><div class="card"><b>${s.NA - toolErrorCount(results) - blockedCount(results)}</b>해당 없음</div><div class="card"><b>${toolErrorCount(results)}</b>도구 오류(NA)</div><div class="card"><b>${blockedCount(results)}</b>선행 결함에 막힘(H)</div>${measureInvalidCount(results) ? `<div class="card"><b>${measureInvalidCount(results)}</b>측정 무효(O)</div>` : ""}<div class="card"><b>${s.total}</b>전체</div><div class="card"><b>${warned.length}</b>경고</div></div>
 <h2>이슈 추이 <small class="meta">(이슈 = 실패 + 불안정 + 검증 못 한 것, 스킵은 제외. 0 이 되면 종료)</small></h2>
@@ -490,7 +520,8 @@ ${screens}
 
 // ---------- 진입점 ----------
 
-export function writeSheets(project: Project, meta: RoundMeta, results: CaseResult[]) {
+/** 라운드 결과물에 들어갈 내용을 계산한다(파일은 쓰지 않는다). 내보내기도 이것으로 다시 그린다 */
+export function sheetData(project: Project, meta: RoundMeta, results: CaseResult[]) {
   const dir = project.roundDir(meta.id);
   const cfg = project.config();
   const snap = join(dir, "cases.json");
@@ -553,6 +584,11 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
     evidenceWarnings: meta.evidenceWarnings ?? [],
     acceptedSkips: cfg.acceptedSkips,
   };
+  return { dir, cases, diff, tr, verdict, issues, tasks, applied, excluded, ai, md: { applied, summaryLine, trendLine, diffLine, skipped, warned, notes, excluded } };
+}
+
+export function writeSheets(project: Project, meta: RoundMeta, results: CaseResult[]) {
+  const { dir, cases, diff, tr, verdict, issues, tasks, applied, excluded, ai, md } = sheetData(project, meta, results);
   writeFileSync(join(dir, "ai-sheet.json"), JSON.stringify(ai, null, 2));
   writeFileSync(join(dir, "excluded_issues.json"), JSON.stringify(excluded, null, 2));
   writeFileSync(join(dir, "excluded_issues.tsv"), excludedTsv(excluded));
@@ -560,7 +596,7 @@ export function writeSheets(project: Project, meta: RoundMeta, results: CaseResu
   const all = mergeExcludedAcross(project.rounds().map((r) => ({ round: r.id, rows: project.readJson<ExcludedRow[]>(`rounds/${r.id}/excluded_issues.json`, []) })));
   project.writeJson("excluded_all.json", all);
   writeFileSync(project.p("excluded_all.tsv"), excludedAllTsv(all));
-  writeFileSync(join(dir, "ai-sheet.md"), renderAiMd(meta, verdict, issues, tasks, { applied, summaryLine, trendLine, diffLine, skipped, warned, notes, excluded }));
+  writeFileSync(join(dir, "ai-sheet.md"), renderAiMd(meta, verdict, issues, tasks, md));
   writeFileSync(join(dir, "report.html"), renderHuman(project, meta, verdict, applied, results, cases, issues, tasks, tr, diff, excluded));
   return { verdict, files: { human: join(dir, "report.html"), aiMd: join(dir, "ai-sheet.md"), aiJson: join(dir, "ai-sheet.json"), excluded: join(dir, "excluded_issues.tsv") } };
 }

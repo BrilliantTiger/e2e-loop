@@ -10,8 +10,9 @@ import { runningRound } from "./round.ts";
 import { isIssue } from "./issues.ts";
 import { addComment, notifyTester, readComments } from "./comments.ts";
 import { triggerResponder } from "./responder.ts";
+import { exportReport } from "./export.ts";
 
-const MIME: Record<string, string> = { html: "text/html; charset=utf-8", png: "image/png", jpg: "image/jpeg", webm: "video/webm", mp4: "video/mp4", mov: "video/quicktime", txt: "text/plain; charset=utf-8", json: "application/json", md: "text/plain; charset=utf-8", zip: "application/zip", ndjson: "text/plain" };
+const MIME: Record<string, string> = { html: "text/html; charset=utf-8", png: "image/png", jpg: "image/jpeg", webm: "video/webm", mp4: "video/mp4", mov: "video/quicktime", txt: "text/plain; charset=utf-8", json: "application/json", md: "text/plain; charset=utf-8", zip: "application/zip", ndjson: "text/plain", pdf: "application/pdf", csv: "text/csv; charset=utf-8" };
 
 function state(project: Project, roundId?: string, role: "owner" | "viewer" = "viewer") {
   const rounds = project.rounds();
@@ -146,6 +147,7 @@ export function startDashboard(project: Project, preferred?: number, opts: { hos
   const ownerToken = dashboardToken(project, opts.rotateOwnerToken, "owner");
   const fails = new Map<string, number[]>();
   const commentHits = new Map<string, number[]>();
+  const exportHits = new Map<string, number[]>();
   let server: ReturnType<typeof Bun.serve> | undefined;
   for (let port = base; port < base + 30 && !server; port++) {
     try {
@@ -200,6 +202,25 @@ export function startDashboard(project: Project, preferred?: number, opts: { hos
               }
             });
           }
+          if (u.pathname === "/api/export" && req.method === "GET") {
+            // 보고서 내보내기: format = pdf · html(한 파일) · issues · history · rounds(엑셀용 CSV 세 가지)
+            const recentE = (exportHits.get(ip) ?? []).filter((t) => now - t < 60000);
+            if (recentE.length >= 10) return Response.json({ error: "내보내기를 너무 자주 했습니다. 잠시 뒤에 다시 하세요" }, { status: 429 });
+            exportHits.set(ip, [...recentE, now]);
+            const fmt = u.searchParams.get("format") ?? "";
+            const kind = fmt === "pdf" ? "pdf" : fmt === "html" ? "html" : ["issues", "history", "rounds"].includes(fmt) ? "csv" : null;
+            if (!kind) return Response.json({ error: "format 은 pdf · html · issues · history · rounds 중 하나" }, { status: 400 });
+            return exportReport(project, { round: u.searchParams.get("round") ?? undefined, formats: [kind] }).then(
+              (r) => {
+                const file = kind === "pdf" ? r.files.pdf! : kind === "html" ? r.files.html! : r.files.csv![fmt as "issues" | "history" | "rounds"];
+                const ext = file.split(".").pop()!;
+                const res = fileResponse(file, req, ext);
+                res.headers.set("content-disposition", `attachment; filename="${file.split(sep).pop()!.replace(/[^\w.-]/g, "_")}"`);
+                return res;
+              },
+              (e: any) => Response.json({ error: String(e?.message ?? e) }, { status: 400 }),
+            );
+          }
           if (u.pathname === "/api/state") return Response.json(state(project, u.searchParams.get("round") ?? undefined, role), { headers: { "cache-control": "no-store" } });
           if (u.pathname.startsWith("/files/")) {
             const rel = decodeURIComponent(u.pathname.slice(7));
@@ -244,11 +265,12 @@ main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;p
 .ok{color:var(--pass)}.fail{color:var(--fail)}.skip{color:var(--skip)}table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 .s{font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;color:#fff}.s.PASS{background:var(--pass)}.s.FAIL{background:var(--fail)}.s.SKIP,.s.NA,.s.BLOCKED{background:var(--skip)}
 ${FLOW_CSS}
+.exp{font-size:12px;color:var(--mut)}
 .fb{background:#fff3cd;color:#664d03;border-radius:6px;padding:6px 10px;margin-top:6px;font-size:12px}a{color:var(--acc)}
 .wide{grid-column:1/-1}.tabs button.on{background:var(--acc);color:#fff}.badge{background:var(--acc);color:#fff;border-radius:99px;padding:1px 8px;font-size:11px;font-weight:700}.badge.ins{background:var(--warn)}.cm.own{border-left-color:var(--acc)}.inst{display:flex;align-items:center;gap:4px;font-size:12px;margin:4px 0;white-space:nowrap}.cf input[type=checkbox]{width:auto}.cmrow td{background:var(--card)}.cm{border-left:3px solid var(--line);padding:2px 10px;margin:6px 0}.cm .rp{margin:4px 0 4px 14px;border-left:3px solid var(--acc);padding-left:8px}.cm .txt{white-space:pre-wrap}.mut{color:var(--mut);font-size:12px}.cf{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;margin-top:6px}.cf textarea{flex:1;min-width:240px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:inherit}.cf input{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;width:120px}.note{background:#fff3cd;color:#664d03;padding:6px 16px;font-size:12px}.s.FLAKY{background:var(--warn)}.s.BLOCKED{background:var(--fail)}
 </style></head><body>
 <div class="note" id="notice"></div>
-<header><h1>E2E 실시간 대시보드</h1><span id="who" class="badge" style="display:none"></span><span id="proj" style="color:var(--mut)"></span><select id="sel"></select><span id="st" class="pill"></span><a id="rep" style="display:none" target="_blank">결과 보고서 열기</a></header>
+<header><h1>E2E 실시간 대시보드</h1><span id="who" class="badge" style="display:none"></span><span id="proj" style="color:var(--mut)"></span><select id="sel"></select><span id="st" class="pill"></span><a id="rep" style="display:none" target="_blank">결과 보고서 열기</a><span id="exp" class="exp" style="display:none">내보내기: <a data-x="pdf" download>PDF</a> · <a data-x="html" download>HTML(한 파일)</a> · 엑셀용 CSV <a data-x="issues" download>이슈 목록</a> <a data-x="history" download>이슈 이력</a> <a data-x="rounds" download>라운드별 수</a></span></header>
 <main>
 <section class="card"><h2>진행</h2><div class="bar"><i id="bar" style="width:0"></i></div><div id="prog" style="margin:6px 0"></div>
 <div class="cnt"><div><b id="cp" class="ok">0</b>통과</div><div><b id="cf" class="fail">0</b>이슈</div><div><b id="cs">0</b>스킵·해당 없음</div><div><b id="ct" style="color:var(--warn)">0</b>도구 오류(NA)</div><div><b id="cb" style="color:var(--warn)">0</b>선행 결함에 막힘</div><div><b id="cw" style="color:var(--warn)">0</b>경고</div></div>
@@ -269,6 +291,7 @@ function draw(){const s=last;if(!s)return;$('proj').textContent=s.project;
 const sel=$('sel');if(sel.options.length!==s.rounds.length){sel.innerHTML=s.rounds.map(r=>'<option>'+r.id+'</option>').join('')}if(s.round&&!round)sel.value=s.round.id;
 const st=$('st');const rs=s.round?s.round.status:'';st.textContent=rs==='running'?'진행 중':rs==='finished'?'완료':rs==='aborted'?'중단':'대기';st.className='pill '+rs;
 const rep=$('rep');if(s.hasReport){rep.style.display='';rep.href='/files/'+s.round.id+'/report.html'}else rep.style.display='none';
+const exp=$('exp');if(s.round&&s.round.status!=='running'&&s.progress.done){exp.style.display='';exp.querySelectorAll('a').forEach(a=>a.href='/api/export?round='+encodeURIComponent(s.round.id)+'&format='+a.dataset.x)}else exp.style.display='none';
 $('notice').textContent=s.notice;$('who').textContent=s.role==='owner'?'🔑 오너 모드':'';$('who').style.display=s.role==='owner'?'':'none';$('cp').textContent=s.counts.pass;$('cf').textContent=s.counts.issue;$('cs').textContent=s.counts.skip;$('ct').textContent=s.counts.toolError;$('cb').textContent=s.counts.blocked;$('cw').textContent=s.counts.warn;
 const pr=s.progress;$('bar').style.width=pr.total?Math.round(pr.done/pr.total*100)+'%':'0';$('prog').textContent=pr.done+' / '+pr.total+' 케이스'+(s.round?' · '+s.round.driver+' · 데이터 '+s.round.data.decision:'');
 $('cur').textContent=s.running&&pr.current?'▶ '+pr.current.id+' '+pr.current.title:'';
