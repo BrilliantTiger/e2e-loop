@@ -4,6 +4,7 @@
 //   cell[col="컬럼 이름"][row="줄 글자"]  컬럼 이름의 머리글 아래, 줄 글자를 가진 줄의 칸 (col 만 쓰면 그 컬럼의 모든 칸)
 //   위 둘 뒤에 " >> button" 처럼 단순 CSS(태그·#id·.class·[속성])를 붙이면 그 줄 안의 요소
 // 모두 xpath 로 바꿔 Playwright 와 Ego 가 똑같이 쓴다.
+import { tx } from "./i18n.ts";
 
 const lit = (s: string): string => {
   if (!s.includes('"')) return `"${s}"`;
@@ -44,14 +45,14 @@ const unq = (v: string) => {
 /** 단순 CSS(태그·#id·.class·[속성]) 하나 → xpath 의 자손 조건. 복잡한 CSS 는 지원하지 않는다. */
 function cssToXpath(css: string): string {
   const m = css.trim().match(/^([a-zA-Z][\w-]*|\*)?((?:[#.][\w-]+|\[[^\]]+\])*)$/);
-  if (!m || (!m[1] && !m[2])) throw new Error(`줄 안쪽 요소는 단순 CSS(태그·#id·.class·[속성])만 쓸 수 있음: ${css}`);
+  if (!m || (!m[1] && !m[2])) throw new Error(tx(`줄 안쪽 요소는 단순 CSS(태그·#id·.class·[속성])만 쓸 수 있음: ${css}`, `An element inside a row can use only simple CSS (tag, #id, .class, [attribute]): ${css}`));
   const conds: string[] = [];
   for (const part of m[2]!.match(/[#.][\w-]+|\[[^\]]+\]/g) ?? []) {
     if (part[0] === "#") conds.push(`@id=${lit(part.slice(1))}`);
     else if (part[0] === ".") conds.push(`contains(concat(" ", normalize-space(@class), " "), ${lit(" " + part.slice(1) + " ")})`);
     else {
       const a = part.slice(1, -1).match(/^([\w:-]+)(?:\s*(\^=|\$=|\*=|=)\s*(["']?)([\s\S]*?)\3)?$/);
-      if (!a) throw new Error(`속성 선택자를 읽지 못함: ${part}`);
+      if (!a) throw new Error(tx(`속성 선택자를 읽지 못함: ${part}`, `Could not read the attribute selector: ${part}`));
       const [, name, op, , val] = a;
       if (!op) conds.push(`@${name}`);
       else if (op === "=") conds.push(`@${name}=${lit(val!)}`);
@@ -73,16 +74,16 @@ export function translateSel(sel: string): string {
   let xp: string;
   if (head!.startsWith("row=")) {
     const { text, quoted } = unq(head!.slice(4));
-    if (!text.trim()) throw new Error("row= 뒤에 줄 글자가 없음");
+    if (!text.trim()) throw new Error(tx("row= 뒤에 줄 글자가 없음", "No row text after row="));
     xp = rowPath(text, quoted);
   } else {
     const attrs = new Map<string, string>();
     const m = head!.match(/^cell((?:\[(?:col|row)=(?:"[^"]*"|'[^']*')\])+)$/);
-    if (!m) throw new Error(`cell[col="컬럼 이름"][row="줄 글자"] 모양이어야 함: ${head}`);
+    if (!m) throw new Error(tx(`cell[col="컬럼 이름"][row="줄 글자"] 모양이어야 함: ${head}`, `Must have the form cell[col="column name"][row="row text"]: ${head}`));
     for (const a of m[1]!.matchAll(/\[(col|row)=("[^"]*"|'[^']*')\]/g)) attrs.set(a[1]!, unq(a[2]!).text);
     const col = attrs.get("col");
     const row = attrs.get("row");
-    if (!col) throw new Error(`cell 에는 col(컬럼 이름)이 필요함: ${head}`);
+    if (!col) throw new Error(tx(`cell 에는 col(컬럼 이름)이 필요함: ${head}`, `cell needs col (the column name): ${head}`));
     // 머리글 글자가 정확히 같은 컬럼이 있으면 그 컬럼, 없을 때만 글자를 가진 컬럼(「Name」 을 찾는데 앞의 「File Name」 이 걸리지 않게)
     const heads = (cond: string) => `ancestor::table[1]//th[${cond}] | ancestor::*[@role="table" or @role="grid" or @role="treegrid"][1]//*[@role="columnheader"][${cond}]`;
     const exactHead = `normalize-space(.)=${lit(col)}`;
@@ -101,10 +102,14 @@ export function translateSel(sel: string): string {
  */
 export function rowByNumber(sel: string): string | null {
   if (isRowSel(sel)) return null;
-  if (/(^|[^a-z0-9])row[-_]?\d+(?![a-z0-9])/i.test(sel)) return "줄 번호(row-N)로 찾음";
-  if (/\b(tr|li)\b[^,>+~]*:nth-(child|of-type|last-child|last-of-type)\(\s*\d+\s*\)/i.test(sel) || /\[role=["']?row["']?\][^,>+~]*:nth-/i.test(sel)) return "줄 순서(:nth-child 등)로 찾음";
-  if (/(^|>>\s*)nth=-?\d+/i.test(sel) && /\b(tr|row)\b/i.test(sel)) return "줄 순서(nth=)로 찾음";
+  if (/(^|[^a-z0-9])row[-_]?\d+(?![a-z0-9])/i.test(sel)) return tx("줄 번호(row-N)로 찾음", "finds the row by number (row-N)");
+  if (/\b(tr|li)\b[^,>+~]*:nth-(child|of-type|last-child|last-of-type)\(\s*\d+\s*\)/i.test(sel) || /\[role=["']?row["']?\][^,>+~]*:nth-/i.test(sel)) return tx("줄 순서(:nth-child 등)로 찾음", "finds the row by position (:nth-child and so on)");
+  if (/(^|>>\s*)nth=-?\d+/i.test(sel) && /\b(tr|row)\b/i.test(sel)) return tx("줄 순서(nth=)로 찾음", "finds the row by position (nth=)");
   return null;
 }
 
-export const ROW_BY_NUMBER_HELP = '줄은 번호가 아니라 컬럼 이름·글자로 찾을 것 — row=<줄 글자> 또는 cell[col="컬럼 이름"][row="줄 글자"] (줄 하나를 바꾸면 목록이 다시 정렬돼 번호가 달라짐, 오류 B)';
+export const rowByNumberHelp = () =>
+  tx(
+    '줄은 번호가 아니라 컬럼 이름·글자로 찾을 것 — row=<줄 글자> 또는 cell[col="컬럼 이름"][row="줄 글자"] (줄 하나를 바꾸면 목록이 다시 정렬돼 번호가 달라짐, 오류 B)',
+    'Find a row by column name and text, not by number — row=<row text> or cell[col="column name"][row="row text"] (changing one row can re-sort the list and change the numbers, error B)',
+  );

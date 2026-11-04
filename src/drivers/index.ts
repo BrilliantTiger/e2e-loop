@@ -1,4 +1,5 @@
 import type { Config, DriverName } from "../types.ts";
+import { tx } from "../i18n.ts";
 
 export interface Drained {
   console: string[];
@@ -88,9 +89,9 @@ export async function pickDriverName(cfg: Config, want?: DriverName): Promise<"e
   let pick: "ego" | "chrome" | "edge" | "chromium";
   if (name === "auto") pick = env.ego ? "ego" : env.chrome ? "chrome" : env.edge ? "edge" : "chromium";
   else pick = name;
-  if (pick === "ego" && !env.ego) throw new Error("ego-browser 가 설치돼 있지 않습니다. driver 를 chrome/edge/chromium 으로 바꾸거나 ego lite 를 설치하세요(e2e_doctor 참고).");
-  if (pick === "chrome" && !env.chrome) throw new Error("Google Chrome 이 설치돼 있지 않습니다. driver 를 chromium 으로 바꾸세요(e2e_doctor fix 로 설치).");
-  if (pick === "edge" && !env.edge) throw new Error("Microsoft Edge 가 설치돼 있지 않습니다. driver 를 chrome/chromium 으로 바꾸세요.");
+  if (pick === "ego" && !env.ego) throw new Error(tx("ego-browser 가 설치돼 있지 않습니다. driver 를 chrome/edge/chromium 으로 바꾸거나 ego lite 를 설치하세요(e2e_doctor 참고).", "ego-browser is not installed. Change driver to chrome/edge/chromium, or install ego lite (see e2e_doctor)."));
+  if (pick === "chrome" && !env.chrome) throw new Error(tx("Google Chrome 이 설치돼 있지 않습니다. driver 를 chromium 으로 바꾸세요(e2e_doctor fix 로 설치).", "Google Chrome is not installed. Change driver to chromium (or install it with e2e_doctor fix)."));
+  if (pick === "edge" && !env.edge) throw new Error(tx("Microsoft Edge 가 설치돼 있지 않습니다. driver 를 chrome/chromium 으로 바꾸세요.", "Microsoft Edge is not installed. Change driver to chrome/chromium."));
   return pick;
 }
 

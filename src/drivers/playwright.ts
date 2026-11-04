@@ -8,6 +8,7 @@ import type { DPage, Drained, Driver, NetEntry, Session } from "./index.ts";
 import { LIB } from "./inpage.ts";
 import { FREEZE_INIT } from "../freeze.ts";
 import { buildVideoFromFrames } from "./egorec.ts";
+import { tx } from "../i18n.ts";
 
 class PwPage implements DPage {
   constructor(private page: Page, private d: Drained, private timeout: number, private net: { list: NetEntry[]; pending: Promise<unknown>[] }) {}
@@ -171,7 +172,7 @@ export class PwDriver implements Driver {
       if (first?.data) writeFrame(Date.now(), first.data);
       await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1 });
     } catch (e: any) {
-      recErr = `영상 프레임 받기를 시작하지 못했습니다: ${String(e?.message ?? e).slice(0, 120)}`;
+      recErr = tx(`영상 프레임 받기를 시작하지 못했습니다: ${String(e?.message ?? e).slice(0, 120)}`, `Receiving video frames did not start: ${String(e?.message ?? e).slice(0, 120)}`);
     }
     const d: Drained = { console: [], pageErrors: [], failedRequests: [] };
     const uniq = (arr: string[], s: string) => {

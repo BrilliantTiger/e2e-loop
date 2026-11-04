@@ -1,6 +1,6 @@
 #!/bin/sh
 # e2e-loop 설치: bun 확인 → 의존성 → 환경 점검·자동 설치 → MCP 등록(설치된 Claude·Codex 모두)
-# 사용: sh install.sh [--confirm ffmpeg] [--dry-run]
+# 사용: sh install.sh [--confirm ffmpeg] [--dry-run] [--lang ko|en]   (--lang en: 도구 메시지·보고서를 영어로)
 set -e
 cd "$(dirname "$0")"
 

@@ -1,6 +1,7 @@
 // 여러 쪽 줄 모으기 (오류 C 추가: 쪽 넘김).
 // 목록이 여러 쪽이면 같은 이름 줄이 쪽마다 흩어져 있다. 첫 줄만 쓰거나 pop() 으로 마지막 줄만 읽으면 엇나가므로,
 // 다음 쪽 단추를 따라 모든 쪽을 돌며 줄 글자를 모은다.
+import { langTable, tx } from "./i18n.ts";
 import type { DPage } from "./drivers/index.ts";
 import { READ_WAIT_MS, settleList, waitRendered } from "./reads.ts";
 
@@ -20,9 +21,18 @@ export interface CollectOpts {
 export interface Collected {
   pages: number;
   rows: { page: number; text: string }[];
-  /** 왜 멈췄는가 */
-  stoppedBy: "단일 쪽" | "마지막 쪽" | "다음 단추 없음" | "쪽이 안 바뀜" | "같은 쪽 반복" | "쪽 상한";
+  /** 왜 멈췄는가(언어와 무관한 코드. 보여 줄 글은 STOPPED_BY_LABEL) */
+  stoppedBy: StopReason;
 }
+
+/** 멈춘 까닭: single=단일 쪽 · last=마지막 쪽 · no-next=다음 단추 없음 · unchanged=쪽이 안 바뀜 · repeat=같은 쪽 반복 · max=쪽 상한 */
+export type StopReason = "single" | "last" | "no-next" | "unchanged" | "repeat" | "max";
+
+/** 멈춘 까닭을 사람이 읽는 글로 */
+export const STOPPED_BY_LABEL = langTable<Record<StopReason, string>>({
+  ko: { single: "단일 쪽", last: "마지막 쪽", "no-next": "다음 단추 없음", unchanged: "쪽이 안 바뀜", repeat: "같은 쪽 반복", max: "쪽 상한" },
+  en: { single: "single page", last: "last page", "no-next": "no next button", unchanged: "page did not change", repeat: "same page again", max: "page limit" },
+});
 
 export const MAX_PAGES = 50;
 
@@ -45,17 +55,17 @@ export async function collectRows(p: DPage, o: CollectOpts, timeoutMs: number = 
     page++;
     await settleList(p);
     const sig = await p.evaluate<string>(SIG).catch(() => "");
-    if (seen.has(sig)) return { pages: page - 1, rows, stoppedBy: "같은 쪽 반복" };
+    if (seen.has(sig)) return { pages: page - 1, rows, stoppedBy: "repeat" };
     seen.add(sig);
     for (const text of (await p.evaluate<string[]>(ROWS(o.sel)).catch(() => [])) ?? []) rows.push({ page, text });
-    if (!o.next) return { pages: page, rows, stoppedBy: "단일 쪽" };
+    if (!o.next) return { pages: page, rows, stoppedBy: "single" };
     const st = await p.evaluate<string>(NEXT(o.next)).catch(() => "none");
-    if (st === "none" || st === "hidden") return { pages: page, rows, stoppedBy: "다음 단추 없음" };
-    if (st === "disabled") return { pages: page, rows, stoppedBy: "마지막 쪽" };
-    if (page >= max) return { pages: page, rows, stoppedBy: "쪽 상한" };
+    if (st === "none" || st === "hidden") return { pages: page, rows, stoppedBy: "no-next" };
+    if (st === "disabled") return { pages: page, rows, stoppedBy: "last" };
+    if (page >= max) return { pages: page, rows, stoppedBy: "max" };
     await p.click(o.next);
     await settleList(p);
-    if ((await p.evaluate<string>(SIG).catch(() => "")) === sig) return { pages: page, rows, stoppedBy: "쪽이 안 바뀜" };
+    if ((await p.evaluate<string>(SIG).catch(() => "")) === sig) return { pages: page, rows, stoppedBy: "unchanged" };
   }
 }
 
@@ -63,5 +73,8 @@ export async function collectRows(p: DPage, o: CollectOpts, timeoutMs: number = 
 export const perPage = (c: Collected): string => {
   const n = new Map<number, number>();
   for (const r of c.rows) n.set(r.page, (n.get(r.page) ?? 0) + 1);
-  return Array.from({ length: c.pages }, (_, i) => `${i + 1}쪽 ${n.get(i + 1) ?? 0}줄`).join(" · ");
+  return Array.from({ length: c.pages }, (_, i) => {
+    const k = n.get(i + 1) ?? 0;
+    return tx(`${i + 1}쪽 ${k}줄`, `page ${i + 1}: ${k} ${k === 1 ? "row" : "rows"}`);
+  }).join(" · ");
 };

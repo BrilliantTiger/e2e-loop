@@ -4,6 +4,7 @@ import { existsSync, statSync } from "node:fs";
 import type { CaseResult, RoundMeta, Verdict } from "./types.ts";
 import { Project } from "./store.ts";
 import { isIssue } from "./issues.ts";
+import { langTable, tx } from "./i18n.ts";
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -116,11 +117,15 @@ export const FLOW_CSS = `
 .hn-open{color:#c0392b;font-weight:700}.hn-fixed{color:#1a7f4b;font-weight:700}.hn-other{color:var(--mut)}
 `;
 
-const LEGEND = `<div class="lg"><span><i class="f-still"></i>계속 남음</span><span><i class="f-added"></i>새로 생김</span><span><i class="f-reopened"></i>다시 생김(고쳐졌다가 다시 깨짐)</span><span><i class="f-fixed"></i>고쳐짐(축 아래)</span><span>흐린 막대 = 부분 라운드</span></div>`;
+const legend = () =>
+  tx(
+    `<div class="lg"><span><i class="f-still"></i>계속 남음</span><span><i class="f-added"></i>새로 생김</span><span><i class="f-reopened"></i>다시 생김(고쳐졌다가 다시 깨짐)</span><span><i class="f-fixed"></i>고쳐짐(축 아래)</span><span>흐린 막대 = 부분 라운드</span></div>`,
+    `<div class="lg"><span><i class="f-still"></i>still open</span><span><i class="f-added"></i>new</span><span><i class="f-reopened"></i>reopened (fixed, then broken again)</span><span><i class="f-fixed"></i>fixed (below the axis)</span><span>faded bar = partial round</span></div>`,
+  );
 
 /** 라운드별 이슈 흐름 막대그래프(SVG). 축 위는 이 라운드의 이슈(계속 남음·다시 생김·새로 생김), 축 아래는 이 라운드에 고쳐진 이슈 */
 export function flowChartSvg(rounds: RoundFlow[]): string {
-  if (!rounds.length) return `<p class="fmeta">아직 끝난 라운드가 없습니다</p>`;
+  if (!rounds.length) return `<p class="fmeta">${tx("아직 끝난 라운드가 없습니다", "No round has finished yet")}</p>`;
   const slot = 46, bw = 26, left = 8, top = 18, H = 150;
   const up = Math.max(1, ...rounds.map((r) => r.issues));
   const down = Math.max(0, ...rounds.map((r) => r.fixed));
@@ -143,30 +148,48 @@ export function flowChartSvg(rounds: RoundFlow[]): string {
       const stack = seg(r.still, "f-still") + seg(r.reopened, "f-reopened") + seg(r.added, "f-added");
       const fixedH = r.fixed * unit;
       const fixed = r.fixed ? `<rect class="f-fixed" x="${x}" y="${y0.toFixed(1)}" width="${bw}" height="${fixedH.toFixed(1)}" rx="2"/><text x="${cx}" y="${(y0 + fixedH + 11).toFixed(1)}" text-anchor="middle">✓${r.fixed}</text>` : "";
-      const tip = `${r.round}${r.scope === "partial" ? " (부분 라운드)" : ""}${r.status === "aborted" ? " (중단됨)" : ""} — 이슈 ${r.issues}건: 계속 남음 ${r.still} · 새로 생김 ${r.added} · 다시 생김 ${r.reopened} / 고쳐짐 ${r.fixed}${r.prev ? ` (${r.prev} 와 비교)` : " (비교할 앞 라운드 없음)"}`;
-      return `<g${r.scope === "partial" ? ' class="partial"' : ""}><title>${esc(tip)}</title>${stack}${fixed}<text class="n" x="${cx}" y="${(y - 4).toFixed(1)}" text-anchor="middle">${r.issues}</text><text x="${cx}" y="${(height - 14).toFixed(1)}" text-anchor="middle">${esc(r.round)}</text>${r.scope === "partial" ? `<text x="${cx}" y="${(height - 2).toFixed(1)}" text-anchor="middle">부분</text>` : r.status === "aborted" ? `<text x="${cx}" y="${(height - 2).toFixed(1)}" text-anchor="middle">중단</text>` : ""}</g>`;
+      const tip = tx(
+        `${r.round}${r.scope === "partial" ? " (부분 라운드)" : ""}${r.status === "aborted" ? " (중단됨)" : ""} — 이슈 ${r.issues}건: 계속 남음 ${r.still} · 새로 생김 ${r.added} · 다시 생김 ${r.reopened} / 고쳐짐 ${r.fixed}${r.prev ? ` (${r.prev} 와 비교)` : " (비교할 앞 라운드 없음)"}`,
+        `${r.round}${r.scope === "partial" ? " (partial round)" : ""}${r.status === "aborted" ? " (aborted)" : ""} — issues: ${r.issues} (still open ${r.still} · new ${r.added} · reopened ${r.reopened}) / fixed ${r.fixed}${r.prev ? ` (compared with ${r.prev})` : " (no earlier round to compare)"}`,
+      );
+      return `<g${r.scope === "partial" ? ' class="partial"' : ""}><title>${esc(tip)}</title>${stack}${fixed}<text class="n" x="${cx}" y="${(y - 4).toFixed(1)}" text-anchor="middle">${r.issues}</text><text x="${cx}" y="${(height - 14).toFixed(1)}" text-anchor="middle">${esc(r.round)}</text>${r.scope === "partial" ? `<text x="${cx}" y="${(height - 2).toFixed(1)}" text-anchor="middle">${tx("부분", "partial")}</text>` : r.status === "aborted" ? `<text x="${cx}" y="${(height - 2).toFixed(1)}" text-anchor="middle">${tx("중단", "aborted")}</text>` : ""}</g>`;
     })
     .join("");
-  return `<div class="flow"><svg role="img" aria-label="라운드별 이슈 흐름" width="${width}" height="${height.toFixed(0)}" viewBox="0 0 ${width} ${height.toFixed(0)}"><line class="ax" x1="${left}" x2="${width - left}" y1="${y0.toFixed(1)}" y2="${y0.toFixed(1)}"/>${bars}</svg></div>${LEGEND}`;
+  return `<div class="flow"><svg role="img" aria-label="${tx("라운드별 이슈 흐름", "Issue flow per round")}" width="${width}" height="${height.toFixed(0)}" viewBox="0 0 ${width} ${height.toFixed(0)}"><line class="ax" x1="${left}" x2="${width - left}" y1="${y0.toFixed(1)}" y2="${y0.toFixed(1)}"/>${bars}</svg></div>${legend()}`;
 }
 
-export const STATUS_KO: Record<string, string> = { FAIL: "실패", FLAKY: "불안정", BLOCKED: "검증 못 함", PASS: "통과", SKIP: "스킵", NA: "해당 없음" };
-const STATUS_MARK: Record<string, string> = { FAIL: "실패", FLAKY: "불안", BLOCKED: "검증X", PASS: "✓", SKIP: "스킵", NA: "N/A" };
-export const NOW_KO: Record<HistoryNow, string> = { open: "남음", fixed: "고쳐짐", other: "판정 안 됨" };
+/** 판정 이름(실패 · 통과 …) */
+export const STATUS_LABEL: Record<string, string> = langTable({
+  ko: { FAIL: "실패", FLAKY: "불안정", BLOCKED: "검증 못 함", PASS: "통과", SKIP: "스킵", NA: "해당 없음" },
+  en: { FAIL: "failed", FLAKY: "flaky", BLOCKED: "unverified", PASS: "passed", SKIP: "skipped", NA: "not applicable" },
+});
+const STATUS_MARK: Record<string, string> = langTable({
+  ko: { FAIL: "실패", FLAKY: "불안", BLOCKED: "검증X", PASS: "✓", SKIP: "스킵", NA: "N/A" },
+  en: { FAIL: "FAIL", FLAKY: "FLAKY", BLOCKED: "BLOCKED", PASS: "✓", SKIP: "SKIP", NA: "N/A" },
+});
+/** 이슈의 지금 상태 이름(남음 · 고쳐짐 · 판정 안 됨) */
+export const NOW_LABEL: Record<HistoryNow, string> = langTable({
+  ko: { open: "남음", fixed: "고쳐짐", other: "판정 안 됨" },
+  en: { open: "open", fixed: "fixed", other: "not judged" },
+});
 
 /** 이슈 목록(라운드별 이력). 이슈였던 적이 있는 케이스마다 라운드별 상태 칸을 붙인다. 열은 최근 maxRounds 라운드까지 */
 export function issueHistoryHtml(flow: IssueFlow, maxRounds = 12): string {
-  if (!flow.issues.length) return `<p class="fmeta">이슈였던 케이스가 없습니다</p>`;
+  if (!flow.issues.length) return `<p class="fmeta">${tx("이슈였던 케이스가 없습니다", "No case has been an issue")}</p>`;
   const shown = flow.rounds.slice(-maxRounds).map((r) => r.round);
   const cut = flow.rounds.length - shown.length;
   const open = flow.issues.filter((i) => i.now === "open").length;
   const fixed = flow.issues.filter((i) => i.now === "fixed").length;
-  const head = `<tr><th>케이스</th><th>지금</th><th>처음</th><th>고쳐진 라운드</th><th>이슈 횟수</th>${shown.map((r) => `<th class="c">${esc(r)}</th>`).join("")}</tr>`;
+  const head = `<tr>${tx("<th>케이스</th><th>지금</th><th>처음</th><th>고쳐진 라운드</th><th>이슈 횟수</th>", "<th>Case</th><th>Now</th><th>First</th><th>Fixed in</th><th>Times an issue</th>")}${shown.map((r) => `<th class="c">${esc(r)}</th>`).join("")}</tr>`;
   const rows = flow.issues
     .map((i) => {
       const cells = i.cells.filter((c) => shown.includes(c.round));
-      return `<tr><td class="t"><b>${esc(i.title)}</b><br><span class="fmeta">${esc(i.id)}</span></td><td class="hn-${i.now}">${NOW_KO[i.now]}</td><td>${esc(i.first)}</td><td>${esc(i.fixedIn ?? "-")}</td><td>${i.times}</td>${cells.map((c) => `<td class="c">${c.status ? `<span class="hc-${c.status}" title="${esc(`${c.round}: ${STATUS_KO[c.status] ?? c.status}`)}">${STATUS_MARK[c.status] ?? esc(c.status)}</span>` : `<span class="hc-none" title="${esc(`${c.round}: 돌리지 않음`)}">–</span>`}</td>`).join("")}</tr>`;
+      return `<tr><td class="t"><b>${esc(i.title)}</b><br><span class="fmeta">${esc(i.id)}</span></td><td class="hn-${i.now}">${NOW_LABEL[i.now]}</td><td>${esc(i.first)}</td><td>${esc(i.fixedIn ?? "-")}</td><td>${i.times}</td>${cells.map((c) => `<td class="c">${c.status ? `<span class="hc-${c.status}" title="${esc(`${c.round}: ${STATUS_LABEL[c.status] ?? c.status}`)}">${STATUS_MARK[c.status] ?? esc(c.status)}</span>` : `<span class="hc-none" title="${esc(`${c.round}: ${tx("돌리지 않음", "not run")}`)}">–</span>`}</td>`).join("")}</tr>`;
     })
     .join("");
-  return `<p class="fmeta">이슈였던 케이스 ${flow.issues.length}건 — 남음 ${open} · 고쳐짐 ${fixed} · 판정 안 됨 ${flow.issues.length - open - fixed}${cut ? ` · 앞 ${cut}개 라운드는 열에서 생략` : ""}. 칸: 실패 · 불안(불안정) · 검증X(검증 못 함) · ✓(통과) · 스킵 · N/A(해당 없음) · –(그 라운드에서 돌리지 않음)</p><div class="hist"><table>${head}${rows}</table></div>`;
+  const lead = tx(
+    `이슈였던 케이스 ${flow.issues.length}건 — 남음 ${open} · 고쳐짐 ${fixed} · 판정 안 됨 ${flow.issues.length - open - fixed}${cut ? ` · 앞 ${cut}개 라운드는 열에서 생략` : ""}. 칸: 실패 · 불안(불안정) · 검증X(검증 못 함) · ✓(통과) · 스킵 · N/A(해당 없음) · –(그 라운드에서 돌리지 않음)`,
+    `Cases that have been an issue: ${flow.issues.length} — open ${open} · fixed ${fixed} · not judged ${flow.issues.length - open - fixed}${cut ? ` · the first ${cut} rounds are left out of the columns` : ""}. Cells: FAIL (failed) · FLAKY (flaky) · BLOCKED (unverified) · ✓ (passed) · SKIP (skipped) · N/A (not applicable) · – (not run in that round)`,
+  );
+  return `<p class="fmeta">${lead}</p><div class="hist"><table>${head}${rows}</table></div>`;
 }

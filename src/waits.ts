@@ -2,6 +2,7 @@
 // 화면이 갈 수 있는 끝 상태(완료 · 확인 필요 · 막힘 · 오류 · 비활성 사유)를 모두 받아, 어느 하나가 보이면 끝낸다.
 // 15초마다 현재 상태를 로그에 남기고, 60초 동안 화면이 안 바뀌면 현재 상태를 남기고 대기 실패(도구 판정 불가)로 끝낸다.
 // 단, 화면에 진행 신호(「처리 중」·진행 막대·aria-busy 등)가 보이는 동안은 무변화여도 끝내지 않고 상한까지 기다린다(오류 L).
+import { tx } from "./i18n.ts";
 import type { DPage } from "./drivers/index.ts";
 import { sleep } from "./probes.ts";
 import { ToolError } from "./toolerror.ts";
@@ -49,14 +50,14 @@ const PROGRESS = `(() => {
 async function progressSignal(p: DPage, w: Pick<EndStateWait, "progress">): Promise<string | null> {
   if (w.progress) {
     for (const one of ([] as string[]).concat(w.progress)) {
-      if ((await p.count(one).catch(() => 0)) > 0 && (await p.isVisible(one).catch(() => false))) return `「${one}」`;
+      if ((await p.count(one).catch(() => 0)) > 0 && (await p.isVisible(one).catch(() => false))) return tx(`「${one}」`, `"${one}"`);
     }
   }
   if (w.progress === false) return null;
   // 「progress:」 로 시작하는 답만 진행 신호로 본다(다른 값은 못 읽은 것)
   const got = String((await p.evaluate<string>(PROGRESS).catch(() => "")) ?? "");
   const auto = got.startsWith("progress:") ? got.slice(9).trim() : "";
-  return auto ? `「${auto}」` : null;
+  return auto ? tx(`「${auto}」`, `"${auto}"`) : null;
 }
 
 export const endStateNames = (w: Pick<EndStateWait, "endStates">) => Object.keys(w.endStates ?? {});
@@ -64,7 +65,10 @@ export const endStateNames = (w: Pick<EndStateWait, "endStates">) => Object.keys
 /** 끝 상태가 하나뿐인 대기인가 — 오지 않을 상태를 기다릴 수 있다 */
 export const singleEndState = (w: Pick<EndStateWait, "endStates">) => endStateNames(w).length < 2;
 
-export const SINGLE_STATE_WARNING = "끝 상태가 하나뿐인 대기: 그 상태가 오지 않으면 끝없이 기다릴 수 있음(오류 A). 완료 · 확인 필요 · 막힘 · 오류 · 비활성 사유 등 화면의 모든 끝 상태를 넣을 것";
+export const singleStateWarning = () => tx(
+  "끝 상태가 하나뿐인 대기: 그 상태가 오지 않으면 끝없이 기다릴 수 있음(오류 A). 완료 · 확인 필요 · 막힘 · 오류 · 비활성 사유 등 화면의 모든 끝 상태를 넣을 것",
+  "A wait with only one end state: if that state never comes, it can wait forever (error A). List every end state the screen can reach: done, needs review, blocked, error, disabled reason, and so on.",
+);
 
 async function visibleState(p: DPage, w: EndStateWait): Promise<string | null> {
   for (const [name, sel] of Object.entries(w.endStates)) {
@@ -83,7 +87,7 @@ async function visibleState(p: DPage, w: EndStateWait): Promise<string | null> {
  */
 export async function waitEndState(p: DPage, w: EndStateWait, o: EndStateOpts = {}): Promise<{ state: string; ms: number }> {
   const names = endStateNames(w);
-  if (!names.length) throw new Error("wait.endStates 에 끝 상태가 하나도 없음");
+  if (!names.length) throw new Error(tx("wait.endStates 에 끝 상태가 하나도 없음", "wait.endStates has no end state"));
   const idleMs = w.idleMs ?? IDLE_MS;
   const cap = w.timeout ?? MAX_WAIT_MS;
   const every = o.logEveryMs ?? LOG_EVERY_MS;
@@ -98,7 +102,7 @@ export async function waitEndState(p: DPage, w: EndStateWait, o: EndStateOpts = 
     const now = Date.now();
     if (state) {
       const want = w.expectState === undefined ? null : ([] as string[]).concat(w.expectState);
-      if (want && !want.includes(state)) throw new Error(`기대한 끝 상태(${want.join(" 또는 ")})가 아니라 「${state}」 상태가 나타남 (${((now - t0) / 1000).toFixed(1)}초)`);
+      if (want && !want.includes(state)) throw new Error(tx(`기대한 끝 상태(${want.join(" 또는 ")})가 아니라 「${state}」 상태가 나타남 (${((now - t0) / 1000).toFixed(1)}초)`, `The end state "${state}" appeared, not the expected end state (${want.join(" or ")}) (${((now - t0) / 1000).toFixed(1)}s)`));
       return { state, ms: now - t0 };
     }
     const cur = await p.evaluate<string>(SIGNATURE).catch(() => sig);
@@ -108,35 +112,41 @@ export async function waitEndState(p: DPage, w: EndStateWait, o: EndStateOpts = 
     }
     if (now - lastLog >= every) {
       lastLog = now;
-      o.onLog?.(`대기 중 ${Math.round((now - t0) / 1000)}초 — 끝 상태(${names.join(" · ")}) 아직 없음. 화면: ${await sample()}`);
+      const screen = await sample();
+      o.onLog?.(tx(`대기 중 ${Math.round((now - t0) / 1000)}초 — 끝 상태(${names.join(" · ")}) 아직 없음. 화면: ${screen}`, `Waited ${Math.round((now - t0) / 1000)}s — no end state (${names.join(" · ")}) yet. Screen: ${screen}`));
     }
     if (now - changedAt >= idleMs) {
       // 진행 신호가 보이면 서버가 아직 처리 중이다: 무변화로 끝내지 않고 상한까지 기다린다
       const prog = await progressSignal(p, w);
       if (prog) {
-        o.onLog?.(`화면이 ${Math.round(idleMs / 1000)}초 동안 안 바뀌었지만 진행 신호 ${prog} 가 보여 계속 기다림(상한 ${Math.round(cap / 1000)}초) — 현재 화면: ${await sample()}`);
+        const screen = await sample();
+        o.onLog?.(tx(`화면이 ${Math.round(idleMs / 1000)}초 동안 안 바뀌었지만 진행 신호 ${prog} 가 보여 계속 기다림(상한 ${Math.round(cap / 1000)}초) — 현재 화면: ${screen}`, `The screen has not changed for ${Math.round(idleMs / 1000)}s, but the progress signal ${prog} is shown, so the wait goes on (limit ${Math.round(cap / 1000)}s) — current screen: ${screen}`));
         changedAt = now;
       }
     }
     if (o.longWait && now - changedAt >= idleMs) {
       // 긴 계산: 무변화는 실패가 아니다. 현재 화면 글자를 남기고 다음 무변화 구간을 다시 센다
-      o.onLog?.(`화면이 ${Math.round(idleMs / 1000)}초 동안 안 바뀜(긴 계산 대기, 상한 ${Math.round(cap / 1000)}초까지 계속) — 현재 화면: ${await sample()}`);
+      const screen = await sample();
+      o.onLog?.(tx(`화면이 ${Math.round(idleMs / 1000)}초 동안 안 바뀜(긴 계산 대기, 상한 ${Math.round(cap / 1000)}초까지 계속) — 현재 화면: ${screen}`, `The screen has not changed for ${Math.round(idleMs / 1000)}s (long calculation wait, goes on until the ${Math.round(cap / 1000)}s limit) — current screen: ${screen}`));
       changedAt = now;
     }
     if (!o.longWait && now - changedAt >= idleMs) {
-      const msg = `화면이 ${Math.round(idleMs / 1000)}초 동안 안 바뀜 — 끝 상태(${names.join(" · ")}) 중 어느 것도 안 나타남. 현재 화면: ${await sample()}`;
-      o.onLog?.(`대기 실패(도구 판정 불가): ${msg}`);
+      const screen = await sample();
+      const msg = tx(`화면이 ${Math.round(idleMs / 1000)}초 동안 안 바뀜 — 끝 상태(${names.join(" · ")}) 중 어느 것도 안 나타남. 현재 화면: ${screen}`, `The screen has not changed for ${Math.round(idleMs / 1000)}s — none of the end states (${names.join(" · ")}) appeared. Current screen: ${screen}`);
+      o.onLog?.(tx(`대기 실패(도구 판정 불가): ${msg}`, `Wait failed (tool error): ${msg}`));
       throw new ToolError("A", msg);
     }
     if (now - t0 >= cap) {
       const prog = await progressSignal(p, w);
       if (prog) {
-        const msg = `${Math.round(cap / 1000)}초 상한까지 진행 신호 ${prog} 가 계속 보임 — 서버가 아직 처리 중일 수 있어 판정하지 않음. 케이스 maxWaitSec 를 처리 시간보다 길게 정할 것. 현재 화면: ${await sample()}`;
-        o.onLog?.(`대기 실패(도구 판정 불가): ${msg}`);
+        const screen = await sample();
+        const msg = tx(`${Math.round(cap / 1000)}초 상한까지 진행 신호 ${prog} 가 계속 보임 — 서버가 아직 처리 중일 수 있어 판정하지 않음. 케이스 maxWaitSec 를 처리 시간보다 길게 정할 것. 현재 화면: ${screen}`, `The progress signal ${prog} was still shown at the ${Math.round(cap / 1000)}s limit — the server may still be working, so it is not judged. Set the case maxWaitSec longer than the processing time. Current screen: ${screen}`);
+        o.onLog?.(tx(`대기 실패(도구 판정 불가): ${msg}`, `Wait failed (tool error): ${msg}`));
         throw new ToolError("L", msg);
       }
-      const msg = `${Math.round(cap / 1000)}초 상한 안에 끝 상태(${names.join(" · ")})가 안 나타남. 현재 화면: ${await sample()}`;
-      o.onLog?.(`대기 실패(도구 판정 불가): ${msg}`);
+      const screen = await sample();
+      const msg = tx(`${Math.round(cap / 1000)}초 상한 안에 끝 상태(${names.join(" · ")})가 안 나타남. 현재 화면: ${screen}`, `No end state (${names.join(" · ")}) appeared within the ${Math.round(cap / 1000)}s limit. Current screen: ${screen}`);
+      o.onLog?.(tx(`대기 실패(도구 판정 불가): ${msg}`, `Wait failed (tool error): ${msg}`));
       throw new ToolError("A", msg);
     }
     await sleep(poll);

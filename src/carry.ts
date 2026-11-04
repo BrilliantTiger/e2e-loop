@@ -1,6 +1,7 @@
 // 이전 라운드에서 E(기대 오류)로 제외된 케이스의 이월 (오류 E 재발 막기).
 // 가장 최근에 이 케이스를 돌린 라운드에서 결과가 NA(E)였고, 그 뒤로 기대·근거(basis)를 고치지 않았으면
 // 새 라운드에서는 돌리지 않고 「이전 라운드 E 제외 — 기대 수정 필요」 로 미리 NA(E) 분류한다. 시트에도 표시한다.
+import { tx } from "./i18n.ts";
 import { createHash } from "node:crypto";
 import type { Case, CaseResult } from "./types.ts";
 import type { Project } from "./store.ts";
@@ -14,7 +15,7 @@ export interface CarriedE {
   detail: string;
 }
 
-export const CARRIED_E_MARK = "이전 라운드 E 제외 — 기대 수정 필요";
+export const carriedEMark = () => tx("이전 라운드 E 제외 — 기대 수정 필요", "Excluded as E in an earlier round — expectation needs fixing");
 
 /** 이월할 E 제외 케이스: 케이스 id → 제외됐던 라운드와 그때 사유 */
 export function carriedE(project: Project, cases: Case[], skipRound?: string): Map<string, CarriedE> {
@@ -39,10 +40,13 @@ export function carriedE(project: Project, cases: Case[], skipRound?: string): M
 
 /** 이월한 케이스의 결과: 누르지 않고 NA(E) */
 export function carriedResult(c: Case, e: CarriedE, now: string): CaseResult {
-  const detail = `${CARRIED_E_MARK}: ${e.round} 에서 E 로 제외됐고 그 뒤 기대·근거(basis)를 고치지 않아 실행하지 않음(그때 사유: ${e.detail.slice(0, 200)})`;
+  const detail = tx(
+    `${carriedEMark()}: ${e.round} 에서 E 로 제외됐고 그 뒤 기대·근거(basis)를 고치지 않아 실행하지 않음(그때 사유: ${e.detail.slice(0, 200)})`,
+    `${carriedEMark()}: excluded as E in ${e.round}, and the expectation and basis have not changed since, so it was not run (reason then: ${e.detail.slice(0, 200)})`,
+  );
   return {
     id: c.id, title: c.title, type: c.type, event: c.event, source_ref: c.source_ref, element: c.element, risk: c.risk,
-    status: "NA", reason: `도구 판정 불가(E): ${detail}`, toolError: { kind: "E", detail },
+    status: "NA", reason: tx(`도구 판정 불가(E): ${detail}`, `Tool error (E): ${detail}`), toolError: { kind: "E", detail },
     warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: now,
   };
 }

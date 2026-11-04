@@ -6,7 +6,8 @@ import { chromium, type Browser } from "playwright";
 import type { CaseResult, RoundMeta, Verdict } from "./types.ts";
 import type { Project } from "./store.ts";
 import { renderHuman, sheetData, type Embed } from "./sheets.ts";
-import { NOW_KO, STATUS_KO, issueFlow } from "./charts.ts";
+import { NOW_LABEL, STATUS_LABEL, issueFlow } from "./charts.ts";
+import { lang, tx, setLang } from "./i18n.ts";
 
 export type ExportFormat = "pdf" | "csv" | "html";
 export const EXPORT_FORMATS: readonly ExportFormat[] = ["pdf", "csv", "html"];
@@ -24,8 +25,8 @@ export interface ExportResult {
 export function exportRound(project: Project, round?: string): RoundMeta {
   const rounds = project.rounds();
   const r = round ? rounds.find((x) => x.id === round) : [...rounds].reverse().find((x) => x.status !== "running");
-  if (!r) throw new Error(round ? `라운드 ${round} 가 없습니다` : "끝난 라운드가 없습니다");
-  if (r.status === "running") throw new Error(`${r.id} 는 아직 진행 중입니다. 라운드가 끝난 뒤 내보내세요`);
+  if (!r) throw new Error(round ? tx(`라운드 ${round} 가 없습니다`, `Round ${round} does not exist`) : tx("끝난 라운드가 없습니다", "No round has finished"));
+  if (r.status === "running") throw new Error(tx(`${r.id} 는 아직 진행 중입니다. 라운드가 끝난 뒤 내보내세요`, `${r.id} is still running. Export it after the round ends`));
   return r;
 }
 
@@ -34,7 +35,7 @@ export function parseFormats(v: unknown): ExportFormat[] {
   if (v === undefined || v === null || v === true || v === "") return [...EXPORT_FORMATS];
   const list = (Array.isArray(v) ? v : String(v).split(",")).map((x) => String(x).trim().toLowerCase()).filter(Boolean);
   const bad = list.filter((x) => !EXPORT_FORMATS.includes(x as ExportFormat));
-  if (bad.length) throw new Error(`모르는 내보내기 형식: ${bad.join(", ")} (pdf · csv · html 중에서 고르세요)`);
+  if (bad.length) throw new Error(tx(`모르는 내보내기 형식: ${bad.join(", ")} (pdf · csv · html 중에서 고르세요)`, `Unknown export format: ${bad.join(", ")} (choose from pdf, csv, html)`));
   return [...new Set(list)] as ExportFormat[];
 }
 
@@ -49,7 +50,7 @@ function cell(v: unknown): string {
 /** 엑셀에서 한글이 깨지지 않게 UTF-8 BOM 을 붙이고, 줄 끝은 CRLF */
 export const toCsv = (rows: unknown[][]) => "﻿" + rows.map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
 
-const ko = (s?: Verdict | string) => (s ? (STATUS_KO[s] ?? s) : "돌리지 않음");
+const statusText = (s?: Verdict | string) => (s ? (STATUS_LABEL[s] ?? s) : tx("돌리지 않음", "not run"));
 
 /** summary 가 없는 라운드(중단 등)는 결과에서 센다 */
 function withSummary(meta: RoundMeta, results: CaseResult[]): RoundMeta {
@@ -79,7 +80,7 @@ async function launchForPdf(): Promise<Browser> {
       errs.push(`${channel ?? "chromium"}: ${String(e?.message ?? e).split("\n")[0]}`);
     }
   }
-  throw new Error(`PDF 를 만들 브라우저를 띄우지 못했습니다(Playwright Chromium·Chrome·Edge 모두 실패). sh install.sh 로 Playwright 브라우저를 설치하세요 — ${errs.join(" / ")}`);
+  throw new Error(tx(`PDF 를 만들 브라우저를 띄우지 못했습니다(Playwright Chromium·Chrome·Edge 모두 실패). sh install.sh 로 Playwright 브라우저를 설치하세요 — ${errs.join(" / ")}`, `Could not start a browser to make the PDF (Playwright Chromium, Chrome, and Edge all failed). Install the Playwright browser with sh install.sh — ${errs.join(" / ")}`));
 }
 
 async function htmlToPdf(html: string, out: string, round: string) {
@@ -106,10 +107,11 @@ async function htmlToPdf(html: string, out: string, round: string) {
 
 /** 라운드 보고서를 rounds/<라운드>/export/ 에 내보낸다 */
 export async function exportReport(project: Project, opts: { round?: string; formats?: unknown } = {}): Promise<ExportResult> {
+  setLang(project.config().lang); // 내보내기는 그 프로젝트의 언어로 다시 그린다
   const formats = parseFormats(opts.formats);
   const m0 = exportRound(project, opts.round);
   const results = project.readJson<CaseResult[]>(`rounds/${m0.id}/results.json`, []);
-  if (!results.length) throw new Error(`${m0.id} 에 결과가 없습니다`);
+  if (!results.length) throw new Error(tx(`${m0.id} 에 결과가 없습니다`, `${m0.id} has no results`));
   const meta = withSummary(m0, results);
   const d = sheetData(project, meta, results);
   const dir = join(d.dir, "export");
@@ -118,22 +120,27 @@ export async function exportReport(project: Project, opts: { round?: string; for
 
   if (formats.includes("csv")) {
     const flow = issueFlow(project, meta, results);
+    const en = lang() === "en";
     const issues = toCsv([
-      ["순위", "상태", "케이스", "제목", "화면", "기능", "근거", "증상", "재현 단계", "기대", "실제", "힌트", "스크린샷", "영상", "영상 위치"],
-      ...d.issues.map((i) => [i.priority ?? "", ko(i.status), i.id, i.title, i.screen ?? "", i.feature ?? "", i.source_ref ?? "", i.symptom, i.reproduction.map((x) => `${x.n}. ${x.action} → ${x.result}`).join("\n"), i.expected, i.actual, i.hint, i.evidence.screenshot ?? "", i.evidence.video ?? "", i.evidence.videoAt ? `${i.evidence.videoAt.chapter} ${i.evidence.videoAt.at}` : ""]),
+      en
+        ? ["Priority", "Status", "Case", "Title", "Screen", "Feature", "Basis", "Symptom", "Reproduction steps", "Expected", "Actual", "Hint", "Screenshot", "Video", "Video position"]
+        : ["순위", "상태", "케이스", "제목", "화면", "기능", "근거", "증상", "재현 단계", "기대", "실제", "힌트", "스크린샷", "영상", "영상 위치"],
+      ...d.issues.map((i) => [i.priority ?? "", statusText(i.status), i.id, i.title, i.screen ?? "", i.feature ?? "", i.source_ref ?? "", i.symptom, i.reproduction.map((x) => `${x.n}. ${x.action} → ${x.result}`).join("\n"), i.expected, i.actual, i.hint, i.evidence.screenshot ?? "", i.evidence.video ?? "", i.evidence.videoAt ? `${i.evidence.videoAt.chapter} ${i.evidence.videoAt.at}` : ""]),
     ]);
     const rounds = flow.rounds.map((r) => r.round);
     const history = toCsv([
-      ["케이스", "제목", "지금", "처음 이슈가 된 라운드", "고쳐진 라운드", "이슈 횟수", ...rounds],
-      ...flow.issues.map((i) => [i.id, i.title, NOW_KO[i.now], i.first, i.fixedIn ?? "", i.times, ...i.cells.map((c) => ko(c.status))]),
+      [...(en ? ["Case", "Title", "Now", "First round as an issue", "Fixed in round", "Times an issue"] : ["케이스", "제목", "지금", "처음 이슈가 된 라운드", "고쳐진 라운드", "이슈 횟수"]), ...rounds],
+      ...flow.issues.map((i) => [i.id, i.title, NOW_LABEL[i.now], i.first, i.fixedIn ?? "", i.times, ...i.cells.map((c) => statusText(c.status))]),
     ]);
     const byRound = new Map(flow.rounds.map((r) => [r.round, r]));
     const roundRows = toCsv([
-      ["라운드", "종류", "상태", "비교한 앞 라운드", "이슈", "계속 남음", "새로 생김", "다시 생김", "고쳐짐", "실패", "불안정", "검증 못 함", "스킵", "도구 오류(NA)", "선행 결함에 막힘(H)", "통과", "전체"],
+      en
+        ? ["Round", "Scope", "State", "Compared with round", "Issues", "Still open", "New", "Reopened", "Fixed", "Failed", "Flaky", "Unverified", "Skipped", "Tool error (NA)", "Blocked by a prior defect (H)", "Passed", "Total"]
+        : ["라운드", "종류", "상태", "비교한 앞 라운드", "이슈", "계속 남음", "새로 생김", "다시 생김", "고쳐짐", "실패", "불안정", "검증 못 함", "스킵", "도구 오류(NA)", "선행 결함에 막힘(H)", "통과", "전체"],
       ...d.tr.map((t) => {
         const f = byRound.get(t.round);
         const status = project.rounds().find((r) => r.id === t.round)?.status;
-        return [t.round, t.scope === "full" ? "전체" : "부분", status === "finished" ? "끝남" : status === "aborted" ? "중단" : (status ?? ""), f?.prev ?? "", t.issues, f?.still ?? "", f?.added ?? "", f?.reopened ?? "", f?.fixed ?? "", t.fail, t.flaky, t.blocked, t.skip, t.toolError, t.blockedByDefect, t.pass, t.total];
+        return [t.round, t.scope === "full" ? tx("전체", "full") : tx("부분", "partial"), status === "finished" ? tx("끝남", "finished") : status === "aborted" ? tx("중단", "aborted") : (status ?? ""), f?.prev ?? "", t.issues, f?.still ?? "", f?.added ?? "", f?.reopened ?? "", f?.fixed ?? "", t.fail, t.flaky, t.blocked, t.skip, t.toolError, t.blockedByDefect, t.pass, t.total];
       }),
     ]);
     out.files.csv = { issues: join(dir, `issues-${meta.id}.csv`), history: join(dir, `history-${meta.id}.csv`), rounds: join(dir, `rounds-${meta.id}.csv`) };
@@ -145,8 +152,8 @@ export async function exportReport(project: Project, opts: { round?: string; for
   if (formats.includes("html") || formats.includes("pdf")) {
     const embed: Embed = { limit: EMBED_LIMIT, used: 0, skipped: 0 };
     const html = renderHuman(project, meta, d.verdict, d.applied, results, d.cases, d.issues, d.tasks, d.tr, d.diff, d.excluded, { embed });
-    if (embed.skipped) out.notes.push(`스크린샷 용량이 상한(${Math.round(EMBED_LIMIT / 1048576)}MB)을 넘어 ${embed.skipped}장은 넣지 않았습니다(라운드 폴더에 있음)`);
-    out.notes.push("스크린샷은 이슈 케이스 것만 넣었고, 영상은 넣지 않았습니다(라운드 폴더에 있음)");
+    if (embed.skipped) out.notes.push(tx(`스크린샷 용량이 상한(${Math.round(EMBED_LIMIT / 1048576)}MB)을 넘어 ${embed.skipped}장은 넣지 않았습니다(라운드 폴더에 있음)`, `The screenshots exceed the size limit (${Math.round(EMBED_LIMIT / 1048576)}MB), so ${embed.skipped} screenshots are left out (they are in the round folder)`));
+    out.notes.push(tx("스크린샷은 이슈 케이스 것만 넣었고, 영상은 넣지 않았습니다(라운드 폴더에 있음)", "Only the screenshots of issue cases are included. Videos are not included (they are in the round folder)"));
     if (formats.includes("html")) {
       out.files.html = join(dir, `report-${meta.id}.html`);
       writeFileSync(out.files.html, html);

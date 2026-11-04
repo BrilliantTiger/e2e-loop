@@ -1,6 +1,7 @@
 // 재시험 대기열 (사유 R: 선행 챕터가 도구 오류로 끝나 하위 챕터를 돌리지 않음 · F 의 하위 항목 「시험 조건 불성립」).
 // 돌리지 않은 하위 케이스는 대기열(retest.json)에 올리고, 선행 챕터를 다시 시험할 때 함께 돈다(e2e_round_start retest=true).
 // 다시 돌아 대기 사유가 풀린 케이스는 대기열에서 빠지고, 또 막히면 새 사유로 남는다.
+import { tx } from "./i18n.ts";
 import type { Case, CaseResult } from "./types.ts";
 import { nowIso, type Project } from "./store.ts";
 
@@ -46,5 +47,12 @@ export function retestSelection(p: Project, cases: Case[], chapterOf: (c: Case) 
 export function describeRetest(q: RetestEntry[]): string {
   const g = new Map<string, RetestEntry[]>();
   for (const e of q) g.set(`${e.chapter}|${e.after ?? ""}`, [...(g.get(`${e.chapter}|${e.after ?? ""}`) ?? []), e]);
-  return [...g.values()].map((l) => `${l[0]!.chapter} ${l.length}건(${l[0]!.after ? `선행 ${l[0]!.after} 재시험 뒤` : "시험 조건 불성립 — 다음 라운드"})`).join(", ");
+  return [...g.values()]
+    .map((l) =>
+      tx(
+        `${l[0]!.chapter} ${l.length}건(${l[0]!.after ? `선행 ${l[0]!.after} 재시험 뒤` : "시험 조건 불성립 — 다음 라운드"})`,
+        `${l[0]!.chapter}: ${l.length} ${l.length === 1 ? "case" : "cases"} (${l[0]!.after ? `after the retest of prior chapter ${l[0]!.after}` : "test condition not met — next round"})`,
+      ),
+    )
+    .join(", ");
 }

@@ -6,6 +6,8 @@
 // 이 도구가 띄운 프로세스에만 표지(e2e-loop-owner=<띄운 프로세스 pid>)가 달려 있다
 // (Playwright 브라우저의 명령줄 인자, Ego 브리지 스크립트의 주석). 사용자가 평소 쓰는 Chrome 이나
 // 다른 도구의 브라우저는 표지가 없어 건드리지 않는다.
+import { tx } from "./i18n.ts";
+
 export const OWNER_MARK = "e2e-loop-owner";
 
 export interface RawProc {
@@ -140,4 +142,12 @@ export async function waitNoStale(timeoutMs: number, selfPid: number = process.p
 }
 
 export const describeProcs = (list: OwnedProc[]): string =>
-  list.slice(0, 6).map((p) => `${p.kind === "ego" ? "Ego" : "브라우저"} pid ${p.pid}(띄운 프로세스 ${p.owner} ${p.ownerAlive ? "살아 있음" : "이미 종료"})`).join(", ") + (list.length > 6 ? ` 외 ${list.length - 6}개` : "");
+  list
+    .slice(0, 6)
+    .map((p) =>
+      tx(
+        `${p.kind === "ego" ? "Ego" : "브라우저"} pid ${p.pid}(띄운 프로세스 ${p.owner} ${p.ownerAlive ? "살아 있음" : "이미 종료"})`,
+        `${p.kind === "ego" ? "Ego" : "browser"} pid ${p.pid} (started by process ${p.owner}, ${p.ownerAlive ? "still alive" : "already ended"})`,
+      ),
+    )
+    .join(", ") + (list.length > 6 ? tx(` 외 ${list.length - 6}개`, ` and ${list.length - 6} more`) : "");

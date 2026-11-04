@@ -72,6 +72,8 @@ export type DriverName = "auto" | "ego" | "chrome" | "edge" | "chromium";
 export type DataPolicy = "ask" | "reset" | "keep";
 
 export interface Config {
+  /** 결과물·메시지 언어(ko 기본 · en). 없으면 E2E_LOOP_LANG → 설치 폴더의 .lang → ko */
+  lang?: "ko" | "en";
   baseUrl: string;
   driver: DriverName;
   headless: boolean;

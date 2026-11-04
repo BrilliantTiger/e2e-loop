@@ -9,6 +9,7 @@ import type { Project } from "./store.ts";
 import { nowIso } from "./store.ts";
 import { readComments, type Comment } from "./comments.ts";
 import { which, type Env } from "./env/detect.ts";
+import { tx, setLang } from "./i18n.ts";
 
 export type ResponderKind = "answer" | "fix";
 
@@ -101,8 +102,8 @@ export interface RunOpts {
 
 /** 코멘트가 달렸다고 알린다. 잠시(batchSeconds) 모았다가 한 번에 처리한다. */
 export function triggerResponder(p: Project, opts: RunOpts = {}): { scheduled: boolean; why?: string } {
-  if (p.config().responder.mode === "off") return { scheduled: false, why: "자동 응답이 꺼져 있음" };
-  if (timers.has(p.root)) return { scheduled: false, why: "이미 곧 실행됨" };
+  if (p.config().responder.mode === "off") return { scheduled: false, why: tx("자동 응답이 꺼져 있음", "automatic replies are off") };
+  if (timers.has(p.root)) return { scheduled: false, why: tx("이미 곧 실행됨", "already about to run") };
   const ms = opts.batchMs ?? p.config().responder.batchSeconds * 1000;
   const t = setTimeout(() => {
     timers.delete(p.root);
@@ -115,6 +116,7 @@ export function triggerResponder(p: Project, opts: RunOpts = {}): { scheduled: b
 
 /** 한 번에 하나만 돈다. 끝난 뒤 처리할 코멘트가 남아 있으면 이어서 돈다(시도 횟수 안에서). */
 export async function runResponder(p: Project, opts: RunOpts = {}): Promise<ResponderState[]> {
+  setLang(p.config().lang); // 타이머로 늦게 돌므로, 그 사이 다른 프로젝트 일로 바뀐 언어를 되돌린다
   const runs: ResponderState[] = [];
   const lock = p.p("responder.lock");
   try {
@@ -141,7 +143,13 @@ export async function runResponder(p: Project, opts: RunOpts = {}): Promise<Resp
       const codex = which("codex", env);
       const agent: "claude" | "codex" = cfg.agent ?? (claude ? "claude" : "codex");
       if (!(agent === "claude" ? claude : codex) && !opts.exec) {
-        const st: ResponderState = { running: false, kind: work.kind, ids, finishedAt: nowIso(), agent, error: (!claude && !codex ? "claude 와 codex 를 모두" : `${agent} 명령을`) + ` 찾지 못해 자동 응답을 하지 못했습니다(이 컴퓨터에 claude 또는 codex 가 설치·로그인돼 있어야 합니다)` };
+        const st: ResponderState = {
+          running: false, kind: work.kind, ids, finishedAt: nowIso(), agent,
+          error: tx(
+            (!claude && !codex ? "claude 와 codex 를 모두" : `${agent} 명령을`) + ` 찾지 못해 자동 응답을 하지 못했습니다(이 컴퓨터에 claude 또는 codex 가 설치·로그인돼 있어야 합니다)`,
+            `Could not reply automatically because ${!claude && !codex ? "neither claude nor codex was found" : `the ${agent} command was not found`} (claude or codex must be installed and logged in on this computer)`,
+          ),
+        };
         p.writeJson("responder-state.json", st);
         runs.push(st);
         break;

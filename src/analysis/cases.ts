@@ -7,6 +7,7 @@ import { loadAnalyses } from "./store.ts";
 import type { CodeAnalysis } from "./code.ts";
 import { reconcile } from "./reconcile.ts";
 import { applyOsPolicy } from "./os.ts";
+import { tx } from "../i18n.ts";
 
 const h6 = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 6);
 const pathOnly = (u: string) => u.split("?")[0]!;
@@ -27,7 +28,7 @@ export function extraCases(cfg: Config, inv: Inventory | null, analyses: CodeAna
   const recon = reconcile(analyses, inv);
   const codeLoc = (path: string) => {
     const r = analyses.flatMap((a) => a.routes).find((x) => x.path === path);
-    return r ? `코드 ${r.file}:${r.line}` : undefined;
+    return r ? tx(`코드 ${r.file}:${r.line}`, `code ${r.file}:${r.line}`) : undefined;
   };
 
   // 1) 링크로는 닿지 않은 화면(코드·시작 주소로 연 화면): 열리는지
@@ -35,8 +36,8 @@ export function extraCases(cfg: Config, inv: Inventory | null, analyses: CodeAna
     if ((p.via ?? "link") === "link") continue;
     const path = p.path.split("?")[0]!;
     out.push({
-      id: `PG-${h6(p.path)}`, type: "probe", event: "page", screen: path, feature: "화면 열림", area: path, risk: "safe",
-      title: `화면 열림 ${p.path}${p.via === "code" ? " (코드에는 있으나 링크로는 닿지 않음)" : ""}`,
+      id: `PG-${h6(p.path)}`, type: "probe", event: "page", screen: path, feature: tx("화면 열림", "Screen opens"), area: path, risk: "safe",
+      title: tx(`화면 열림 ${p.path}${p.via === "code" ? " (코드에는 있으나 링크로는 닿지 않음)" : ""}`, `Screen opens ${p.path}${p.via === "code" ? " (in the code, but no link reaches it)" : ""}`),
       source_ref: p.via === "code" ? codeLoc(path) : undefined,
       steps: [{ op: "goto", url: p.path }, { op: "probe", kind: "page", label: p.path }],
     });
@@ -50,9 +51,9 @@ export function extraCases(cfg: Config, inv: Inventory | null, analyses: CodeAna
     if (seen.has(k)) continue;
     seen.add(k);
     out.push({
-      id: `A-${h6(k)}`, type: "probe", event: "api", screen: a.page, feature: "API 호출", area: a.page, risk: "safe",
-      title: `API GET ${a.path} → ${a.status < 300 ? "2xx" : a.status}${a.jsonKeys?.length ? ` · 응답 키 ${a.jsonKeys.slice(0, 4).join(",")}` : a.jsonArray ? " · 배열 응답" : ""}`,
-      source_ref: `사이트 관측 ${a.page}`,
+      id: `A-${h6(k)}`, type: "probe", event: "api", screen: a.page, feature: tx("API 호출", "API call"), area: a.page, risk: "safe",
+      title: `API GET ${a.path} → ${a.status < 300 ? "2xx" : a.status}${a.jsonKeys?.length ? tx(` · 응답 키 ${a.jsonKeys.slice(0, 4).join(",")}`, ` · response keys ${a.jsonKeys.slice(0, 4).join(",")}`) : a.jsonArray ? tx(" · 배열 응답", " · array response") : ""}`,
+      source_ref: tx(`사이트 관측 ${a.page}`, `seen on the site ${a.page}`),
       steps: [
         { op: "goto", url: a.page },
         { op: "api", via: "page", method: "GET", url: a.sample, status: a.status < 300 ? "2xx" : a.status, ...(a.jsonKeys?.length ? { jsonHas: a.jsonKeys.slice(0, 10) } : {}), ...(a.jsonArray ? { jsonArray: true } : {}) },
@@ -69,9 +70,9 @@ export function extraCases(cfg: Config, inv: Inventory | null, analyses: CodeAna
     if (seen.has(k)) continue;
     seen.add(k);
     out.push({
-      id: `CA-${h6(k)}`, type: "probe", event: "api", screen: "(API)", feature: "API 호출", area: "(API)", risk: "safe", tags: ["code-api"],
-      title: `API GET ${pathOnly(rel)} (코드에서 호출) → 400 미만`,
-      source_ref: `코드 ${api.file}:${api.line}`,
+      id: `CA-${h6(k)}`, type: "probe", event: "api", screen: "(API)", feature: tx("API 호출", "API call"), area: "(API)", risk: "safe", tags: ["code-api"],
+      title: tx(`API GET ${pathOnly(rel)} (코드에서 호출) → 400 미만`, `API GET ${pathOnly(rel)} (called in the code) → below 400`),
+      source_ref: tx(`코드 ${api.file}:${api.line}`, `code ${api.file}:${api.line}`),
       steps: [{ op: "goto", url: "/" }, { op: "api", via: "page", method: "GET", url: rel, status: "<400" }],
     });
   }

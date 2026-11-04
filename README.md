@@ -6,8 +6,17 @@
 1라운드 → 수정 → 2라운드 → 수정 → 3라운드 → … → 이슈 0
 ```
 
+- English: [README.en.md](README.en.md)
 - 요구사항(확정): [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md)
 - 상태: 구현 진행 중. 기능 단위로 만들고 기능 단위로 push 한다.
+
+## 언어
+
+보고서·현황판·AI용 시트·판정 사유·도구 메시지는 **한국어(기본) 또는 영어**로 나온다.
+
+- 프로젝트마다: `e2e_init lang=en` 또는 `e2e_prestart lang=en`(CLI: `bun src/cli.ts init --lang en`). 테스터 AI 가 사용자가 쓰는 언어를 보고 정한다.
+- 이 설치의 기본(MCP 도구 설명·CLI 도움말·환경 점검, `lang` 이 없는 프로젝트): `sh install.sh --lang en` 또는 환경변수 `E2E_LOOP_LANG=en`. 시스템 로캘(LANG)로는 정하지 않는다(한국어 사용자도 `LANG=en_US` 인 경우가 흔하다).
+- 이미 돈 라운드의 기록은 그때 언어로 남는다. 내보내기(`e2e_report_export`)는 보고서 틀을 지금 언어로 다시 그리지만, 라운드 도중에 기록된 판정 사유는 그대로다.
 
 ## 지원 브라우저
 
@@ -18,7 +27,7 @@ Chrome 기반 전부(Chrome·Chromium·Edge 등)는 Playwright 로, Ego 는 Ego 
 ```sh
 git clone git@github.com:BrilliantTiger/e2e-loop.git
 cd e2e-loop
-sh install.sh
+sh install.sh            # 영어로 쓰려면 sh install.sh --lang en
 ```
 
 `install.sh` 가 하는 일:

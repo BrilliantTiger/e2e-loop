@@ -16,10 +16,11 @@
 //   X 확인 없는 통과(마지막 동작 뒤에 결과 기대가 없어 「오류 없음」만으로 PASS 로 봄)
 //   H 선행 챕터의 제품 결함에 막혀 돌리지 않음(도구 오류가 아니라 제품 결함의 여파)
 import type { Case, CaseResult, Step, StepResult, ToolErrorKind } from "./types.ts";
+import { LANGS, lang, langTable, tx, type Lang } from "./i18n.ts";
 
 export type { ToolErrorKind };
 
-export const TOOL_ERROR_LABEL: Record<ToolErrorKind, string> = {
+const TOOL_LABEL_KO: Record<ToolErrorKind, string> = {
   A: "오지 않을 상태를 기다림",
   B: "줄 번호 재사용",
   C: "요소 찾는 방법이 화면과 다름",
@@ -39,8 +40,29 @@ export const TOOL_ERROR_LABEL: Record<ToolErrorKind, string> = {
   V: "로그인 만료(남은 토큰을 다시 써 시험 도중 만료 — 로그인 화면으로 튕김·401)",
   X: "확인 없는 통과(마지막 동작 뒤에 결과 기대가 없어 「오류 없음」만으로는 통과로 볼 수 없음)",
 };
+const TOOL_LABEL_EN: Record<ToolErrorKind, string> = {
+  A: "waiting for a state that never comes",
+  B: "reusing a row number",
+  C: "finding an element in a way that differs from the screen",
+  D: "reading before the screen is drawn",
+  E: "an expectation that differs from the plan",
+  F: "pressing on after an earlier step failed",
+  G: "comparing a cut string",
+  L: "the no-change end rule is too short (ended while still in progress)",
+  M: "server computation not finished (pressed before the server finished its background computation)",
+  N: "concurrent run (two chapters running at once on the same tab or dataset)",
+  O: "measurement invalid, window covered (a freeze measured in a covered window)",
+  P: "a dataset-only value in the judgement (the exception list of another dataset makes intended behavior a FAIL)",
+  Q: "an expectation that contradicts the dataset traits (for example, a dictionary file row expected in a dataset without dictionary files)",
+  R: "not run because of a prior tool error (the prior chapter ended with a tool error NA, so later chapters have no evidence)",
+  S: "bases with different expectations (the plan and the screen design differ, and no one has decided which to follow)",
+  U: "freeze not reproduced (a freeze on opening a screen does not come back when it is opened again: first load cost or other load)",
+  V: "login expired (a reused token expired during the test: sent to the login screen or 401)",
+  X: "pass with nothing checked (no result expectation after the last action, so \"no errors\" alone is not a pass)",
+};
+export const TOOL_ERROR_LABEL: Record<ToolErrorKind, string> = langTable({ ko: TOOL_LABEL_KO, en: TOOL_LABEL_EN });
 
-const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
+const TOOL_ACTION_KO: Record<ToolErrorKind, string> = {
   A: "대기 조건에 화면의 모든 끝 상태(완료·확인 필요·막힘·오류·비활성 사유)를 넣어 다시 실행",
   B: "줄을 번호가 아니라 컬럼 이름·글자로 찾도록 고쳐 다시 실행",
   C: "요소를 data-testid·역할·값으로 찾도록 고쳐 다시 실행",
@@ -60,10 +82,31 @@ const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = {
   V: "브라우저에서 새로 로그인해 토큰을 바꾼 뒤(남은 시간이 라운드보다 길게) 다시 실행 — 하위 챕터는 재시험 대기열(R)로 돈다",
   X: "마지막 동작 뒤에 근거 있는 결과 기대(고른 값·저장된 값·안내가 사라짐 등)를 넣어 다시 실행 — 고를 값은 정규식·첫 후보가 아니라 근거의 값으로",
 };
+const TOOL_ACTION_EN: Record<ToolErrorKind, string> = {
+  A: "Put every end state of the screen (done, needs check, blocked, error, disabled reason) in the wait condition and run again",
+  B: "Find the row by column name or text, not by number, and run again",
+  C: "Find the element by data-testid, role, or value, and run again",
+  D: "Read only after the list or panel is drawn, and run again",
+  E: "Fix the expectation to match the plan basis (POL or CCB number) and run again",
+  F: "Declare a precondition (prereq) for the chapter, fix the cause of the earlier failed read (row or element lookup), and run again",
+  G: "Compare the judged value whole, without cutting it (cut only in the log), and run again",
+  L: "Set the case maxWaitSec longer than the server processing time, name the progress signal in wait.progress, and run again",
+  M: "Run again after the server computation finishes (raise timeoutSec of the ready signal, or finish the prior computation first)",
+  N: "Run again after the earlier chapter that uses the same target (the lock owner) ends. Do not run rounds on the same tab or dataset at the same time",
+  O: "Measure again when the window is visible. Do not cover the test window with another window (the feature verdict stays)",
+  P: "Put the dataset-only value in e2e_dataset values (basis: the plan rule), read it in the step with {{dataset.<name>}}, and run again",
+  Q: "Split the expectation with when, or fix it, to match the dataset traits (e2e_dataset traits), and register again. It does not run until fixed",
+  R: "Fix the tool error (the test) of the prior chapter, test that chapter again, then run the retest queue (e2e_round_start retest=true)",
+  S: "Have a person decide which to follow (plan or screen design), fix the expectation to that basis, remove differs, and run again",
+  U: "Left out of the verdict (not a product defect). If it freezes again in the next round, it counts as a freeze then",
+  V: "Log in again in the browser and replace the token (with more time left than the round takes), then run again. Later chapters run from the retest queue (R)",
+  X: "Put a result expectation with a basis after the last action (the chosen value, the saved value, a notice that disappears), and run again. Choose values from the basis, not with a pattern or the first candidate",
+};
+const TOOL_ERROR_ACTION: Record<ToolErrorKind, string> = langTable({ ko: TOOL_ACTION_KO, en: TOOL_ACTION_EN });
 
 /** F 의 하위 항목: 일부러 만드는 실패·중지·장애의 조건이 이번에는 성립하지 않음 */
-export const CONDITION_LABEL = "시험 조건 불성립(일부러 만드는 실패·장애의 조건이 안 섬 — F 의 하위 항목)";
-const CONDITION_ACTION = "조건이 서도록 시험 데이터·절차를 바꿔(예: 내용이 바뀐 파일) 다음 라운드에 재시험 — 재시험 대기열(e2e_round_start retest=true)";
+export const conditionLabel = () => tx("시험 조건 불성립(일부러 만드는 실패·장애의 조건이 안 섬 — F 의 하위 항목)", "test condition not met (the condition for a deliberate failure or fault does not hold, part of F)");
+const conditionAction = () => tx("조건이 서도록 시험 데이터·절차를 바꿔(예: 내용이 바뀐 파일) 다음 라운드에 재시험 — 재시험 대기열(e2e_round_start retest=true)", "Change the test data or steps so that the condition holds (for example, a file whose content changed), and retest in the next round. Retest queue (e2e_round_start retest=true)");
 
 /** 스텝이 던지면 케이스가 FAIL 이 아니라 NA(도구 판정 불가)로 끝난다. */
 export class ToolError extends Error {
@@ -89,19 +132,33 @@ export function isBlankActual(v: unknown): boolean {
   return s === "" || s === "null" || /(^|[^\w])(undefined|NaN)([^\w]|$)/.test(s);
 }
 
-const VERB: Record<string, string> = {
-  goto: "이동", click: "클릭", dblclick: "더블클릭", hover: "마우스 올림", fill: "입력", select: "선택", check: "체크",
-  press: "키 입력", wait: "대기", expect: "확인", api: "API 호출", screenshot: "스크린샷", eval: "스크립트 실행", probe: "점검",
-};
+const VERB: Record<string, string> = langTable({
+  ko: {
+    goto: "이동", click: "클릭", dblclick: "더블클릭", hover: "마우스 올림", fill: "입력", select: "선택", check: "체크",
+    press: "키 입력", wait: "대기", expect: "확인", api: "API 호출", screenshot: "스크린샷", eval: "스크립트 실행", probe: "점검",
+  },
+  en: {
+    goto: "open", click: "click", dblclick: "double-click", hover: "hover", fill: "type", select: "select", check: "tick",
+    press: "press key", wait: "wait", expect: "verify", api: "API call", screenshot: "screenshot", eval: "run script", probe: "probe",
+  },
+});
 
 /** 이슈 「현상」 칸: 「<화면>에서 「<요소>」에 대해 「<동작>」 했더니 「<실제>」 가 나왔다. 기대는 <기대>」 */
 export function symptomSentence(p: { screen: string; element: string; action: string; actual: string; expected: string }): string {
   const one = (s: string, n = 200) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
-  return `${one(p.screen, 80)}에서 「${one(p.element, 120)}」에 대해 「${one(p.action, 60)}」 했더니 「${one(p.actual)}」 가 나왔다. 기대는 ${one(p.expected)}`;
+  return tx(
+    `${one(p.screen, 80)}에서 「${one(p.element, 120)}」에 대해 「${one(p.action, 60)}」 했더니 「${one(p.actual)}」 가 나왔다. 기대는 ${one(p.expected)}`,
+    `On ${one(p.screen, 80)}, for "${one(p.element, 120)}", after "${one(p.action, 60)}", "${one(p.actual)}" appeared. Expected ${one(p.expected)}.`,
+  );
 }
 
 /** 스텝의 동작 이름(한국어 동사). */
-export const verbOf = (step: Step | undefined): string => (step ? (VERB[step.op] ?? step.op) : "실행");
+export const verbOf = (step: Step | undefined): string => (step ? (VERB[step.op] ?? step.op) : tx("실행", "run"));
+
+/** 영어 서수(1st · 2nd · 3rd · 11th) */
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : (["th", "st", "nd", "rd"][n % 10] ?? "th")}`;
+/** 같은 자리가 몇 번째 라운드에 다시 제외됐는가: 「n회째」 */
+export const nthTime = (n: number) => tx(`${n}회째`, `${ordinal(n)} time`);
 
 /** 스텝이 가리키는 요소(선택자·주소·점검 라벨). 없으면 케이스 제목. */
 export const elementOf = (step: Step | undefined, c: Pick<Case, "title"> | undefined, fallback: string): string => {
@@ -113,8 +170,12 @@ export const elementOf = (step: Step | undefined, c: Pick<Case, "title"> | undef
 
 /** 제외 사유: 도구 오류(A~G·L~S·U·V·X), 선행 결함에 막힘 H, 챕터마다 같은 줄 반복 T(여러 챕터의 같은 줄을 합친 줄) */
 export type ExcludedKind = ToolErrorKind | "H" | "T";
-export const EXCLUDED_LABEL: Record<ExcludedKind, string> = { ...TOOL_ERROR_LABEL, H: "선행 결함에 막힘", T: "챕터마다 같은 줄 반복" };
-const EXCLUDED_ACTION: Record<ExcludedKind, string> = { ...TOOL_ERROR_ACTION, H: "시험은 고치지 말고 선행 챕터의 제품 결함을 고친 뒤 다시 실행", T: "한 번 고치면 모든 챕터에서 풀림" };
+const EXCLUDED_KO: Record<ExcludedKind, string> = { ...TOOL_LABEL_KO, H: "선행 결함에 막힘", T: "챕터마다 같은 줄 반복" };
+const EXCLUDED_EN: Record<ExcludedKind, string> = { ...TOOL_LABEL_EN, H: "blocked by a prior defect", T: "the same row repeated in chapters" };
+export const EXCLUDED_LABEL: Record<ExcludedKind, string> = langTable({ ko: EXCLUDED_KO, en: EXCLUDED_EN });
+const EXCLUDED_ACTION_KO: Record<ExcludedKind, string> = { ...TOOL_ACTION_KO, H: "시험은 고치지 말고 선행 챕터의 제품 결함을 고친 뒤 다시 실행", T: "한 번 고치면 모든 챕터에서 풀림" };
+const EXCLUDED_ACTION_EN: Record<ExcludedKind, string> = { ...TOOL_ACTION_EN, H: "Do not fix the test. Fix the product defect of the prior chapter, then run again", T: "One fix clears it in every chapter" };
+const EXCLUDED_ACTION: Record<ExcludedKind, string> = langTable({ ko: EXCLUDED_ACTION_KO, en: EXCLUDED_ACTION_EN });
 /** 챕터를 넘어 합치는 사유(같은 화면·요소·동작·사유가 여러 챕터에서 되풀이되는 시험 쪽 잘못). 원인이 챕터마다 다른 것(H·M·N·R)과 측정(O·U)은 합치지 않는다 */
 const ACROSS_CHAPTERS = new Set<ExcludedKind>(["A", "B", "C", "D", "E", "F", "G", "L", "P", "Q", "S"]);
 
@@ -182,7 +243,7 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
     const chapter = info.chapter ?? "";
     const screen = info.screen ?? "";
     const element = info.element ?? r.title;
-    const verb = info.verb ?? "실행";
+    const verb = info.verb ?? tx("실행", "run");
     // M(선행 계산 미완료)은 같은 준비 신호를 기다린 줄이면 요소·동작이 달라도 한 원인이라 한 줄로 합친다
     const key = kind === "M" ? [chapter, screen, "M", r.toolError!.evidenceText ?? ""].join("\u0001") : [chapter, screen, element, verb, kind === "H" ? `H:${r.blockedBy!.chapter}` : kind].join("\u0001");
     const hit = byKey.get(key);
@@ -200,9 +261,9 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
       title: r.title,
       chapter, screen, element, verb, kind, key,
       symptom: symptomOf(r),
-      reason: kind === "H" ? `H ${EXCLUDED_LABEL.H}: ${r.blockedBy!.detail}` : `${kind} ${r.toolError?.sub === "condition" ? CONDITION_LABEL : TOOL_ERROR_LABEL[kind]}: ${r.toolError!.detail}`,
-      action: r.toolError?.sub === "condition" ? CONDITION_ACTION : EXCLUDED_ACTION[kind],
-      note: kind === "H" ? "도구 오류 아님 — 선행 챕터의 제품 결함에 막혀 돌리지 않음" : "도구 판정 불가",
+      reason: kind === "H" ? `H ${EXCLUDED_LABEL.H}: ${r.blockedBy!.detail}` : `${kind} ${r.toolError?.sub === "condition" ? conditionLabel() : TOOL_ERROR_LABEL[kind]}: ${r.toolError!.detail}`,
+      action: r.toolError?.sub === "condition" ? conditionAction() : EXCLUDED_ACTION[kind],
+      note: kind === "H" ? tx("도구 오류 아님 — 선행 챕터의 제품 결함에 막혀 돌리지 않음", "Not a tool error. Not run because a prior chapter has a product defect") : tx("도구 판정 불가", "The tool could not judge"),
       evidence: [shot, r.toolError?.evidenceText].filter(Boolean).join(" · ") || undefined,
     };
     byKey.set(key, row);
@@ -217,7 +278,7 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
       const chapter = info.chapter ?? "";
       const screen = info.screen ?? "";
       const element = info.element ?? s.desc;
-      const verb = info.verb ?? "실행";
+      const verb = info.verb ?? tx("실행", "run");
       const key = [chapter, screen, element, verb, mk].join("\u0001");
       const hit = byKey.get(key);
       if (hit) {
@@ -232,10 +293,13 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
         count: 1,
         title: r.title,
         chapter, screen, element, verb, kind: mk, key,
-        symptom: `${screen}에서 「${element}」 「${verb}」 중 멈춤 측정 — ${s.measure.summary}`,
+        symptom: tx(`${screen}에서 「${element}」 「${verb}」 중 멈춤 측정 — ${s.measure.summary}`, `Freeze measurement on ${screen}, for "${element}", during "${verb}" — ${s.measure.summary}`),
         reason: `${mk} ${TOOL_ERROR_LABEL[mk]}: ${s.measure.why ?? "-"}`,
         action: EXCLUDED_ACTION[mk],
-        note: `${mk === "O" ? "측정만 무효" : "제품 결함 아님(미재현)"} — 기능 판정은 ${r.status}(따로 남음)${s.measure.remeasured ? ` · 재측정: ${s.measure.remeasured}` : ""}`,
+        note: tx(
+          `${mk === "O" ? "측정만 무효" : "제품 결함 아님(미재현)"} — 기능 판정은 ${r.status}(따로 남음)${s.measure.remeasured ? ` · 재측정: ${s.measure.remeasured}` : ""}`,
+          `${mk === "O" ? "Only the measurement is invalid" : "Not a product defect (not reproduced)"} — the feature verdict is ${r.status} (kept separately)${s.measure.remeasured ? ` · remeasured: ${s.measure.remeasured}` : ""}`,
+        ),
         evidence: s.shot,
       };
       byKey.set(key, row);
@@ -249,22 +313,33 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
  * 챕터마다 같은 줄 반복(T): 같은 (화면, 요소, 동작, 사유)가 여러 챕터에서 나왔으면 한 줄로 합친다(예: 같은 모달의 같은 두 줄이 C9C·C9B2 에서 되풀이).
  * 합친 줄의 사유는 T 이고 원래 사유(origKind)와 챕터들을 남긴다. 번호는 다시 매긴다.
  */
-function tText(chapters: string[], base: Pick<ExcludedRow, "reason" | "action" | "note">): Pick<ExcludedRow, "reason" | "action" | "note"> {
+function tText(chapters: string[], base: Pick<ExcludedRow, "reason" | "action" | "note">, l: Lang = lang()): Pick<ExcludedRow, "reason" | "action" | "note"> {
+  if (l === "en")
+    return {
+      reason: `T ${EXCLUDED_EN.T} (chapters ${chapters.join(", ")}): ${base.reason}`,
+      action: `${EXCLUDED_ACTION_EN.T} — ${base.action}`,
+      note: `${base.note} · same row in ${chapters.length} chapters`,
+    };
   return {
-    reason: `T ${EXCLUDED_LABEL.T}(챕터 ${chapters.join("·")}): ${base.reason}`,
-    action: `${EXCLUDED_ACTION.T} — ${base.action}`,
+    reason: `T ${EXCLUDED_KO.T}(챕터 ${chapters.join("·")}): ${base.reason}`,
+    action: `${EXCLUDED_ACTION_KO.T} — ${base.action}`,
     note: `${base.note} · 챕터 ${chapters.length}곳에서 같은 줄`,
   };
 }
 
-/** T 줄의 사유·처리·비고에서 T 머리말을 걷어 원래 사유의 글로 */
+/** T 줄의 사유·처리·비고에서 T 머리말을 걷어 원래 사유의 글로. 어느 언어로 쓴 줄이든(예전 한국어 줄도) 걷는다 */
 function untText(x: ExcludedRow): Pick<ExcludedRow, "reason" | "action" | "note"> {
   if (x.kind !== "T" || !x.chapters) return { reason: x.reason, action: x.action, note: x.note };
-  const t = tText(x.chapters, { reason: "", action: "", note: "" });
+  const ts = LANGS.map((l) => tText(x.chapters!, { reason: "", action: "", note: "" }, l));
+  const head = (v: string, k: "reason" | "action") => {
+    const t = ts.find((t) => v.startsWith(t[k]));
+    return t ? v.slice(t[k].length) : v;
+  };
+  const t = ts.find((t) => x.note.endsWith(t.note));
   return {
-    reason: x.reason.startsWith(t.reason) ? x.reason.slice(t.reason.length) : x.reason,
-    action: x.action.startsWith(t.action) ? x.action.slice(t.action.length) : x.action,
-    note: x.note.endsWith(t.note) ? x.note.slice(0, -t.note.length) : x.note,
+    reason: head(x.reason, "reason"),
+    action: head(x.action, "action"),
+    note: t ? x.note.slice(0, -t.note.length) : x.note,
   };
 }
 
@@ -318,8 +393,8 @@ const cell = (v: unknown) => String(v ?? "").replace(/[\t\r\n]+/g, " ");
 
 /** 제외 시트(탭 구분). 열: 번호 · 케이스 · 챕터 · 횟수 · 반복 · 현상 · 제외 사유 · 처리 · 비고 · 증거 */
 export function excludedTsv(rows: ExcludedRow[]): string {
-  const head = ["번호", "케이스", "챕터", "횟수", "반복", "현상", "제외 사유", "처리", "비고", "증거"].join("\t");
-  return [head, ...rows.map((x) => [x.no, x.cases.join(", "), x.chapter, x.count, x.nth ? `${x.nth}회째` : "", x.symptom, x.reason, x.action, x.note, x.evidence ?? ""].map(cell).join("\t"))].join("\n") + "\n";
+  const head = (lang() === "en" ? ["No.", "Cases", "Chapter", "Count", "Repeat", "Symptom", "Exclusion reason", "Action", "Note", "Evidence"] : ["번호", "케이스", "챕터", "횟수", "반복", "현상", "제외 사유", "처리", "비고", "증거"]).join("\t");
+  return [head, ...rows.map((x) => [x.no, x.cases.join(", "), x.chapter, x.count, x.nth ? nthTime(x.nth) : "", x.symptom, x.reason, x.action, x.note, x.evidence ?? ""].map(cell).join("\t"))].join("\n") + "\n";
 }
 
 /** 여러 라운드에 걸쳐 합친 제외 줄: 같은 줄이 다시 돌 때마다 새로 쌓이지 않고 횟수만 늘어난다 */
@@ -369,6 +444,6 @@ export function mergeExcludedAcross(perRound: { round: string; rows: ExcludedRow
 
 /** 합친 제외 시트(탭 구분). 열: 번호 · 케이스 · 챕터 · 횟수 · 나온 라운드 · 현상 · 제외 사유 · 처리 · 비고 · 증거 */
 export function excludedAllTsv(rows: ExcludedAllRow[]): string {
-  const head = ["번호", "케이스", "챕터", "횟수", "나온 라운드", "현상", "제외 사유", "처리", "비고", "증거"].join("\t");
+  const head = (lang() === "en" ? ["No.", "Cases", "Chapter", "Count", "Rounds seen", "Symptom", "Exclusion reason", "Action", "Note", "Evidence"] : ["번호", "케이스", "챕터", "횟수", "나온 라운드", "현상", "제외 사유", "처리", "비고", "증거"]).join("\t");
   return [head, ...rows.map((x) => [x.no, x.cases.join(", "), x.chapter, x.count, x.rounds.join(","), x.symptom, x.reason, x.action, x.note, x.evidence ?? ""].map(cell).join("\t"))].join("\n") + "\n";
 }

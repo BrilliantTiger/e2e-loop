@@ -17,6 +17,8 @@ The tools are the `e2e_*` tools of the MCP server `e2e-loop`. If they are missin
 
 **Language: talk to the user in the language the user writes in.** (Fixed phrases quoted in this document, such as the notice in step 5, are meant to be said in that language too.) Keep sentences short, one idea per sentence. Report only new findings, results, and blockers. Write names in full; never use bare IDs (say the case title, not just `P-691381`).
 
+**Output language.** e2e-loop writes its reports, dashboard, AI sheets, judgement reasons, and tool messages in Korean (`ko`, the default) or English (`en`). Set it once per project from the language the user writes in: Korean → `ko`, any other language → `en`. Record it with `e2e_init lang=<ko|en>` (or `e2e_prestart lang=<ko|en>`) before the first round. Rounds that already ran keep their language.
+
 ## First
 
 1. Call `e2e_status`. If you are resuming, `next` is the next action. Follow it.

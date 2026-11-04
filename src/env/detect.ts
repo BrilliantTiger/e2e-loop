@@ -2,6 +2,7 @@
 import { existsSync, statfsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { tx } from "../i18n.ts";
 
 export type Env = Record<string, string | undefined>;
 
@@ -85,12 +86,12 @@ export function compareVersion(a: string, b: string): number {
 export function bunCheck(version: string = Bun.version): Check {
   const ok = compareVersion(version, MIN_BUN) >= 0;
   return ok
-    ? { id: "bun", name: "bun", status: "ok", detail: `bun ${version} (최소 ${MIN_BUN})`, fix: "none" }
+    ? { id: "bun", name: "bun", status: "ok", detail: tx(`bun ${version} (최소 ${MIN_BUN})`, `bun ${version} (minimum ${MIN_BUN})`), fix: "none" }
     : {
         id: "bun", name: "bun", status: "warn", fix: "manual",
-        detail: `bun ${version} — 최소 ${MIN_BUN} 보다 낮음. 낮은 버전(1.3.10 확인)에서는 라운드 도중 브라우저가 조용히 사라져 라운드가 멈춘다`,
-        manual: "bun upgrade 로 올린 뒤 MCP 서버(또는 세션)를 다시 시작",
-        neededFor: "라운드 실행(브라우저를 여러 번 띄우는 모든 경우)",
+        detail: tx(`bun ${version} — 최소 ${MIN_BUN} 보다 낮음. 낮은 버전(1.3.10 확인)에서는 라운드 도중 브라우저가 조용히 사라져 라운드가 멈춘다`, `bun ${version} — lower than the minimum ${MIN_BUN}. On a lower version (seen on 1.3.10) the browser silently disappears during a round and the round stops`),
+        manual: tx("bun upgrade 로 올린 뒤 MCP 서버(또는 세션)를 다시 시작", "Upgrade with bun upgrade, then restart the MCP server (or the session)"),
+        neededFor: tx("라운드 실행(브라우저를 여러 번 띄우는 모든 경우)", "running rounds (every case that starts the browser more than once)"),
       };
 }
 
@@ -103,21 +104,21 @@ export async function runChecks(env: Env = process.env): Promise<Check[]> {
   const pw = await checkPlaywrightChromium();
   checks.push({
     id: "playwright-chromium",
-    name: "Playwright Chromium 브라우저",
+    name: tx("Playwright Chromium 브라우저", "Playwright Chromium browser"),
     status: pw.ok ? "ok" : "missing",
-    detail: pw.ok ? pw.path! : "설치되어 있지 않음",
+    detail: pw.ok ? pw.path! : tx("설치되어 있지 않음", "not installed"),
     fix: pw.ok ? "none" : "auto",
     command: ["bunx", "playwright", "install", "chromium"],
     // MCP 서버는 대상 프로젝트 폴더에서 돈다. 그 폴더에서 bunx 를 부르면 그 프로젝트의(또는 npm 최신) playwright 가 잡혀
     // 이 패키지가 쓰는 판과 다른 브라우저를 깐다. 이 패키지 폴더에서 실행해 고정된 판을 쓴다
     cwd: resolve(import.meta.dir, "../.."),
-    neededFor: "Chrome 계열 실행(기본 내장 브라우저)",
+    neededFor: tx("Chrome 계열 실행(기본 내장 브라우저)", "running the Chrome family (the default built-in browser)"),
   });
 
   const chrome = firstExisting(CHROME_PATHS);
-  checks.push({ id: "chrome", name: "Google Chrome", status: chrome ? "ok" : "na", detail: chrome ?? "없음(없어도 Chromium 으로 대체 가능)", fix: "none" });
+  checks.push({ id: "chrome", name: "Google Chrome", status: chrome ? "ok" : "na", detail: chrome ?? tx("없음(없어도 Chromium 으로 대체 가능)", "none (Chromium can be used instead)"), fix: "none" });
   const edge = firstExisting(EDGE_PATHS);
-  checks.push({ id: "edge", name: "Microsoft Edge", status: edge ? "ok" : "na", detail: edge ?? "없음(선택 사항)", fix: "none" });
+  checks.push({ id: "edge", name: "Microsoft Edge", status: edge ? "ok" : "na", detail: edge ?? tx("없음(선택 사항)", "none (optional)"), fix: "none" });
 
   const egoBin = which("ego-browser", env) ?? (existsSync(join(homedir(), ".local/bin/ego-browser")) ? join(homedir(), ".local/bin/ego-browser") : null);
   const egoApp = firstExisting(["/Applications/ego lite.app", join(homedir(), "Applications/ego lite.app")]);
@@ -128,12 +129,19 @@ export async function runChecks(env: Env = process.env): Promise<Check[]> {
   }
   checks.push({
     id: "ego",
-    name: "Ego Browser (ego-browser 명령 + ego lite 앱)",
+    name: tx("Ego Browser (ego-browser 명령 + ego lite 앱)", "Ego Browser (ego-browser command + ego lite app)"),
     status: egoBin && egoWorks ? "ok" : egoBin || egoApp ? "warn" : "na",
-    detail: egoBin ? `${egoBin}${egoWorks ? " — 동작 확인" : " — 명령은 있으나 실행되지 않음(ego lite 앱을 켜고 온보딩을 마치세요)"}` : egoApp ? "앱은 있으나 ego-browser 명령이 없음(온보딩을 마치면 PATH 에 등록됨)" : "설치되어 있지 않음(Ego 를 쓰지 않으면 필요 없음)",
+    detail: egoBin
+      ? `${egoBin}${egoWorks ? tx(" — 동작 확인", " — works") : tx(" — 명령은 있으나 실행되지 않음(ego lite 앱을 켜고 온보딩을 마치세요)", " — the command exists but does not run (open the ego lite app and finish onboarding)")}`
+      : egoApp
+        ? tx("앱은 있으나 ego-browser 명령이 없음(온보딩을 마치면 PATH 에 등록됨)", "the app exists but the ego-browser command does not (it is added to PATH when onboarding is finished)")
+        : tx("설치되어 있지 않음(Ego 를 쓰지 않으면 필요 없음)", "not installed (not needed if you do not use Ego)"),
     fix: egoBin && egoWorks ? "none" : "manual",
-    manual: "Ego 를 쓰려면: https://lite.ego.app/ 에서 ego lite 설치 → 앱을 열어 첫 실행 온보딩 완료(이때 ego-browser 명령이 PATH 에 등록됨). macOS 전용. Ego 는 MCP 서버가 아니라 스킬 + ego-browser 명령으로 동작하며, e2e-loop 는 그 명령을 직접 사용하므로 별도 MCP 등록은 필요 없다.",
-    neededFor: "Ego 브라우저 선택 시",
+    manual: tx(
+      "Ego 를 쓰려면: https://lite.ego.app/ 에서 ego lite 설치 → 앱을 열어 첫 실행 온보딩 완료(이때 ego-browser 명령이 PATH 에 등록됨). macOS 전용. Ego 는 MCP 서버가 아니라 스킬 + ego-browser 명령으로 동작하며, e2e-loop 는 그 명령을 직접 사용하므로 별도 MCP 등록은 필요 없다.",
+      "To use Ego: install ego lite from https://lite.ego.app/ → open the app and finish the first-run onboarding (this adds the ego-browser command to PATH). macOS only. Ego is not an MCP server. It works through a skill and the ego-browser command, and e2e-loop calls that command directly, so no separate MCP registration is needed.",
+    ),
+    neededFor: tx("Ego 브라우저 선택 시", "when the Ego browser is chosen"),
   });
 
   const ff = which("ffmpeg", env);
@@ -143,24 +151,24 @@ export async function runChecks(env: Env = process.env): Promise<Check[]> {
   let ffManual: string | undefined;
   if (platform === "darwin") {
     if (brew) ffCommand = [brew, "install", "ffmpeg"];
-    else ffManual = "Homebrew 가 없습니다. https://brew.sh 에서 설치한 뒤 `brew install ffmpeg`";
+    else ffManual = tx("Homebrew 가 없습니다. https://brew.sh 에서 설치한 뒤 `brew install ffmpeg`", "Homebrew is not installed. Install it from https://brew.sh, then run `brew install ffmpeg`");
   } else if (platform === "win32") {
     if (winget) ffCommand = [winget, "install", "--id", "Gyan.FFmpeg", "-e"];
-    else ffManual = "winget 이 없습니다. https://ffmpeg.org/download.html 에서 받아 PATH 에 추가";
-  } else ffManual = "패키지 관리자로 설치: 예) `sudo apt-get install -y ffmpeg` 또는 `sudo dnf install -y ffmpeg`";
+    else ffManual = tx("winget 이 없습니다. https://ffmpeg.org/download.html 에서 받아 PATH 에 추가", "winget is not installed. Download ffmpeg from https://ffmpeg.org/download.html and add it to PATH");
+  } else ffManual = tx("패키지 관리자로 설치: 예) `sudo apt-get install -y ffmpeg` 또는 `sudo dnf install -y ffmpeg`", "Install with the package manager, for example `sudo apt-get install -y ffmpeg` or `sudo dnf install -y ffmpeg`");
   checks.push({
     id: "ffmpeg",
     name: "ffmpeg",
     status: ff ? "ok" : "missing",
-    detail: ff ?? "없음",
+    detail: ff ?? tx("없음", "none"),
     fix: ff ? "none" : ffCommand ? "ask" : "manual",
     command: ffCommand,
     manual: ffManual,
-    neededFor: "영상을 mp4(h264) + 챕터 파일로 만들 때(Chrome 계열 webm 변환, Ego 화면 프레임을 영상으로 만들기)",
+    neededFor: tx("영상을 mp4(h264) + 챕터 파일로 만들 때(Chrome 계열 webm 변환, Ego 화면 프레임을 영상으로 만들기)", "making videos as mp4 (h264) + chapter file (converting Chrome-family webm, turning Ego screen frames into video)"),
   });
 
   const git = which("git", env);
-  checks.push({ id: "git", name: "git", status: git ? "ok" : "warn", detail: git ?? "없음 — 증거에 기록할 커밋 해시를 못 남김", fix: git ? "none" : "manual", manual: "git 설치: https://git-scm.com/downloads", neededFor: "증거 기록(커밋 해시)" });
+  checks.push({ id: "git", name: "git", status: git ? "ok" : "warn", detail: git ?? tx("없음 — 증거에 기록할 커밋 해시를 못 남김", "none — the commit hash cannot be recorded in the evidence"), fix: git ? "none" : "manual", manual: tx("git 설치: https://git-scm.com/downloads", "Install git: https://git-scm.com/downloads"), neededFor: tx("증거 기록(커밋 해시)", "evidence records (commit hash)") });
 
   const orca = which("orca", env);
   let orcaReady: boolean | null = null;
@@ -170,11 +178,11 @@ export async function runChecks(env: Env = process.env): Promise<Check[]> {
   }
   checks.push({
     id: "orca",
-    name: "Orca CLI (테스터 새 세션 자동 실행)",
+    name: tx("Orca CLI (테스터 새 세션 자동 실행)", "Orca CLI (starts the new tester session automatically)"),
     status: orca ? (orcaReady === false ? "warn" : "ok") : "na",
-    detail: orca ? `${orca}${orcaReady === false ? " — 런타임에 연결되지 않음(Orca 앱을 켜세요)" : ""}` : "없음 — 새 세션은 명령어를 사용자에게 주는 방식으로 대신한다",
+    detail: orca ? `${orca}${orcaReady === false ? tx(" — 런타임에 연결되지 않음(Orca 앱을 켜세요)", " — not connected to the runtime (open the Orca app)") : ""}` : tx("없음 — 새 세션은 명령어를 사용자에게 주는 방식으로 대신한다", "none — for a new session, the command is given to the user instead"),
     fix: "none",
-    neededFor: "테스터 세션",
+    neededFor: tx("테스터 세션", "tester session"),
   });
 
   let disk: number | null = null;
@@ -182,18 +190,18 @@ export async function runChecks(env: Env = process.env): Promise<Check[]> {
     const s = statfsSync("/");
     disk = Math.round((Number(s.bavail) * Number(s.bsize)) / 1e9);
   } catch {}
-  checks.push({ id: "disk", name: "디스크 여유", status: disk === null ? "na" : disk < 5 ? "warn" : "ok", detail: disk === null ? "확인 불가" : `${disk}GB`, fix: "none", neededFor: "녹화 영상 보관" });
+  checks.push({ id: "disk", name: tx("디스크 여유", "Free disk space"), status: disk === null ? "na" : disk < 5 ? "warn" : "ok", detail: disk === null ? tx("확인 불가", "cannot check") : `${disk}GB`, fix: "none", neededFor: tx("녹화 영상 보관", "storing recorded videos") });
 
   if (platform === "darwin") {
     const perm = await macPermissions(env);
     checks.push({
       id: "mac-accessibility",
-      name: "macOS 접근성 권한 (컴퓨터 제어 도구)",
+      name: tx("macOS 접근성 권한 (컴퓨터 제어 도구)", "macOS Accessibility permission (computer control tool)"),
       status: perm.accessibility === true ? "ok" : perm.accessibility === false ? "warn" : "na",
-      detail: perm.accessibility === true ? "허용됨" : perm.accessibility === false ? "허용되지 않음" : "확인하지 못함",
+      detail: perm.accessibility === true ? tx("허용됨", "allowed") : perm.accessibility === false ? tx("허용되지 않음", "not allowed") : tx("확인하지 못함", "could not check"),
       fix: "manual",
-      manual: "시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용 → 컴퓨터 제어 도구를 실행하는 앱 허용.",
-      neededFor: "브라우저 밖 OS 창(다운로드·파일 선택) 처리",
+      manual: tx("시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용 → 컴퓨터 제어 도구를 실행하는 앱 허용.", "System Settings → Privacy & Security → Accessibility → allow the app that runs the computer control tool."),
+      neededFor: tx("브라우저 밖 OS 창(다운로드·파일 선택) 처리", "handling OS windows outside the browser (download, file chooser)"),
     });
   }
   return checks;

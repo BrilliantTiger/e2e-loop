@@ -3,6 +3,7 @@
 // 근거는 글 하나이거나 { plan, design, differs } 이다. 기획서와 화면설계서가 다르면 둘 다 적고 differs 에 무엇이 다른지 쓴다.
 import type { Case, Step } from "./types.ts";
 import { isToastStep } from "./toast.ts";
+import { tx } from "./i18n.ts";
 
 /** 기대(통과 조건)를 가진 스텝인가 */
 export function isExpectation(s: Step): boolean {
@@ -50,8 +51,8 @@ export const hasBasis = (s: Step): boolean => {
 /** 근거를 사람이 읽는 글로: 「기획서 CCB-1940 · 화면설계서 08-common CCB-1940 Description 1 — 기획서와 화면설계서가 다름: …」 */
 export function basisText(b: unknown): string {
   const p = basisParts(b);
-  const parts = [p.plan && (typeof b === "string" ? p.plan : `기획서 ${p.plan}`), p.design && (typeof b === "string" ? p.design : `화면설계서 ${p.design}`)].filter(Boolean);
-  return parts.join(" · ") + (p.differs ? ` — 기획서와 화면설계서가 다름: ${p.differs}` : "");
+  const parts = [p.plan && (typeof b === "string" ? p.plan : tx(`기획서 ${p.plan}`, `plan ${p.plan}`)), p.design && (typeof b === "string" ? p.design : tx(`화면설계서 ${p.design}`, `screen design ${p.design}`))].filter(Boolean);
+  return parts.join(" · ") + (p.differs ? tx(` — 기획서와 화면설계서가 다름: ${p.differs}`, ` — the plan and the screen design differ: ${p.differs}`) : "");
 }
 
 /** 기획서와 화면설계서가 다르다고 적은 근거인가(오류 S) */
@@ -60,8 +61,8 @@ export const basisDiffers = (s: Step | undefined): boolean => !!s && !!basisPart
 /** 근거 칸의 잘못: 다르다고 적었는데 둘 중 하나가 없음 */
 export function basisProblem(b: unknown): string | undefined {
   const p = basisParts(b);
-  if (p.differs && !(p.plan && p.design)) return "기획서와 화면설계서가 다르면(differs) 둘 다 적을 것 — basis: { plan: 기획서 번호, design: 화면설계서 번호, differs: 무엇이 다른지 }";
-  if (b && typeof b === "object" && !p.plan && !p.design) return "basis 에 plan(기획서 번호)이나 design(화면설계서 번호)이 없음";
+  if (p.differs && !(p.plan && p.design)) return tx("기획서와 화면설계서가 다르면(differs) 둘 다 적을 것 — basis: { plan: 기획서 번호, design: 화면설계서 번호, differs: 무엇이 다른지 }", "When the plan and the screen design differ (differs), write both: basis: { plan: plan number, design: screen design number, differs: what differs }");
+  if (b && typeof b === "object" && !p.plan && !p.design) return tx("basis 에 plan(기획서 번호)이나 design(화면설계서 번호)이 없음", "basis has no plan (plan number) or design (screen design number)");
   return undefined;
 }
 
@@ -84,4 +85,7 @@ export function missingBasis(cases: Case[]): MissingBasis[] {
 }
 
 export const BASIS_WARNING = (steps: number[]) =>
-  `기대 칸 ${steps.map((n) => `#${n}`).join(" ")} 에 근거(basis: 기획서 POL · CCB 번호 또는 화면설계서 번호)가 없음 — 근거 없는 기대는 시트에서 경고됨. 근거를 못 찾으면 기대를 만들지 말고 케이스를 blocked 로 두고 사유를 적을 것(오류 E)`;
+  tx(
+    `기대 칸 ${steps.map((n) => `#${n}`).join(" ")} 에 근거(basis: 기획서 POL · CCB 번호 또는 화면설계서 번호)가 없음 — 근거 없는 기대는 시트에서 경고됨. 근거를 못 찾으면 기대를 만들지 말고 케이스를 blocked 로 두고 사유를 적을 것(오류 E)`,
+    `Expectation steps ${steps.map((n) => `#${n}`).join(" ")} have no basis (basis: plan POL or CCB number, or screen design number). The sheet warns about expectations without a basis. If you cannot find a basis, do not write the expectation: set the case to blocked and write the reason (error E)`,
+  );

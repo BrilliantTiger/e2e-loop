@@ -2,6 +2,7 @@
 // 같은 화면이라도 Dataset 마다 의도된 값이 다르다(예: 「안 보냄」이 의도된 표 목록). 이 목록을 판정식(eval·기대 글)에 박으면
 // 다른 Dataset 에서 돌릴 때 의도된 동작이 FAIL 로 나온다. 그래서 Dataset 마다 값을 설정에 두고(근거: 기획서 규칙),
 // 스텝 글에서는 {{dataset.<이름>}} 으로 읽는다. 케이스는 쓰는 Dataset 을 dataset 필드로 적는다.
+import { tx } from "./i18n.ts";
 import type { Case, Config, DatasetProfile, Step } from "./types.ts";
 
 const TOKEN = /\{\{\s*dataset\.([\w.-]+)\s*\}\}/g;
@@ -105,7 +106,10 @@ export const describeHard = (list: HardValue[]): string => {
 };
 
 export const HARD_VALUE_WARNING = (list: HardValue[], own: boolean) =>
-  `판정식에 Dataset 전용 값이 박혀 있음(${describeHard(list)}) — ${own ? "" : "다른 Dataset 의 값이라 이 Dataset 에서는 의도된 동작이 FAIL 로 나올 수 있음. "}값은 e2e_dataset 의 values 에 두고(근거: 기획서 규칙) 스텝에서 {{dataset.<이름>}} 으로 읽을 것(오류 P)`;
+  tx(
+    `판정식에 Dataset 전용 값이 박혀 있음(${describeHard(list)}) — ${own ? "" : "다른 Dataset 의 값이라 이 Dataset 에서는 의도된 동작이 FAIL 로 나올 수 있음. "}값은 e2e_dataset 의 values 에 두고(근거: 기획서 규칙) 스텝에서 {{dataset.<이름>}} 으로 읽을 것(오류 P)`,
+    `A dataset-only value is written into the judgement (${describeHard(list)}) — ${own ? "" : "it belongs to another dataset, so the intended behavior of this dataset can come out as FAIL. "}Put the value in e2e_dataset values (basis: the plan rule) and read it in the step with {{dataset.<name>}} (error P)`,
+  );
 
 // ---- 오류 Q: Dataset 특성(예: 사전 파일 유무)과 어긋난 기대 ----
 // Dataset 마다 특성(traits)을 선언한다. 스텝의 when 으로 기대를 특성에 따라 가르고(맞지 않으면 그 스텝은 건너뜀),
@@ -123,7 +127,7 @@ export function stepApplies(step: Step, profile: DatasetProfile | undefined): { 
   const traits = profile?.traits ?? {};
   const undeclared = Object.keys(when).filter((k) => !(k in traits));
   const off = Object.entries(when).filter(([k, v]) => k in traits && traitValue(traits[k]) !== v);
-  return { ok: !undeclared.length && !off.length, why: off.length ? off.map(([k, v]) => `${k}=${show(traitValue(traits[k]))}(이 스텝은 ${show(v)} 일 때)`).join(", ") : undefined, undeclared };
+  return { ok: !undeclared.length && !off.length, why: off.length ? off.map(([k, v]) => tx(`${k}=${show(traitValue(traits[k]))}(이 스텝은 ${show(v)} 일 때)`, `${k}=${show(traitValue(traits[k]))} (this step is for ${show(v)})`)).join(", ") : undefined, undeclared };
 }
 
 /** 기대를 가진 스텝의 글(근거·이름 제외) */
@@ -142,10 +146,10 @@ export function datasetConflicts(c: Pick<Case, "steps" | "dataset">, datasets: C
   c.steps.forEach((s, i) => {
     const n = `#${i + 1}`;
     if (s.when && typeof s.when === "object") {
-      if (!c.dataset) return void out.push(`${n}: when 으로 Dataset 특성에 따라 가르는데 케이스에 dataset 이 없음`);
-      if (!profile) return void out.push(`${n}: dataset 「${c.dataset}」 이 설정에 없음(e2e_dataset 으로 특성을 선언할 것)`);
+      if (!c.dataset) return void out.push(tx(`${n}: when 으로 Dataset 특성에 따라 가르는데 케이스에 dataset 이 없음`, `${n}: the step splits by dataset trait with when, but the case has no dataset`));
+      if (!profile) return void out.push(tx(`${n}: dataset 「${c.dataset}」 이 설정에 없음(e2e_dataset 으로 특성을 선언할 것)`, `${n}: dataset "${c.dataset}" is not in the settings (declare its traits with e2e_dataset)`));
       const ap = stepApplies(s, profile);
-      if (ap.undeclared.length) return void out.push(`${n}: when 의 특성 ${ap.undeclared.map((k) => `「${k}」`).join(" ")} 이 Dataset 「${c.dataset}」 에 선언돼 있지 않음`);
+      if (ap.undeclared.length) return void out.push(tx(`${n}: when 의 특성 ${ap.undeclared.map((k) => `「${k}」`).join(" ")} 이 Dataset 「${c.dataset}」 에 선언돼 있지 않음`, `${n}: the when trait ${ap.undeclared.map((k) => `"${k}"`).join(" ")} is not declared for dataset "${c.dataset}"`));
       if (!ap.ok) return; // 이 Dataset 에서는 쓰지 않는 기대(건너뜀)
     }
     if (!profile?.traits || !isExpectation(s)) return;
@@ -153,7 +157,7 @@ export function datasetConflicts(c: Pick<Case, "steps" | "dataset">, datasets: C
     for (const [k, t] of Object.entries(profile.traits)) {
       if (traitValue(t) !== false) continue;
       const hit = traitWords(t).find((w) => text.includes(w.toLowerCase()));
-      if (hit) out.push(`${n}: Dataset 「${c.dataset}」 은 ${k}=false(없음)로 선언됐는데 기대에 「${hit}」 — 선언과 어긋난 기대(이 Dataset 에 맞게 when 으로 가르거나 기대를 고칠 것)`);
+      if (hit) out.push(tx(`${n}: Dataset 「${c.dataset}」 은 ${k}=false(없음)로 선언됐는데 기대에 「${hit}」 — 선언과 어긋난 기대(이 Dataset 에 맞게 when 으로 가르거나 기대를 고칠 것)`, `${n}: dataset "${c.dataset}" declares ${k}=false (absent), but the expectation has "${hit}" — the expectation contradicts the declaration (split it with when for this dataset, or fix the expectation)`));
     }
   });
   return out;

@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Project } from "../src/store.ts";
-import { CARRIED_E_MARK, carriedE, carriedResult } from "../src/carry.ts";
+import { carriedEMark, carriedE, carriedResult } from "../src/carry.ts";
 import { buildSheet, renderSheetMd } from "../src/sheet.ts";
 import { excludedRows, excludedTsv, markRepeats } from "../src/toolerror.ts";
 import type { Case, CaseResult } from "../src/types.ts";
@@ -45,14 +45,14 @@ test("이월한 케이스의 결과는 누르지 않은 NA(E)이고 「이전 �
   const r = carriedResult(c, carriedE(p, [c]).get("K-1")!, "");
   expect(r.status).toBe("NA");
   expect(r.toolError?.kind).toBe("E");
-  expect(r.reason).toContain(CARRIED_E_MARK);
+  expect(r.reason).toContain(carriedEMark());
   expect(r.reason).toContain("R07");
   expect(r.steps.length).toBe(0);
   const sheet = buildSheet(p);
   expect(sheet.gaps.carriedE.map((x) => x.id)).toEqual(["K-1"]);
   const md = renderSheetMd(sheet, { full: true });
-  expect(md).toContain(`[${CARRIED_E_MARK}(R07)]`);
-  expect(md).toContain(`${CARRIED_E_MARK} 1건`);
+  expect(md).toContain(`[${carriedEMark()}(R07)]`);
+  expect(md).toContain(`${carriedEMark()} 1건`);
 });
 
 test("같은 (화면, 요소, 동작)이 앞 라운드들에서도 제외됐으면 제외 시트에 「n회째」", () => {
@@ -103,7 +103,7 @@ test("라운드: 앞 라운드 E 제외 케이스는 누르지 않고 NA(E)·car
   const res2 = p.readJson<CaseResult[]>(`rounds/${r2}/results.json`, []);
   expect(res2[0]!.status).toBe("NA");
   expect(res2[0]!.toolError?.kind).toBe("E");
-  expect(res2[0]!.reason).toContain(CARRIED_E_MARK);
+  expect(res2[0]!.reason).toContain(carriedEMark());
   expect(res2[0]!.steps.length).toBe(0);
   expect(readFileSync(p.p("rounds", r2, "events.ndjson"), "utf8")).toContain('"type":"carried-e"');
   // 기대를 고친다 → 실행된다

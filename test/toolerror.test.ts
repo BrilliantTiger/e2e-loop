@@ -163,7 +163,7 @@ test("D: eval 의 waitFor 목록이 끝내 안 그려지면 FAIL 이 아니라 N
 });
 
 // ---------- A: 끝 상태 집합 대기 ----------
-import { waitEndState, singleEndState, SINGLE_STATE_WARNING } from "../src/waits.ts";
+import { waitEndState, singleEndState, singleStateWarning } from "../src/waits.ts";
 import { aCaseUpsert } from "../src/actions.ts";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -218,7 +218,7 @@ test("A: 러너에서 끝 상태 대기가 NA(A)가 되고 제외 사유에 A �
   const r = await runCase(ctx, mk("T-A", [{ op: "goto", url: "/h" }, { op: "wait", endStates: { 완료: "#done" }, idleMs: 200 }]));
   expect(r.status).toBe("NA");
   expect(r.toolError?.kind).toBe("A");
-  expect(r.warnings).toContain(SINGLE_STATE_WARNING);
+  expect(r.warnings).toContain(singleStateWarning());
   expect(log.some((l) => l.includes("wait-log"))).toBe(true);
   const rows = excludedRows([r], () => "x");
   expect(rows[0]!.reason).toContain("A 오지 않을 상태를 기다림");

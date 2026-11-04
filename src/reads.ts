@@ -1,4 +1,5 @@
 // 읽기 도우미: 화면을 읽기 전에 목록·패널이 그려졌는지 먼저 기다린다(오류 D: 화면이 그려지기 전에 읽음).
+import { tx } from "./i18n.ts";
 import type { DPage } from "./drivers/index.ts";
 import { sleep } from "./probes.ts";
 
@@ -63,6 +64,9 @@ export async function waitPanelTitle(p: DPage, target: string, timeoutMs: number
 
 /** 켜질 때까지 기다린 단추 한 줄: 글자·비활성 여부. 못 찾으면 null */
 const BUTTON_STATE = (sel: string) => `(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; if (!e) return null; return { enabled: !e.disabled && e.getAttribute('aria-disabled') !== 'true', text: window.__e2e.textOf(e).slice(0, 60) }; })()`;
+
+/** waitEnabled 의 state(켜짐 · 비활성 · 없음 — 코드가 쓰는 내부 값)를 지금 언어의 글로 */
+export const enabledStateText = (s: "켜짐" | "비활성" | "없음"): string => tx(s, s === "켜짐" ? "enabled" : s === "비활성" ? "disabled" : "absent");
 
 /**
  * 누르기 전에 sel 이 있고 켜질 때까지 기다린다(비활성이면 계속 기다림). 찾은 단추 글자를 함께 돌려준다.

@@ -6,6 +6,7 @@ import { basename, dirname, join } from "node:path";
 import type { CaseResult, RoundMeta, StepResult } from "./types.ts";
 import type { Project } from "./store.ts";
 import { run, which } from "./env/detect.ts";
+import { tx } from "./i18n.ts";
 
 export const sha256File = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
@@ -39,7 +40,7 @@ export function mapTime(t: number, drops: FreezeSpan[]): number {
 export function buildChapters(steps: Pick<StepResult, "i" | "desc" | "at">[], durationSec: number, drops: FreezeSpan[], skewMs = 0): Chapter[] {
   const pts = steps.filter((s) => typeof s.at === "number");
   const total = Math.round(mapTime(durationSec, drops) * 1000);
-  if (!pts.length) return [{ title: "케이스 전체", startMs: 0, endMs: total }];
+  if (!pts.length) return [{ title: tx("케이스 전체", "Whole case"), startMs: 0, endMs: total }];
   return pts.map((s, k) => {
     const start = Math.round(mapTime(Math.max(0, (s.at! + skewMs) / 1000), drops) * 1000);
     const next = pts[k + 1];
@@ -74,7 +75,7 @@ export class EvidenceKit {
   private stampCache = new Map<string, string>();
   private stampBroken = false;
   constructor(private o: KitOpts) {
-    if (!this.ffmpeg) this.warnings.push("ffmpeg 가 없어 영상을 mp4 로 바꾸지 못하고 스크린샷에 도장을 찍지 못했습니다(원본 그대로 보관). e2e_doctor 로 설치하세요.");
+    if (!this.ffmpeg) this.warnings.push(tx("ffmpeg 가 없어 영상을 mp4 로 바꾸지 못하고 스크린샷에 도장을 찍지 못했습니다(원본 그대로 보관). e2e_doctor 로 설치하세요.", "ffmpeg is missing, so videos were not converted to mp4 and screenshots were not stamped (originals kept as they are). Install it with e2e_doctor."));
   }
   get commit() {
     return this.o.commit ?? "no-git";
@@ -104,7 +105,7 @@ export class EvidenceKit {
       return out;
     } catch (e: any) {
       this.stampBroken = true;
-      this.warnings.push(`도장 이미지를 만들지 못해 커밋·시각 표시 없이 보관합니다(Playwright Chromium 필요): ${String(e?.message ?? e).slice(0, 120)}`);
+      this.warnings.push(tx(`도장 이미지를 만들지 못해 커밋·시각 표시 없이 보관합니다(Playwright Chromium 필요): ${String(e?.message ?? e).slice(0, 120)}`, `Could not make the stamp image, so evidence is kept without the commit and time marks (needs Playwright Chromium): ${String(e?.message ?? e).slice(0, 120)}`));
       return null;
     }
   }
@@ -148,7 +149,7 @@ export class EvidenceKit {
     const meta = base + ".chapters.txt";
     try {
       const dur = parseFloat((await run([this.ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", rawPath], { timeoutMs: 30000 })).out);
-      if (!(dur > 0)) throw new Error("영상 길이를 읽지 못함");
+      if (!(dur > 0)) throw new Error(tx("영상 길이를 읽지 못함", "Could not read the video length"));
       // 1) 멈춘(대기) 구간 찾기
       const fz = await run([this.ffmpeg, "-hide_banner", "-nostats", "-i", rawPath, "-vf", "freezedetect=n=-55dB:d=1.2", "-an", "-f", "null", "-"], { timeoutMs: 120000 });
       const spans: FreezeSpan[] = [];
@@ -182,12 +183,12 @@ export class EvidenceKit {
       writeFileSync(base + ".chapters.json", JSON.stringify({ case: result.id, commit: this.commit, startedAt: result.startedAt, rawSha256: rawSha, droppedIdleSeconds: Math.round(drops.reduce((a, d) => a + d.end - d.start, 0) * 10) / 10, chapters }, null, 1));
       const args = [this.ffmpeg, "-y", "-loglevel", "error", "-i", rawPath, ...(png ? ["-i", png] : []), "-i", meta, "-filter_complex", graph, "-map", "[out]", "-map_metadata", String(png ? 2 : 1), "-map_chapters", String(png ? 2 : 1), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "24", "-preset", "veryfast", "-movflags", "+faststart", mp4];
       const r = await run(args, { timeoutMs: 300000 });
-      if (r.code !== 0 || !existsSync(mp4)) throw new Error(r.out.slice(-200) || "ffmpeg 실패");
+      if (r.code !== 0 || !existsSync(mp4)) throw new Error(r.out.slice(-200) || tx("ffmpeg 실패", "ffmpeg failed"));
       rmSync(rawPath, { force: true });
       this.manifest.push({ case: result.id, file: this.rel(mp4), kind: "video", sha256: sha256File(mp4), rawSha256: rawSha, commit: this.commit, at: result.startedAt });
       return { video: mp4, chapters: meta };
     } catch (e: any) {
-      this.warnings.push(`영상 변환 실패(${result.id}), 원본을 그대로 보관합니다: ${String(e?.message ?? e).slice(0, 160)}`);
+      this.warnings.push(tx(`영상 변환 실패(${result.id}), 원본을 그대로 보관합니다: ${String(e?.message ?? e).slice(0, 160)}`, `Video conversion failed (${result.id}), the original is kept as it is: ${String(e?.message ?? e).slice(0, 160)}`));
       rmSync(mp4, { force: true });
       return { video: rawPath };
     }
@@ -257,7 +258,7 @@ export function pruneEvidence(project: Project, keepLast: number): { pruned: str
     if (!existsSync(ev)) continue;
     freed += dirSize(ev);
     rmSync(ev, { recursive: true, force: true });
-    writeFileSync(join(project.roundDir(r.id), "evidence-pruned.txt"), `증거(영상·스크린샷)를 ${new Date().toISOString()} 에 지웠습니다. 결과·보고서는 남아 있습니다.\n`);
+    writeFileSync(join(project.roundDir(r.id), "evidence-pruned.txt"), tx(`증거(영상·스크린샷)를 ${new Date().toISOString()} 에 지웠습니다. 결과·보고서는 남아 있습니다.\n`, `Evidence (videos, screenshots) was deleted at ${new Date().toISOString()}. Results and reports are kept.\n`));
     pruned.push(r.id);
   }
   return { pruned, freedMB: Math.round((freed / 1e6) * 10) / 10 };

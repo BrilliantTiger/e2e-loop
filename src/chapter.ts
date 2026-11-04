@@ -4,20 +4,22 @@
 //  - 읽기 실패(요소 못 찾음 · undefined · 빈 값)가 연속되면 2번째부터 NA(F), 4번째에서 챕터를 끝낸다.
 import type { Case, CaseResult } from "./types.ts";
 import { nowIso } from "./store.ts";
+import { tx } from "./i18n.ts";
 
 /** 연속 읽기 실패가 이 횟수에 닿으면 챕터를 끝낸다 */
 export const READ_FAIL_END = 4;
 /** 연속 읽기 실패가 이 횟수부터는 FAIL 이 아니라 NA(F) */
 export const READ_FAIL_NA_FROM = 2;
 
-const NOT_FOUND = /요소를 찾지 못|waiting for (locator|selector)|Timeout \d+ms exceeded|resolved to 0 elements|보여야 하는데 안 보임|읽기 전에 그려져 있어야|읽지 못함/i;
+// 이 도구가 쓴 글(한국어 · 영어)을 다시 읽는다. 디스크에 남은 예전 한국어 결과도 맞아야 한다
+const NOT_FOUND = /요소를 찾지 못|waiting for (locator|selector)|Timeout \d+ms exceeded|resolved to 0 elements|보여야 하는데 안 보임|읽기 전에 그려져 있어야|읽지 못함|element not found|should be visible but is not|must be drawn before reading|could not read/i;
 /** 요소는 있었는데 가려졌거나 꺼져 있어 못 누른 것 — 요소를 못 찾은 읽기 실패가 아니라 사이트의 상태일 수 있다 */
 const FOUND_BUT_BLOCKED = /intercepts pointer events|is not enabled|not stable|is disabled|element is not visible/i;
 const READ_OPS = new Set(["expect", "eval", "click", "dblclick", "hover", "fill", "select", "check", "press", "wait", "collect"]);
 
 /** 결과가 「읽기 실패」인가: 빈 칸·undefined 로 못 읽었거나(NA D), 요소를 못 찾아 시간이 다 된 FAIL */
 export function isReadFailure(r: Pick<CaseResult, "status" | "toolError" | "steps">): boolean {
-  if (r.status === "NA" && r.toolError) return r.toolError.kind === "D" && !/예상 못 한 대화상자/.test(r.toolError.detail);
+  if (r.status === "NA" && r.toolError) return r.toolError.kind === "D" && !/예상 못 한 대화상자|unexpected dialog/i.test(r.toolError.detail);
   if (r.status !== "FAIL") return false;
   const failed = r.steps.find((s) => s.status === "fail");
   return !!failed && READ_OPS.has(failed.op) && NOT_FOUND.test(failed.error ?? "") && !FOUND_BUT_BLOCKED.test(failed.error ?? "");
@@ -57,11 +59,14 @@ export class ChapterGuard {
       this.streak.set(key, n);
       let out = r;
       if (n >= READ_FAIL_NA_FROM) {
-        const detail = `읽기 실패 ${n}번 연속 — 앞 읽기가 실패한 뒤에는 판정하지 않음(이 케이스의 원래 결과: ${String(r.reason ?? r.status).slice(0, 160)})`;
+        const detail = tx(
+          `읽기 실패 ${n}번 연속 — 앞 읽기가 실패한 뒤에는 판정하지 않음(이 케이스의 원래 결과: ${String(r.reason ?? r.status).slice(0, 160)})`,
+          `${n} read failures in a row — after a failed read, later reads are not judged (original result of this case: ${String(r.reason ?? r.status).slice(0, 160)})`,
+        );
         const { retries: _drop, priority: _p, promoted: _q, ...rest } = r;
-        out = { ...rest, status: "NA", toolError: { kind: "F", detail }, reason: `도구 판정 불가(F): ${detail}` };
+        out = { ...rest, status: "NA", toolError: { kind: "F", detail }, reason: tx(`도구 판정 불가(F): ${detail}`, `Tool error (F): ${detail}`) };
       }
-      if (n >= READ_FAIL_END) this.ended.set(key, `읽기 실패 ${n}번 연속 — 챕터를 끝냄`);
+      if (n >= READ_FAIL_END) this.ended.set(key, tx(`읽기 실패 ${n}번 연속 — 챕터를 끝냄`, `${n} read failures in a row — the chapter ends`));
       return out;
     }
     if (r.status === "PASS" || r.status === "FAIL" || r.status === "FLAKY") this.streak.set(key, 0);
@@ -77,10 +82,10 @@ export class ChapterGuard {
   /** 끝난 챕터의 케이스를 누르지 않고 NA(F)로 둔 결과 */
   naResult(c: Case, why: string): CaseResult {
     const kind = this.endedKind.get(this.keyOf(c)) ?? "F";
-    const detail = kind === "N" ? `${why}. 눌러 보지 않음` : `이 챕터는 이미 끝남 — ${why}. 뒤 동작을 누르지 않음`;
+    const detail = kind === "N" ? tx(`${why}. 눌러 보지 않음`, `${why}. Not pressed`) : tx(`이 챕터는 이미 끝남 — ${why}. 뒤 동작을 누르지 않음`, `This chapter has already ended — ${why}. Later actions are not pressed`);
     return {
       id: c.id, title: c.title, type: c.type, event: c.event, source_ref: c.source_ref, element: c.element, risk: c.risk,
-      status: "NA", reason: `도구 판정 불가(${kind}): ${detail}`, toolError: { kind, detail },
+      status: "NA", reason: tx(`도구 판정 불가(${kind}): ${detail}`, `Tool error (${kind}): ${detail}`), toolError: { kind, detail },
       warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(),
     };
   }
@@ -91,9 +96,9 @@ export const chapterName = (c: Case, fallback: (c: Case) => string): string => (
 
 /** 선행 결함에 막힘의 근거를 사람이 읽는 글로: 「선행 결함에 막힘(C9-03 외 16건, 챕터 C9)」 */
 export function blockedLabel(b: { chapter: string; by: string[] }): string {
-  if (!b.by.length) return `선행 미완료(챕터 ${b.chapter})`;
-  const more = b.by.length > 1 ? ` 외 ${b.by.length - 1}건` : "";
-  return `선행 결함에 막힘(${b.by[0] ?? "-"}${more}, 챕터 ${b.chapter})`;
+  if (!b.by.length) return tx(`선행 미완료(챕터 ${b.chapter})`, `prerequisite not finished (chapter ${b.chapter})`);
+  const more = b.by.length > 1 ? tx(` 외 ${b.by.length - 1}건`, ` and ${b.by.length - 1} more`) : "";
+  return tx(`선행 결함에 막힘(${b.by[0] ?? "-"}${more}, 챕터 ${b.chapter})`, `blocked by a prior defect (${b.by[0] ?? "-"}${more}, chapter ${b.chapter})`);
 }
 
 /**
@@ -150,11 +155,14 @@ export class DefectGuard {
 
   /** 선행 도구 오류로 돌리지 않은 케이스의 결과: 누르지 않고 NA(R), 재시험 대기열로 간다 */
   toolNaResult(c: Case, b: { chapter: string; by: string[] }): CaseResult {
-    const more = b.by.length > 1 ? ` 외 ${b.by.length - 1}건` : "";
-    const detail = `선행 도구 오류로 미실행(${b.by[0] ?? "-"}${more}, 챕터 ${b.chapter}) — 선행 챕터가 도구 오류(NA)로 끝나 이 챕터의 증거가 생기지 않음. 선행 챕터를 다시 시험한 뒤 재시험 대기열로 실행`;
+    const more = b.by.length > 1 ? tx(` 외 ${b.by.length - 1}건`, ` and ${b.by.length - 1} more`) : "";
+    const detail = tx(
+      `선행 도구 오류로 미실행(${b.by[0] ?? "-"}${more}, 챕터 ${b.chapter}) — 선행 챕터가 도구 오류(NA)로 끝나 이 챕터의 증거가 생기지 않음. 선행 챕터를 다시 시험한 뒤 재시험 대기열로 실행`,
+      `Not run because of a prior tool error (${b.by[0] ?? "-"}${more}, chapter ${b.chapter}) — the prior chapter ended with a tool error (NA), so this chapter has no evidence. Retest the prior chapter, then run this from the retest queue`,
+    );
     return {
       id: c.id, title: c.title, type: c.type, event: c.event, source_ref: c.source_ref, element: c.element, risk: c.risk,
-      status: "NA", reason: `도구 판정 불가(R): ${detail}`, toolError: { kind: "R", detail }, retest: { after: b.chapter, by: b.by },
+      status: "NA", reason: tx(`도구 판정 불가(R): ${detail}`, `Tool error (R): ${detail}`), toolError: { kind: "R", detail }, retest: { after: b.chapter, by: b.by },
       warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(),
     };
   }
@@ -163,7 +171,7 @@ export class DefectGuard {
   naResult(c: Case, b: NonNullable<CaseResult["blockedBy"]>): CaseResult {
     return {
       id: c.id, title: c.title, type: c.type, event: c.event, source_ref: c.source_ref, element: c.element, risk: c.risk,
-      status: "NA", reason: `${b.detail} — 이 케이스는 돌리지 않음(도구 오류 아님, 선행 결함을 고친 뒤 다시 실행)`, blockedBy: b,
+      status: "NA", reason: tx(`${b.detail} — 이 케이스는 돌리지 않음(도구 오류 아님, 선행 결함을 고친 뒤 다시 실행)`, `${b.detail} — this case is not run (not a tool error; fix the prior defect, then run again)`), blockedBy: b,
       warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(),
     };
   }

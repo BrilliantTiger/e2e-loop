@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 // 사람이 터미널에서 직접 쓰는 진입점. 같은 동작을 MCP 도구와 공유한다.
+import { writeFileSync } from "node:fs";
 import * as A from "./actions.ts";
+import { LANG_FILE, parseLang, resetDefaultLang, tx } from "./i18n.ts";
 
 const [, , cmd, ...rest] = process.argv;
 const flags: Record<string, any> = {};
@@ -29,17 +31,22 @@ for (const k of Object.keys(flags)) {
   if (v === "false") flags[k] = false;
 }
 const project = flags.project;
+// sh install.sh --lang en(setup --lang en): 프로젝트를 모를 때(MCP 도구 설명·CLI 도움말·환경 점검)의 기본 언어를 설치 폴더에 기록한다
+if ((cmd === "setup" || cmd === "doctor") && flags.lang !== undefined) {
+  writeFileSync(LANG_FILE, parseLang(flags.lang) + "\n");
+  resetDefaultLang();
+}
 const print = (v: unknown) => console.log(typeof v === "string" ? v : JSON.stringify(v, null, 2));
 
-const HELP = `e2e-loop — 웹 E2E 회차 루프
+const HELP = tx(`e2e-loop — 웹 E2E 회차 루프
   doctor [--fix] [--confirm ffmpeg] [--dry-run]   환경 점검(--fix: 자동 설치+MCP 등록, --confirm: 승인한 설치)
-  setup [--confirm ffmpeg] [--dry-run]   doctor --fix 와 같음
+  setup [--confirm ffmpeg] [--dry-run] [--lang ko|en]   doctor --fix 와 같음(--lang: 이 설치의 기본 출력 언어)
   session [--mode here|new] [--agent claude|codex] [--new_session] [--baseUrl URL] [--dryRun]   테스터 세션 시작
   intake [--baseUrl URL] [--materials '[{"kind":"plan","location":"docs/plan.md"}]']   웹 주소·근거 등록과 최소 진행 조건 검사
   analyze [--codeRoot 경로] [--rediscover false]   코드 분석 + 사이트 탐색 결과와 대조
   os-check [--decision allow|skip]       OS 창(다운로드·파일 선택) 점검
   sheet [--confirm] [--confirm_before_start] [--full]   테스트 시트(화면 → 기능 → 케이스)
-  init --baseUrl URL [--driver ego|chrome|chromium|auto] [--dataPolicy ask|reset|keep] [--resetCommand CMD]
+  init --baseUrl URL [--driver ego|chrome|chromium|auto] [--dataPolicy ask|reset|keep] [--resetCommand CMD] [--lang ko|en]
   source --kind plan|design|feature-spec|live-site --title T --location L [--sections '["3.1","3.2"]']
   discover                               사이트 전수 탐색 + 자동 점검 케이스 생성
   cases [--type spec|probe]              케이스 목록
@@ -52,7 +59,28 @@ const HELP = `e2e-loop — 웹 E2E 회차 루프
   status                                 현재 상태와 다음 행동
   dashboard [--open] [--host IP]         현황판(내부망 IP, 토큰). 이 프로세스가 떠 있는 동안 코멘트를 받고 자동 응답도 맡는다
   mcp                                    MCP 서버 실행(stdio)
-공통: --project <대상 프로젝트 경로>(기본: 현재 폴더)`;
+공통: --project <대상 프로젝트 경로>(기본: 현재 폴더)`, `e2e-loop — web E2E round loop
+  doctor [--fix] [--confirm ffmpeg] [--dry-run]   environment check (--fix: automatic install + MCP register, --confirm: approved installs)
+  setup [--confirm ffmpeg] [--dry-run] [--lang ko|en]   same as doctor --fix (--lang: default output language of this install)
+  session [--mode here|new] [--agent claude|codex] [--new_session] [--baseUrl URL] [--dryRun]   start the tester session
+  intake [--baseUrl URL] [--materials '[{"kind":"plan","location":"docs/plan.md"}]']   register the web address and basis, check the minimum conditions
+  analyze [--codeRoot PATH] [--rediscover false]   code analysis + cross-check with the site crawl
+  os-check [--decision allow|skip]       OS window check (download, file chooser)
+  sheet [--confirm] [--confirm_before_start] [--full]   test sheet (screen → feature → case)
+  init --baseUrl URL [--driver ego|chrome|chromium|auto] [--dataPolicy ask|reset|keep] [--resetCommand CMD] [--lang ko|en]
+  source --kind plan|design|feature-spec|live-site --title T --location L [--sections '["3.1","3.2"]']
+  discover                               full site crawl + automatic check cases
+  cases [--type spec|probe]              case list
+  coverage                               coverage
+  round [--data reset|keep|manual-reset-done] [--only '["id"]'] [--onlyFailed]   run one round (waits until it ends)
+  report [--round R01] [--format md|json|paths]
+  export [--round R01] [--format pdf,csv,html]   export the report (PDF · CSV for Excel · single-file HTML; all three if omitted)
+  check                                  completion check
+  feedback --text "request" [--apply now --mode restart|in-flow|next]
+  status                                 current state and next action
+  dashboard [--open] [--host IP]         dashboard (internal-network IP, token). While this process runs, it takes comments and also runs the automatic answers
+  mcp                                    run the MCP server (stdio)
+Common: --project <target project path> (default: the current folder)`);
 
 switch (cmd) {
   case "doctor": print(await A.aDoctor({ fix: !!flags.fix, dryRun: !!flags["dry-run"], confirm: typeof flags.confirm === "string" ? String(flags.confirm).split(",") : undefined })); break;
@@ -71,7 +99,7 @@ switch (cmd) {
     const r: any = await A.aRoundStart({ ...flags, project } as any);
     print(r);
     if (r.started) {
-      process.stderr.write("진행 중… (Ctrl+C 로 CLI 만 종료하면 회차도 함께 멈춥니다)\n");
+      process.stderr.write(tx("진행 중… (Ctrl+C 로 CLI 만 종료하면 회차도 함께 멈춥니다)\n", "Running… (Ctrl+C ends the CLI and stops the round with it)\n"));
       for (;;) {
         const s: any = await A.aRoundStatus({ project, wait_seconds: 30 });
         process.stderr.write(`  ${s.done}/${s.total} ${JSON.stringify(s.counts)}\n`);

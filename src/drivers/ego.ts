@@ -7,6 +7,7 @@ import { expandEnv } from "../store.ts";
 import { type DPage, type Drained, type Driver, type NetEntry, type Session } from "./index.ts";
 import { HOOKS, LIB } from "./inpage.ts";
 import { FREEZE_INIT } from "../freeze.ts";
+import { tx } from "../i18n.ts";
 
 // ego-browser 는 자기 내장 Node 런타임 안에서만 page API 를 쓸 수 있다.
 // 그래서 그 안에 작은 HTTP 서버를 띄우고, 이쪽(bun)에서 JSON 명령을 보낸다.
@@ -159,7 +160,7 @@ class EgoPage implements DPage {
   }
   async check(sel: string, on: boolean) {
     const cur = await this.evaluate<boolean | null>(`(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; return e ? (e.checked ?? e.getAttribute('aria-checked') === 'true') : null; })()`);
-    if (cur === null) throw new Error(`요소를 찾지 못했습니다: ${sel}`);
+    if (cur === null) throw new Error(tx(`요소를 찾지 못했습니다: ${sel}`, `Element not found: ${sel}`));
     if (!!cur !== on) await this.click(sel);
   }
   async press(sel: string | null, key: string) {
@@ -175,10 +176,10 @@ class EgoPage implements DPage {
     return this.evaluate<boolean>(`(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; return !!e && window.__e2e.vis(e); })()`);
   }
   async text(sel: string) {
-    return this.evaluate<string>(`(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; if (!e) throw new Error('요소 없음'); return window.__e2e.textOf(e); })()`);
+    return this.evaluate<string>(`(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; if (!e) throw new Error('${tx("요소 없음", "No element")}'); return window.__e2e.textOf(e); })()`);
   }
   async value(sel: string) {
-    return this.evaluate<string>(`(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; if (!e) throw new Error('요소 없음'); return e.value ?? ''; })()`);
+    return this.evaluate<string>(`(() => { const e = window.__e2e.resolve(${JSON.stringify(sel)})[0]; if (!e) throw new Error('${tx("요소 없음", "No element")}'); return e.value ?? ''; })()`);
   }
   async evaluate<T = any>(expr: string): Promise<T> {
     return this.call({ op: "eval", expr: `(() => { ${LIB}; ${HOOKS}; return (${expr}); })()` });
@@ -191,7 +192,7 @@ class EgoPage implements DPage {
   }
   /** 작업 탭이 가려져 있으면 화면 캡처가 응답하지 않는다. 한 번 실패하면 이 세션에서는 더 시도하지 않는다(매 스텝 기다리지 않게). */
   async screenshot(path: string) {
-    if (this.shared.shotBroken) throw new Error("Ego 화면 캡처를 건너뜀(앞서 응답 없음)");
+    if (this.shared.shotBroken) throw new Error(tx("Ego 화면 캡처를 건너뜀(앞서 응답 없음)", "Ego screen capture skipped (no response earlier)"));
     try {
       await this.call({ op: "shot", path }, 8000);
     } catch (e) {
@@ -226,7 +227,7 @@ export class EgoDriver implements Driver {
   private async call(m: any, ms = 20000): Promise<any> {
     const r = await fetch(`http://127.0.0.1:${this.port}`, { method: "POST", body: JSON.stringify(m), signal: AbortSignal.timeout(ms) });
     const j = (await r.json()) as { ok: boolean; v?: any; err?: string };
-    if (!j.ok) throw new Error(j.err ?? "ego 명령 실패");
+    if (!j.ok) throw new Error(j.err ?? tx("ego 명령 실패", "ego command failed"));
     return j.v;
   }
   async open() {
@@ -261,7 +262,7 @@ export class EgoDriver implements Driver {
       await new Promise((r) => setTimeout(r, 300));
     }
     this.proc.kill();
-    throw new Error("ego-browser 브리지가 시작되지 않았습니다. ego lite 앱이 실행 중인지 확인하세요. " + buf.slice(-300));
+    throw new Error(tx("ego-browser 브리지가 시작되지 않았습니다. ego lite 앱이 실행 중인지 확인하세요. ", "The ego-browser bridge did not start. Check that the ego lite app is running. ") + buf.slice(-300));
   }
   async newSession(evidenceDir: string): Promise<Session> {
     mkdirSync(evidenceDir, { recursive: true });
@@ -281,7 +282,7 @@ export class EgoDriver implements Driver {
     try {
       await this.call({ op: "recStart", dir: frames, minGapMs: Math.floor(1000 / Math.max(1, this.cfg.videoFps)), quality: 60 }, 15000);
     } catch (e: any) {
-      recErr = `Ego 화면 프레임 받기를 시작하지 못했습니다: ${String(e?.message ?? e).slice(0, 120)}`;
+      recErr = tx(`Ego 화면 프레임 받기를 시작하지 못했습니다: ${String(e?.message ?? e).slice(0, 120)}`, `Receiving Ego screen frames did not start: ${String(e?.message ?? e).slice(0, 120)}`);
     }
     return {
       page,
@@ -291,10 +292,10 @@ export class EgoDriver implements Driver {
         try {
           stop = await this.call({ op: "recStop" }, 15000);
         } catch (e: any) {
-          return { warn: `Ego 화면 프레임 받기를 마치지 못했습니다: ${String(e?.message ?? e).slice(0, 120)}` };
+          return { warn: tx(`Ego 화면 프레임 받기를 마치지 못했습니다: ${String(e?.message ?? e).slice(0, 120)}`, `Receiving Ego screen frames did not finish: ${String(e?.message ?? e).slice(0, 120)}`) };
         }
         const out = await buildVideoFromFrames(frames, join(evidenceDir, "video.mkv"));
-        const warns = [out.warn, stop.err && !out.video ? `프레임 캡처 오류: ${stop.err}` : undefined, page.shotBroken ? "Ego 스크린샷을 남기지 못했습니다." : undefined].filter(Boolean);
+        const warns = [out.warn, stop.err && !out.video ? tx(`프레임 캡처 오류: ${stop.err}`, `Frame capture error: ${stop.err}`) : undefined, page.shotBroken ? tx("Ego 스크린샷을 남기지 못했습니다.", "Ego screenshots were not saved.") : undefined].filter(Boolean);
         return { video: out.video, warn: warns.length ? warns.join(" ") : undefined };
       },
     };

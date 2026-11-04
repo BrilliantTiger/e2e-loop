@@ -5,6 +5,7 @@
 // 창이 다른 창에 가려지거나(visibilityState=hidden) 포커스를 잃으면 브라우저가 타이머·그리기를 1초 간격으로 늦춘다.
 // 그러면 프레임 간격이 1000ms 근처에 몰려 「1초 넘게 멈춤」처럼 보인다. 이 서명을 보이면 측정을 NA(O, 도구 측정 무효)로 두고,
 // 창을 앞으로 가져와 보이게 된 뒤 다시 잰다(이동은 그 자리에서 다시 재고, 다른 동작은 다음 스텝부터 보이는 창에서 잰다).
+import { tx } from "./i18n.ts";
 import type { DPage } from "./drivers/index.ts";
 
 /** 페이지 안 측정기. 이미 있으면 그대로 둔다(문서가 바뀌면 새로 단다). 드라이버가 새 문서가 시작될 때 심어 두면 화면을 여는 동안(로드 중)의 멈춤도 잰다 */
@@ -103,7 +104,10 @@ export function freezeStats(m: FreezeRaw): FreezeStats {
 /** 「Long Task 4건 합 505ms 최대 197ms · 클릭→첫 변화 54ms · 이벤트 처리 최대 1008ms(입력 지연 1007ms) · 프레임 간격 최대 1083ms」 */
 export function freezeSummary(m: FreezeRaw): string {
   const s = freezeStats(m);
-  return `Long Task ${s.longTasks.n}건 합 ${s.longTasks.sum}ms 최대 ${s.longTasks.max}ms · 클릭→첫 변화 ${s.firstChangeMs === null ? "없음" : `${s.firstChangeMs}ms`} · 이벤트 처리 최대 ${s.eventMax}ms(입력 지연 ${s.inputDelayMax}ms) · 프레임 간격 최대 ${s.frameGapMax}ms`;
+  return tx(
+    `Long Task ${s.longTasks.n}건 합 ${s.longTasks.sum}ms 최대 ${s.longTasks.max}ms · 클릭→첫 변화 ${s.firstChangeMs === null ? "없음" : `${s.firstChangeMs}ms`} · 이벤트 처리 최대 ${s.eventMax}ms(입력 지연 ${s.inputDelayMax}ms) · 프레임 간격 최대 ${s.frameGapMax}ms`,
+    `Long Tasks ${s.longTasks.n}, total ${s.longTasks.sum}ms, max ${s.longTasks.max}ms · click to first change ${s.firstChangeMs === null ? "none" : `${s.firstChangeMs}ms`} · event processing max ${s.eventMax}ms (input delay ${s.inputDelayMax}ms) · frame gap max ${s.frameGapMax}ms`,
+  );
 }
 
 /** 가려진 창에서 브라우저가 늦춘 간격의 범위(1초 간격 근처) */
@@ -121,13 +125,13 @@ const covered = ([s, g]: Span, lt: Span[]) => lt.reduce((a, [ls, ld]) => a + Mat
 export function judgeFreeze(m: FreezeRaw, limitMs = 1000): FreezeJudge {
   const summary = freezeSummary(m);
   const s = freezeStats(m);
-  if (m.hidden) return { verdict: "invalid", summary, why: "재는 동안 창이 가려짐(visibilityState=hidden)" };
+  if (m.hidden) return { verdict: "invalid", summary, why: tx("재는 동안 창이 가려짐(visibilityState=hidden)", "The window was covered while measuring (visibilityState=hidden)") };
   const loose = [...m.gaps, ...m.tgaps].filter((g) => g[1] >= THROTTLE_MIN && !covered(g, m.lt));
   const near = loose.filter(([, g]) => g <= THROTTLE_MAX);
-  if (near.length >= 2) return { verdict: "invalid", summary, why: `Long Task 없이 간격이 1000ms 근처에 몰림(${near.slice(0, 4).map(([, g]) => `${r0(g)}ms`).join(", ")}) — 가려진 창에서 브라우저가 늦춘 서명${m.blur ? ", 창 포커스 없음" : ""}` };
-  if (m.blur && loose.length) return { verdict: "invalid", summary, why: `창 포커스가 없는 채 Long Task 없이 ${r0(loose[0]![1])}ms 간격 — 가려진 창 서명` };
+  if (near.length >= 2) return { verdict: "invalid", summary, why: tx(`Long Task 없이 간격이 1000ms 근처에 몰림(${near.slice(0, 4).map(([, g]) => `${r0(g)}ms`).join(", ")}) — 가려진 창에서 브라우저가 늦춘 서명${m.blur ? ", 창 포커스 없음" : ""}`, `Gaps cluster near 1000ms without a Long Task (${near.slice(0, 4).map(([, g]) => `${r0(g)}ms`).join(", ")}) — the sign of a browser slowing a covered window${m.blur ? ", window has no focus" : ""}`) };
+  if (m.blur && loose.length) return { verdict: "invalid", summary, why: tx(`창 포커스가 없는 채 Long Task 없이 ${r0(loose[0]![1])}ms 간격 — 가려진 창 서명`, `A ${r0(loose[0]![1])}ms gap without a Long Task while the window had no focus — the sign of a covered window`) };
   const worst = Math.max(s.frameGapMax, s.eventMax, s.longTasks.max);
-  if (worst >= limitMs) return { verdict: "freeze", summary, why: `화면이 ${limitMs / 1000}초 넘게 멈춤(최대 ${worst}ms)` };
+  if (worst >= limitMs) return { verdict: "freeze", summary, why: tx(`화면이 ${limitMs / 1000}초 넘게 멈춤(최대 ${worst}ms)`, `The screen froze for more than ${limitMs / 1000}s (max ${worst}ms)`) };
   return { verdict: "ok", summary };
 }
 

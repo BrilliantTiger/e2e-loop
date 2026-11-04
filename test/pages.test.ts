@@ -1,6 +1,6 @@
 // 오류 C(추가): 쪽 넘김 — 여러 쪽에 흩어진 같은 이름 줄을 모든 쪽을 돌며 모은다.
 import { expect, test } from "bun:test";
-import { collectRows, perPage } from "../src/pages.ts";
+import { STOPPED_BY_LABEL, collectRows, perPage } from "../src/pages.ts";
 import { runCase } from "../src/runner.ts";
 import { aCaseUpsert } from "../src/actions.ts";
 import { missingBasis } from "../src/basis.ts";
@@ -36,7 +36,8 @@ test("모든 쪽을 돌며 같은 이름 줄을 모으고 쪽 번호를 함께 �
   const p = listPage(DATA);
   const r = await collectRows(p, { sel: "row=홍길동", next: "#next" });
   expect(r.pages).toBe(3);
-  expect(r.stoppedBy).toBe("마지막 쪽");
+  expect(r.stoppedBy).toBe("last");
+  expect(STOPPED_BY_LABEL[r.stoppedBy]).toBe("마지막 쪽");
   expect(r.rows.length).toBe(5);
   expect(r.rows.filter((x) => x.text.startsWith("홍길동")).map((x) => `${x.page}:${x.text}`)).toEqual(["1:홍길동 A", "2:홍길동 B", "3:홍길동 C"]);
   expect(perPage(r)).toBe("1쪽 2줄 · 2쪽 1줄 · 3쪽 2줄");
@@ -46,20 +47,20 @@ test("모든 쪽을 돌며 같은 이름 줄을 모으고 쪽 번호를 함께 �
 test("next 가 없으면 한 쪽만 읽는다", async () => {
   const r = await collectRows(listPage(DATA), { sel: "row=홍길동" });
   expect(r.pages).toBe(1);
-  expect(r.stoppedBy).toBe("단일 쪽");
+  expect(r.stoppedBy).toBe("single");
   expect(r.rows.length).toBe(2);
 });
 
 test("다음 단추가 없거나 눌러도 쪽이 안 바뀌면 거기서 멈춘다", async () => {
-  expect((await collectRows(listPage(DATA, { nextState: () => "none" }), { sel: "x", next: "#next" })).stoppedBy).toBe("다음 단추 없음");
-  expect((await collectRows(listPage(DATA, { nextState: () => "ok", sticky: true }), { sel: "x", next: "#next" })).stoppedBy).toBe("쪽이 안 바뀜");
+  expect((await collectRows(listPage(DATA, { nextState: () => "none" }), { sel: "x", next: "#next" })).stoppedBy).toBe("no-next");
+  expect((await collectRows(listPage(DATA, { nextState: () => "ok", sticky: true }), { sel: "x", next: "#next" })).stoppedBy).toBe("unchanged");
 });
 
 test("쪽 상한에서 멈춘다. first 가 있으면 첫 쪽으로 돌아간 뒤 모은다", async () => {
   const big = Array.from({ length: 10 }, (_, i) => [`줄${i}`]);
   const r = await collectRows(listPage(big, { nextState: () => "ok" }), { sel: "x", next: "#next", maxPages: 4 });
   expect(r.pages).toBe(4);
-  expect(r.stoppedBy).toBe("쪽 상한");
+  expect(r.stoppedBy).toBe("max");
   const p = listPage(DATA);
   await p.click("#next");
   const again = await collectRows(p, { sel: "x", next: "#next", first: "#first" });

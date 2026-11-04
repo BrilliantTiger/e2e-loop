@@ -7,6 +7,7 @@ import type { Source } from "./types.ts";
 import { Project, nowIso } from "./store.ts";
 import { run, which, type Env } from "./env/detect.ts";
 import { detectClients } from "./env/clients.ts";
+import { byLang, tx } from "./i18n.ts";
 
 export type AgentName = "claude" | "codex";
 export type MaterialKind = "plan" | "design" | "feature-spec" | "code";
@@ -42,7 +43,10 @@ export interface IntakeState {
   updatedAt: string;
 }
 
-const KIND_LABEL: Record<MaterialKind, string> = { plan: "기획서", design: "디자인", "feature-spec": "기능정의서", code: "코드" };
+const KIND_LABEL = byLang<Record<MaterialKind, string>>({
+  ko: { plan: "기획서", design: "디자인", "feature-spec": "기능정의서", code: "코드" },
+  en: { plan: "Plan", design: "Design", "feature-spec": "Feature spec", code: "Code" },
+});
 const EVIDENCE_KINDS = new Set<string>(["plan", "design", "feature-spec", "code"]);
 
 export const readSession = (p: Project) => p.readJson<SessionState | null>("session.json", null);
@@ -63,22 +67,23 @@ export interface UrlCheck {
 
 /** 웹 주소가 실제로 열리는지 확인한다. 응답 코드가 400 미만이거나 로그인 필요(401·403)면 열리는 것으로 본다. */
 export async function checkWebUrl(raw: string | undefined, timeoutMs = 8000): Promise<UrlCheck> {
-  if (!raw) return { ok: false, reason: "웹 주소가 없습니다." };
+  if (!raw) return { ok: false, reason: tx("웹 주소가 없습니다.", "There is no web address.") };
   let u: URL;
   try {
     u = new URL(raw);
   } catch {
-    return { value: raw, ok: false, reason: "주소 형식이 올바르지 않습니다(예: http://localhost:3000)." };
+    return { value: raw, ok: false, reason: tx("주소 형식이 올바르지 않습니다(예: http://localhost:3000).", "The address format is not valid (for example http://localhost:3000).") };
   }
-  if (u.protocol !== "http:" && u.protocol !== "https:") return { value: raw, ok: false, reason: "http 또는 https 주소만 쓸 수 있습니다." };
+  if (u.protocol !== "http:" && u.protocol !== "https:") return { value: raw, ok: false, reason: tx("http 또는 https 주소만 쓸 수 있습니다.", "Only http or https addresses can be used.") };
   try {
     // 인증서 검사는 하지 않는다: 시험 브라우저(Playwright ignoreHTTPSErrors)도 자체 서명 개발 사이트를 연다
     const res = await fetch(u, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs), tls: { rejectUnauthorized: false } });
     await res.body?.cancel();
     if (res.status < 400 || res.status === 401 || res.status === 403) return { value: raw, ok: true, status: res.status };
-    return { value: raw, ok: false, status: res.status, reason: `응답 코드 ${res.status} — 주소가 틀렸거나 사이트가 정상이 아닙니다.` };
+    return { value: raw, ok: false, status: res.status, reason: tx(`응답 코드 ${res.status} — 주소가 틀렸거나 사이트가 정상이 아닙니다.`, `Response code ${res.status} — the address is wrong or the site is not working.`) };
   } catch (e: any) {
-    return { value: raw, ok: false, reason: `열리지 않습니다(${e?.name === "TimeoutError" ? `${Math.round(timeoutMs / 1000)}초 안에 응답 없음` : (e?.cause?.code ?? e?.message ?? "연결 실패")}). 사이트를 실행했는지 확인하세요.` };
+    const why = e?.name === "TimeoutError" ? tx(`${Math.round(timeoutMs / 1000)}초 안에 응답 없음`, `no response in ${Math.round(timeoutMs / 1000)}s`) : (e?.cause?.code ?? e?.message ?? tx("연결 실패", "connection failed"));
+    return { value: raw, ok: false, reason: tx(`열리지 않습니다(${why}). 사이트를 실행했는지 확인하세요.`, `It does not open (${why}). Check that the site is running.`) };
   }
 }
 
@@ -89,18 +94,18 @@ const expandPath = (loc: string, root: string) => {
 
 /** 근거가 쓸 수 있는지: URL 이면 형식만, 경로면 실제로 있는지. */
 export function checkMaterial(m: Material, root: string): { ok: boolean; location: string; reason?: string } {
-  if (!EVIDENCE_KINDS.has(m.kind)) return { ok: false, location: m.location, reason: `종류는 plan·design·feature-spec·code 중 하나여야 합니다(받은 값: ${m.kind}).` };
-  if (!m.location?.trim()) return { ok: false, location: m.location ?? "", reason: "위치(경로 또는 URL)가 비어 있습니다." };
+  if (!EVIDENCE_KINDS.has(m.kind)) return { ok: false, location: m.location, reason: tx(`종류는 plan·design·feature-spec·code 중 하나여야 합니다(받은 값: ${m.kind}).`, `The kind must be one of plan, design, feature-spec, code (received: ${m.kind}).`) };
+  if (!m.location?.trim()) return { ok: false, location: m.location ?? "", reason: tx("위치(경로 또는 URL)가 비어 있습니다.", "The location (path or URL) is empty.") };
   if (/^https?:\/\//i.test(m.location)) {
     try {
       new URL(m.location);
       return { ok: true, location: m.location };
     } catch {
-      return { ok: false, location: m.location, reason: "URL 형식이 올바르지 않습니다." };
+      return { ok: false, location: m.location, reason: tx("URL 형식이 올바르지 않습니다.", "The URL format is not valid.") };
     }
   }
   const abs = expandPath(m.location, root);
-  if (!existsSync(abs)) return { ok: false, location: abs, reason: `이 경로에 없습니다: ${abs}` };
+  if (!existsSync(abs)) return { ok: false, location: abs, reason: tx(`이 경로에 없습니다: ${abs}`, `Nothing at this path: ${abs}`) };
   return { ok: true, location: abs };
 }
 
@@ -145,7 +150,7 @@ export async function intake(p: Project, a: { baseUrl?: string; materials?: Mate
         continue;
       }
       if (list.some((s) => s.location === c.location && s.kind === m.kind)) continue;
-      list.push({ id: "S" + String(list.length + 1).padStart(2, "0"), kind: m.kind, title: m.title ?? `${KIND_LABEL[m.kind]} ${c.location}`, location: c.location, sections: m.sections, addedAt: nowIso() });
+      list.push({ id: "S" + String(list.length + 1).padStart(2, "0"), kind: m.kind, title: m.title ?? `${KIND_LABEL()[m.kind]} ${c.location}`, location: c.location, sections: m.sections, addedAt: nowIso() });
     }
     p.writeJson("sources.json", list);
   }
@@ -155,26 +160,26 @@ export async function intake(p: Project, a: { baseUrl?: string; materials?: Mate
   const missing: string[] = [];
   const ask_user: string[] = [];
   if (!base_url.value) {
-    missing.push("웹 주소");
-    ask_user.push("테스트할 웹 주소(실행 중인 사이트)를 알려 달라고 하세요. 필수입니다.");
+    missing.push(tx("웹 주소", "web address"));
+    ask_user.push(tx("테스트할 웹 주소(실행 중인 사이트)를 알려 달라고 하세요. 필수입니다.", "Ask for the web address to test (the running site). It is required."));
   } else if (!base_url.ok) {
-    missing.push("열리는 웹 주소");
-    ask_user.push(`웹 주소 ${base_url.value} 를 쓸 수 없습니다. ${base_url.reason} 사이트를 실행한 뒤 맞는 주소를 다시 알려 달라고 하세요.`);
+    missing.push(tx("열리는 웹 주소", "a web address that opens"));
+    ask_user.push(tx(`웹 주소 ${base_url.value} 를 쓸 수 없습니다. ${base_url.reason} 사이트를 실행한 뒤 맞는 주소를 다시 알려 달라고 하세요.`, `The web address ${base_url.value} cannot be used. ${base_url.reason} Ask the user to start the site and give the correct address again.`));
   }
   if (!usable.length) {
-    missing.push("근거 자료 1개 이상");
-    ask_user.push("기획서·디자인(Figma 등)·기능정의서·코드 중 하나 이상을 달라고 하세요(경로 또는 URL). 우선순위는 기획서·디자인 → 기능정의서 → 코드입니다. 하나도 없으면 시작하지 않습니다.");
+    missing.push(tx("근거 자료 1개 이상", "at least one basis"));
+    ask_user.push(tx("기획서·디자인(Figma 등)·기능정의서·코드 중 하나 이상을 달라고 하세요(경로 또는 URL). 우선순위는 기획서·디자인 → 기능정의서 → 코드입니다. 하나도 없으면 시작하지 않습니다.", "Ask for at least one of: plan, design (Figma etc.), feature spec, code (path or URL). Priority: plan and design, then feature spec, then code. Do not start without any of them."));
   }
   const have = new Set(usable.map((u) => u.kind));
-  const ask_optional = (["plan", "design", "feature-spec", "code"] as MaterialKind[]).filter((k) => !have.has(k)).map((k) => `${KIND_LABEL[k]}가 있으면 받으세요(없으면 건너뜀).`);
-  for (const r of rejected) ask_user.push(`${KIND_LABEL[r.kind as MaterialKind] ?? r.kind} 를 쓸 수 없습니다: ${r.reason} 맞는 위치를 다시 받으세요.`);
+  const ask_optional = (["plan", "design", "feature-spec", "code"] as MaterialKind[]).filter((k) => !have.has(k)).map((k) => tx(`${KIND_LABEL()[k]}가 있으면 받으세요(없으면 건너뜀).`, `${KIND_LABEL()[k]}: get it if the user has it (skip if not).`));
+  for (const r of rejected) ask_user.push(tx(`${KIND_LABEL()[r.kind as MaterialKind] ?? r.kind} 를 쓸 수 없습니다: ${r.reason} 맞는 위치를 다시 받으세요.`, `${KIND_LABEL()[r.kind as MaterialKind] ?? r.kind} cannot be used: ${r.reason} Get the correct location again.`));
 
   const can_start = missing.length === 0;
   return {
     can_start, base_url, evidence: { usable, rejected }, missing, ask_user, ask_optional,
     next: can_start
-      ? "최소 진행 조건을 채웠습니다. 남은 자료가 있으면 한 번 더 받고, 분석과 시트 작성으로 넘어가세요."
-      : "최소 진행 조건을 못 채웠습니다. 시작하지 말고 ask_user 를 사용자에게 물은 뒤 e2e_intake 를 다시 호출하세요.",
+      ? tx("최소 진행 조건을 채웠습니다. 남은 자료가 있으면 한 번 더 받고, 분석과 시트 작성으로 넘어가세요.", "The minimum conditions are met. If there are more materials, get them once more, then move on to analysis and the sheet.")
+      : tx("최소 진행 조건을 못 채웠습니다. 시작하지 말고 ask_user 를 사용자에게 물은 뒤 e2e_intake 를 다시 호출하세요.", "The minimum conditions are not met. Do not start. Ask the user the ask_user items, then call e2e_intake again."),
   };
 }
 
@@ -199,7 +204,7 @@ export async function orcaState(env: Env = process.env): Promise<OrcaState> {
 
 /** 새 세션에서 AI 를 띄우는 명령. 프로젝트 폴더로 이동한 뒤 스킬을 따르라는 첫 지시와 함께 실행한다. */
 export function agentCommand(agent: AgentName, root: string): string {
-  const prompt = `e2e-loop 스킬을 따라 E2E 테스터로 일해. 대상 프로젝트: ${root}. 먼저 e2e_status 도구로 상태를 확인하고 이어서 진행해.`;
+  const prompt = tx(`e2e-loop 스킬을 따라 E2E 테스터로 일해. 대상 프로젝트: ${root}. 먼저 e2e_status 도구로 상태를 확인하고 이어서 진행해.`, `Work as the E2E tester by following the e2e-loop skill. Target project: ${root}. First check the state with the e2e_status tool, then continue.`);
   return `cd ${q(root)} && ${agent} ${q(prompt)}`;
 }
 
@@ -217,12 +222,12 @@ async function pickAgent(want: AgentName | undefined, env: Env): Promise<{ agent
   const warn: string[] = [];
   const usable = clients.filter((c) => c.bin);
   const chosen = (want && usable.find((c) => c.id === want)) || usable[0];
-  if (want && !usable.find((c) => c.id === want)) warn.push(`${want} 가 설치되어 있지 않아 ${chosen ? chosen.id : "claude"} 로 대신합니다.`);
+  if (want && !usable.find((c) => c.id === want)) warn.push(tx(`${want} 가 설치되어 있지 않아 ${chosen ? chosen.id : "claude"} 로 대신합니다.`, `${want} is not installed, so ${chosen ? chosen.id : "claude"} is used instead.`));
   if (!chosen) {
-    warn.push("Claude Code 도 Codex 도 찾지 못했습니다. claude 를 쓴다고 보고 명령만 만듭니다.");
+    warn.push(tx("Claude Code 도 Codex 도 찾지 못했습니다. claude 를 쓴다고 보고 명령만 만듭니다.", "Neither Claude Code nor Codex was found. Only the command is built, assuming claude."));
     return { agent: "claude", warn };
   }
-  if (!chosen.registered) warn.push(`${chosen.name} 에 e2e-loop MCP 가 등록되어 있지 않습니다. 새 세션에서 e2e_* 도구가 안 보이면 'sh install.sh' 를 먼저 실행하세요.`);
+  if (!chosen.registered) warn.push(tx(`${chosen.name} 에 e2e-loop MCP 가 등록되어 있지 않습니다. 새 세션에서 e2e_* 도구가 안 보이면 'sh install.sh' 를 먼저 실행하세요.`, `The e2e-loop MCP is not registered in ${chosen.name}. If the e2e_* tools do not show in the new session, run 'sh install.sh' first.`));
   return { agent: chosen.id, warn };
 }
 
@@ -249,7 +254,10 @@ export async function sessionStart(p: Project, a: SessionStartOpts = {}) {
     return {
       reused: true,
       session: existing,
-      message: `이미 테스터 세션이 있어 그대로 유지합니다(${existing.mode === "here" ? "이 세션" : "새 세션으로 띄운 세션"}). 새로 띄우려면 사용자가 새 세션을 명시했을 때 new_session=true 로 부르세요.`,
+      message: tx(
+        `이미 테스터 세션이 있어 그대로 유지합니다(${existing.mode === "here" ? "이 세션" : "새 세션으로 띄운 세션"}). 새로 띄우려면 사용자가 새 세션을 명시했을 때 new_session=true 로 부르세요.`,
+        `A tester session already exists, so it is kept (${existing.mode === "here" ? "this session" : "the session started as a new session"}). To start a new one, call with new_session=true, only when the user explicitly asks for a new session.`,
+      ),
       intake: await withIntake(),
     };
   }
@@ -261,12 +269,12 @@ export async function sessionStart(p: Project, a: SessionStartOpts = {}) {
     else
       return {
         needs_decision: true,
-        question: "테스터를 새 세션으로 띄울까요, 지금 이 세션에서 바로 진행할까요? (사용자에게 물어보고 e2e_session_start 의 mode 로 전달)",
+        question: tx("테스터를 새 세션으로 띄울까요, 지금 이 세션에서 바로 진행할까요? (사용자에게 물어보고 e2e_session_start 의 mode 로 전달)", "Start the tester in a new session, or go on right here in this session? (Ask the user and pass the answer as mode of e2e_session_start)"),
         options: [
-          { value: "new", meaning: "새 세션: MCP 가 붙은 AI 를 새 터미널에서 실행하는 명령을 드립니다. 개발 에이전트와 테스터가 분리됩니다." },
-          { value: "here", meaning: "여기서: 이 세션이 테스터가 되어 바로 진행합니다." },
+          { value: "new", meaning: tx("새 세션: MCP 가 붙은 AI 를 새 터미널에서 실행하는 명령을 드립니다. 개발 에이전트와 테스터가 분리됩니다.", "New session: you get a command that runs an AI with the MCP in a new terminal. The development agent and the tester are kept apart.") },
+          { value: "here", meaning: tx("여기서: 이 세션이 테스터가 되어 바로 진행합니다.", "Here: this session becomes the tester and goes on right away.") },
         ],
-        orca: "Orca 를 쓸 수 없어 직접 고르게 합니다.",
+        orca: tx("Orca 를 쓸 수 없어 직접 고르게 합니다.", "Orca is not available, so the user chooses."),
       };
   }
 
@@ -274,7 +282,7 @@ export async function sessionStart(p: Project, a: SessionStartOpts = {}) {
   if (mode === "here") {
     const s: SessionState = { mode: "here", createdAt: existing?.createdAt ?? now, history: existing?.launch ? [...existing.history, existing.launch] : (existing?.history ?? []) };
     p.writeJson("session.json", s);
-    return { started: true, mode: "here", session: s, message: "이 세션이 테스터입니다. e2e-loop 스킬의 절차를 그대로 따르세요.", intake: await withIntake() };
+    return { started: true, mode: "here", session: s, message: tx("이 세션이 테스터입니다. e2e-loop 스킬의 절차를 그대로 따르세요.", "This session is the tester. Follow the e2e-loop skill procedure as written."), intake: await withIntake() };
   }
 
   // 새 세션
@@ -286,13 +294,13 @@ export async function sessionStart(p: Project, a: SessionStartOpts = {}) {
   let launched = false;
   let message: string;
   if (orca.ready && orca.bin && !a.dryRun) {
-    const base = ["terminal", "create", "--title", "e2e-loop 테스터", "--command", command, "--focus", "--json"];
+    const base = ["terminal", "create", "--title", tx("e2e-loop 테스터", "e2e-loop tester"), "--command", command, "--focus", "--json"];
     let r = await run([orca.bin, ...base, "--worktree", `path:${p.root}`], { env, timeoutMs: 30000 });
     if (r.code !== 0) r = await run([orca.bin, ...base], { env, timeoutMs: 30000 });
     if (r.code !== 0) {
-      warn.push(`Orca 로 새 터미널을 만들지 못했습니다: ${r.out.slice(-200)}`);
+      warn.push(tx(`Orca 로 새 터미널을 만들지 못했습니다: ${r.out.slice(-200)}`, `Could not create a new terminal with Orca: ${r.out.slice(-200)}`));
       launch = { via: "manual", agent, command, at: now };
-      message = "Orca 실행에 실패했습니다. 아래 명령을 새 터미널에서 직접 실행하게 하세요.";
+      message = tx("Orca 실행에 실패했습니다. 아래 명령을 새 터미널에서 직접 실행하게 하세요.", "Orca failed to run. Have the user run the command below in a new terminal.");
     } else {
       let terminal: string | undefined;
       try {
@@ -300,11 +308,11 @@ export async function sessionStart(p: Project, a: SessionStartOpts = {}) {
       } catch {}
       launch = { via: "orca", agent, command, at: now, terminal };
       launched = true;
-      message = `Orca 새 터미널에서 ${agent} 테스터 세션을 띄웠습니다. 사용자는 그 터미널에서 진행합니다. 이 세션은 개발을 맡습니다.`;
+      message = tx(`Orca 새 터미널에서 ${agent} 테스터 세션을 띄웠습니다. 사용자는 그 터미널에서 진행합니다. 이 세션은 개발을 맡습니다.`, `Started the ${agent} tester session in a new Orca terminal. The user goes on in that terminal. This session handles development.`);
     }
   } else {
     launch = { via: "manual", agent, command, at: now };
-    message = a.dryRun ? "dryRun: 실행하지 않고 명령만 만들었습니다." : `Orca 를 쓸 수 없어 명령만 드립니다. 사용자가 새 터미널에서 아래 명령을 실행하게 하세요.`;
+    message = a.dryRun ? tx("dryRun: 실행하지 않고 명령만 만들었습니다.", "dryRun: only the command was built; nothing was run.") : tx(`Orca 를 쓸 수 없어 명령만 드립니다. 사용자가 새 터미널에서 아래 명령을 실행하게 하세요.`, `Orca is not available, so only the command is given. Have the user run the command below in a new terminal.`);
   }
   const s: SessionState = { mode: "new", createdAt: existing?.createdAt ?? now, launch, history };
   if (!a.dryRun) p.writeJson("session.json", s);

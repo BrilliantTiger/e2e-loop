@@ -1,6 +1,7 @@
 // 요소 찾기 (오류 C: 요소를 찾는 방법이 화면과 다름).
 // 요소는 data-testid · 역할 · 값으로 찾는다. 라벨 글자만으로 찾으면 화면의 글자와 요소의 값이 달라 엇나갈 수 있다
 // (예: 「트랙」 글자로 칸을 찾았는데 칸에는 고른 값 IRB/DRB 만 있음).
+import { tx } from "./i18n.ts";
 import type { DPage } from "./drivers/index.ts";
 
 /** 글자 말고 안정적인 식별 수단(id · data-testid · name · aria-label · role · 값)이 하나라도 있는가 */
@@ -15,7 +16,10 @@ export function labelOnly(sel: string | undefined): boolean {
 }
 
 export const LABEL_ONLY_WARNING = (sel: string) =>
-  `라벨 글자만으로 찾는 선택자(${sel}): 화면의 글자와 요소의 값이 다를 수 있음. data-testid · 역할(role=button[name="…"]) · 값으로 찾을 것(오류 C)`;
+  tx(
+    `라벨 글자만으로 찾는 선택자(${sel}): 화면의 글자와 요소의 값이 다를 수 있음. data-testid · 역할(role=button[name="…"]) · 값으로 찾을 것(오류 C)`,
+    `Selector that finds by label text only (${sel}): the text on the screen and the value of the element can differ. Find by data-testid, role (role=button[name="…"]), or value (error C)`,
+  );
 
 /** 찾은 요소를 사람이 눈으로 확인할 한 줄로 적는다. 못 찾았거나 읽지 못하면 undefined. */
 export async function describeFound(p: DPage, sel: string): Promise<string | undefined> {
@@ -25,7 +29,10 @@ export async function describeFound(p: DPage, sel: string): Promise<string | und
     );
     if (!r) return undefined;
     const attrs = [r.testid && `data-testid=${r.testid}`, r.role && `role=${r.role}`, r.id && `id=${r.id}`].filter(Boolean).join(" ");
-    return `<${r.tag}> 글자 「${r.text}」${r.value !== undefined && r.value !== r.text ? ` 값 「${r.value}」` : ""}${attrs ? ` (${attrs})` : ""}${r.n > 1 ? ` — 일치 ${r.n}개 중 첫 번째` : ""}`;
+    return tx(
+      `<${r.tag}> 글자 「${r.text}」${r.value !== undefined && r.value !== r.text ? ` 값 「${r.value}」` : ""}${attrs ? ` (${attrs})` : ""}${r.n > 1 ? ` — 일치 ${r.n}개 중 첫 번째` : ""}`,
+      `<${r.tag}> text "${r.text}"${r.value !== undefined && r.value !== r.text ? ` value "${r.value}"` : ""}${attrs ? ` (${attrs})` : ""}${r.n > 1 ? ` — first of ${r.n} matches` : ""}`,
+    );
   } catch {
     return undefined;
   }

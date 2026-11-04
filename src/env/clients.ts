@@ -1,6 +1,7 @@
 // MCP 클라이언트(Claude Code, Codex 등) 감지와 e2e-loop 자동 등록.
 import { join } from "node:path";
 import { run, which, type Env } from "./detect.ts";
+import { tx } from "../i18n.ts";
 
 export type ClientId = "claude" | "codex";
 
@@ -63,28 +64,28 @@ export async function registerE2eLoop(opts: { env?: Env; dryRun?: boolean } = {}
   const results: RegisterResult[] = [];
   for (const c of await detectClients(env)) {
     if (!c.bin) {
-      results.push({ client: c.id, action: "skipped", detail: `${c.name} 가 설치되어 있지 않아 건너뜀` });
+      results.push({ client: c.id, action: "skipped", detail: tx(`${c.name} 가 설치되어 있지 않아 건너뜀`, `${c.name} is not installed, so it is skipped`) });
       continue;
     }
     // 등록은 있는데 명령·인자가 지금 설치와 다르면(저장소를 옮기거나 다시 받음) 옛 등록을 지우고 다시 등록한다.
     // 등록 내용을 읽지 못하면 그대로 둔다
     const stale = !!c.registered && !!c.registeredCommand && c.registeredCommand !== server.join(" ");
     if (c.registered && !stale) {
-      results.push({ client: c.id, action: "already", detail: `${c.name} 에 이미 등록되어 있음` });
+      results.push({ client: c.id, action: "already", detail: tx(`${c.name} 에 이미 등록되어 있음`, `Already registered in ${c.name}`) });
       continue;
     }
     const cmd = c.id === "claude" ? [c.bin, "mcp", "add", SERVER_NAME, "-s", "user", "--", ...server] : [c.bin, "mcp", "add", SERVER_NAME, "--", ...server];
     const remove = c.id === "claude" ? [c.bin, "mcp", "remove", SERVER_NAME, "-s", "user"] : [c.bin, "mcp", "remove", SERVER_NAME];
     if (opts.dryRun) {
-      results.push({ client: c.id, action: "planned", command: cmd, detail: stale ? `${c.name} 의 옛 등록(${c.registeredCommand})을 지우고 다시 등록할 예정(dry-run)` : `${c.name} 에 등록할 예정(dry-run)` });
+      results.push({ client: c.id, action: "planned", command: cmd, detail: stale ? tx(`${c.name} 의 옛 등록(${c.registeredCommand})을 지우고 다시 등록할 예정(dry-run)`, `Will remove the old registration in ${c.name} (${c.registeredCommand}) and register again (dry-run)`) : tx(`${c.name} 에 등록할 예정(dry-run)`, `Will register in ${c.name} (dry-run)`) });
       continue;
     }
     if (stale) await run(remove, { env, timeoutMs: 60000 });
     const r = await run(cmd, { env, timeoutMs: 60000 });
     results.push(
       r.code === 0
-        ? { client: c.id, action: stale ? "updated" : "added", command: cmd, detail: stale ? `${c.name} 의 옛 등록(${c.registeredCommand})을 지우고 다시 등록했다. 새 세션부터 바뀐 경로로 뜬다.` : `${c.name} 에 등록했다. 새 세션부터 e2e_* 도구가 보인다.` }
-        : { client: c.id, action: "failed", command: cmd, detail: `${c.name} 등록 실패: ${r.out.slice(-200)}` },
+        ? { client: c.id, action: stale ? "updated" : "added", command: cmd, detail: stale ? tx(`${c.name} 의 옛 등록(${c.registeredCommand})을 지우고 다시 등록했다. 새 세션부터 바뀐 경로로 뜬다.`, `Removed the old registration in ${c.name} (${c.registeredCommand}) and registered again. New sessions start it from the new path.`) : tx(`${c.name} 에 등록했다. 새 세션부터 e2e_* 도구가 보인다.`, `Registered in ${c.name}. The e2e_* tools show from the next new session.`) }
+        : { client: c.id, action: "failed", command: cmd, detail: tx(`${c.name} 등록 실패: ${r.out.slice(-200)}`, `Registration in ${c.name} failed: ${r.out.slice(-200)}`) },
     );
   }
   return results;

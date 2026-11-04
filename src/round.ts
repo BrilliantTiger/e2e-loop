@@ -18,6 +18,7 @@ import { readRetest, retestSelection, updateRetest } from "./retest.ts";
 import { tokenProblem } from "./authexp.ts";
 import { acquire, lockKeys, release, releaseAll } from "./locks.ts";
 import { cleanupOwn, cleanupStale, describeProcs, staleBrowserProcs, waitNoStale } from "./procs.ts";
+import { setLang, tx } from "./i18n.ts";
 
 async function sh(cmd: string, cwd: string, timeoutMs = 600000): Promise<{ code: number; out: string }> {
   const p = Bun.spawn(["/bin/sh", "-lc", cmd], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -60,12 +61,32 @@ export async function browserPreflight(opts: StartOpts): Promise<{ ok: true; cle
   const stale = await staleBrowserProcs();
   // 띄운 프로세스가 살아 있으면 이전 라운드가 남긴 것이 아니라 다른 라운드가 쓰는 중인 브라우저다: 시작하지 않고, 끊지도 않는다
   const live = stale.filter((p) => p.ownerAlive);
-  if (live.length) return { ok: false, error: `다른 라운드가 아직 브라우저를 쓰는 중입니다(${describeProcs(live)}). 두 브라우저가 겹치면 판정이 어긋나므로 시작하지 않습니다. 다른 라운드의 것이라 cleanup_browsers 로도 끊지 않습니다. 그 라운드가 끝난 뒤(또는 그 세션을 닫은 뒤) 다시 시작하세요.` };
+  if (live.length)
+    return {
+      ok: false,
+      error: tx(
+        `다른 라운드가 아직 브라우저를 쓰는 중입니다(${describeProcs(live)}). 두 브라우저가 겹치면 판정이 어긋나므로 시작하지 않습니다. 다른 라운드의 것이라 cleanup_browsers 로도 끊지 않습니다. 그 라운드가 끝난 뒤(또는 그 세션을 닫은 뒤) 다시 시작하세요.`,
+        `Another round is still using a browser (${describeProcs(live)}). Two browsers at once make the verdicts wrong, so the round does not start. The browser belongs to another round, so cleanup_browsers does not end it either. Start again after that round ends (or after its session is closed).`,
+      ),
+    };
   if (!stale.length) return { ok: true };
   if (!opts.cleanupBrowsers)
-    return { ok: false, decision: { needs_decision: true, question: `이전 라운드가 남긴 브라우저 프로세스 ${stale.length}개가 있습니다(${describeProcs(stale)}). 두 브라우저가 겹치면 판정이 어긋나므로 이대로 시작하지 않습니다. 끊고 시작할까요?`, options: [{ value: "cleanup", meaning: "끊고 시작한다: e2e_round_start 를 cleanup_browsers=true 로 다시 호출(노드 스크립트·브라우저 프로세스를 나무째 끊고 0개를 다시 확인)" }, { value: "stop", meaning: "시작하지 않는다(다른 라운드가 아직 돌고 있다면 끝난 뒤에 시작)" }] } };
+    return {
+      ok: false,
+      decision: {
+        needs_decision: true,
+        question: tx(
+          `이전 라운드가 남긴 브라우저 프로세스 ${stale.length}개가 있습니다(${describeProcs(stale)}). 두 브라우저가 겹치면 판정이 어긋나므로 이대로 시작하지 않습니다. 끊고 시작할까요?`,
+          `Browser processes left by an earlier round are still running (${stale.length}: ${describeProcs(stale)}). Two browsers at once make the verdicts wrong, so the round does not start like this. End them and start?`,
+        ),
+        options: [
+          { value: "cleanup", meaning: tx("끊고 시작한다: e2e_round_start 를 cleanup_browsers=true 로 다시 호출(노드 스크립트·브라우저 프로세스를 나무째 끊고 0개를 다시 확인)", "End them and start: call e2e_round_start again with cleanup_browsers=true (ends the node scripts and browser processes with all their child processes, then checks again that none are left)") },
+          { value: "stop", meaning: tx("시작하지 않는다(다른 라운드가 아직 돌고 있다면 끝난 뒤에 시작)", "Do not start (if another round is still running, start after it ends)") },
+        ],
+      },
+    };
   const r = await cleanupStale();
-  if (r.after.length) return { ok: false, error: `이전 브라우저 프로세스 ${r.after.length}개를 끊지 못했습니다(${describeProcs(r.after)}). 직접 종료한 뒤 다시 시작하세요.` };
+  if (r.after.length) return { ok: false, error: tx(`이전 브라우저 프로세스 ${r.after.length}개를 끊지 못했습니다(${describeProcs(r.after)}). 직접 종료한 뒤 다시 시작하세요.`, `Could not end earlier browser processes (${r.after.length}: ${describeProcs(r.after)}). End them by hand, then start again.`) };
   return { ok: true, cleaned: r.before };
 }
 
@@ -94,39 +115,96 @@ export interface Decision {
 /** 시작 전 점검. 막히면 사용자에게 물어야 할 내용을 돌려준다. */
 export function precheck(project: Project, opts: StartOpts): { ok: true; decision: "reset" | "keep" | "manual-reset-done" } | { ok: false; error?: string; decision?: Decision } {
   const cfg = project.config();
-  if (!project.initialized) return { ok: false, error: "프로젝트가 초기화되지 않았습니다. e2e_init 먼저." };
+  if (!project.initialized) return { ok: false, error: tx("프로젝트가 초기화되지 않았습니다. e2e_init 먼저.", "The project is not initialized. Run e2e_init first.") };
   const sources = project.sources();
   const cases = project.cases().filter((c) => (c.status ?? "active") === "active");
-  if (!sources.length || !evidenceSources(project).length) return { ok: false, error: "최소 진행 조건을 못 채웠습니다. 기획서·디자인·기능정의서·코드 중 하나 이상이 근거로 필요합니다. 사용자에게 받아 e2e_intake 로 등록하세요." };
-  if (!cases.length) return { ok: false, error: "실행할 케이스가 없습니다. e2e_discover 로 자동 점검 케이스를 만들거나 e2e_case_upsert 로 기획서의 케이스를 등록하세요." };
+  if (!sources.length || !evidenceSources(project).length) return { ok: false, error: tx("최소 진행 조건을 못 채웠습니다. 기획서·디자인·기능정의서·코드 중 하나 이상이 근거로 필요합니다. 사용자에게 받아 e2e_intake 로 등록하세요.", "The minimum conditions are not met. At least one basis is needed: plan, design, feature spec, or code. Get one from the user and register it with e2e_intake.") };
+  if (!cases.length) return { ok: false, error: tx("실행할 케이스가 없습니다. e2e_discover 로 자동 점검 케이스를 만들거나 e2e_case_upsert 로 기획서의 케이스를 등록하세요.", "There are no cases to run. Make automatic check cases with e2e_discover, or register the cases from the plan with e2e_case_upsert.") };
   const sg = sheetGate(project);
   if (!sg.ok) return { ok: false, error: sg.error };
   const ps = prestartStatus(project);
   const dataOnlyQ = ps.questions.filter((q) => q.id !== "data");
   if (dataOnlyQ.length)
-    return { ok: false, decision: { needs_decision: true, question: `라운드를 시작하기 전에 사용자에게 물을 것이 남아 있습니다. 한 번에 묻고 e2e_prestart 로 기록하세요: ${dataOnlyQ.map((q) => q.ask).join(" / ")}`, options: [{ value: "e2e_prestart", meaning: "시작 전 질문(데이터 초기화·라운드 상한·로그인·테스트 계정·화면 노출 안내)을 기록한다" }] } };
+    return {
+      ok: false,
+      decision: {
+        needs_decision: true,
+        question: tx(`라운드를 시작하기 전에 사용자에게 물을 것이 남아 있습니다. 한 번에 묻고 e2e_prestart 로 기록하세요: ${dataOnlyQ.map((q) => q.ask).join(" / ")}`, `Some questions for the user are still open before the round starts. Ask them in one message and record the answers with e2e_prestart: ${dataOnlyQ.map((q) => q.ask).join(" / ")}`),
+        options: [{ value: "e2e_prestart", meaning: tx("시작 전 질문(데이터 초기화·라운드 상한·로그인·테스트 계정·화면 노출 안내)을 기록한다", "Record the answers to the questions before the round (data reset, round limit, login, test account, screen notice)") }],
+      },
+    };
   // 사이에 사용자가 한 말(요청)은 다음 라운드를 시작하기 전에 케이스·설정에 반영하고 done 으로 표시해야 한다
   const pendingFb = project.feedback().filter((f) => f.status === "pending");
   if (pendingFb.length)
-    return { ok: false, error: `아직 반영하지 않은 사용자 요청 ${pendingFb.length}건이 있습니다: ${pendingFb.map((f) => `${f.id} “${f.text.slice(0, 50)}”`).join(" / ")}. 요청대로 케이스·설정을 고친 뒤(e2e_case_upsert·e2e_prestart 등) e2e_feedback_resolve 로 표시하고 라운드를 시작하세요. 요청이 E2E 와 무관하거나 바꿀 것이 없으면 그 사유를 note 에 적어 표시하면 됩니다.` };
+    return {
+      ok: false,
+      error: tx(
+        `아직 반영하지 않은 사용자 요청 ${pendingFb.length}건이 있습니다: ${pendingFb.map((f) => `${f.id} “${f.text.slice(0, 50)}”`).join(" / ")}. 요청대로 케이스·설정을 고친 뒤(e2e_case_upsert·e2e_prestart 등) e2e_feedback_resolve 로 표시하고 라운드를 시작하세요. 요청이 E2E 와 무관하거나 바꿀 것이 없으면 그 사유를 note 에 적어 표시하면 됩니다.`,
+        `User requests not applied yet (${pendingFb.length}): ${pendingFb.map((f) => `${f.id} "${f.text.slice(0, 50)}"`).join(" / ")}. Change the cases and settings as requested (e2e_case_upsert, e2e_prestart, etc.), mark each request with e2e_feedback_resolve, then start the round. If a request has nothing to do with E2E or needs no change, write the reason in note and mark it.`,
+      ),
+    };
   // 재시험(retest)도 부분 라운드다 — 라운드 상한은 전체 라운드만 센다
   const isFull = !opts.only?.length && !opts.onlyFailed && !opts.retest;
   if (isFull && fullRounds(project).length >= cfg.maxRounds)
-    return { ok: false, decision: { needs_decision: true, question: `라운드 상한 ${cfg.maxRounds}번에 닿았습니다(전체 라운드 ${fullRounds(project).length}번). 사용자에게 올려 더 돌릴지 정하세요.`, options: [{ value: "raise", meaning: "상한을 올린다: e2e_prestart 의 maxRounds 를 더 큰 값으로 기록한 뒤 다시 시작" }, { value: "stop", meaning: "여기서 멈추고 남은 이슈를 사용자에게 보고한다" }] } };
+    return {
+      ok: false,
+      decision: {
+        needs_decision: true,
+        question: tx(`라운드 상한 ${cfg.maxRounds}번에 닿았습니다(전체 라운드 ${fullRounds(project).length}번). 사용자에게 올려 더 돌릴지 정하세요.`, `The round limit of ${cfg.maxRounds} is reached (full rounds: ${fullRounds(project).length}). Ask the user whether to run more.`),
+        options: [
+          { value: "raise", meaning: tx("상한을 올린다: e2e_prestart 의 maxRounds 를 더 큰 값으로 기록한 뒤 다시 시작", "Raise the limit: record a larger maxRounds with e2e_prestart, then start again") },
+          { value: "stop", meaning: tx("여기서 멈추고 남은 이슈를 사용자에게 보고한다", "Stop here and report the remaining issues to the user") },
+        ],
+      },
+    };
   const rep = repeatedIssues(project);
   if (rep.length) {
     const key = rep.join(",");
     const ack = project.readJson<{ key?: string }>("escalation.json", {});
     if (opts.acknowledgeRepeated) project.writeJson("escalation.json", { key, at: nowIso() });
     else if (ack.key !== key)
-      return { ok: false, decision: { needs_decision: true, question: `같은 이슈가 ${cfg.repeatLimit ?? 7}라운드 연속 나왔습니다(${rep.slice(0, 8).join(", ")}${rep.length > 8 ? " …" : ""}). 사용자에게 올려 어떻게 할지 정하세요.`, options: [{ value: "continue", meaning: "계속한다: e2e_round_start 를 acknowledge_repeated=true 로 다시 호출" }, { value: "stop", meaning: "멈추고 이 이슈를 개발 쪽에 따로 넘긴다" }, { value: "na", meaning: "기대값이 틀렸다면 e2e_case_set_status 로 해당 없음(na) 처리하고 사유를 적는다" }] } };
+      return {
+        ok: false,
+        decision: {
+          needs_decision: true,
+          question: tx(
+            `같은 이슈가 ${cfg.repeatLimit ?? 7}라운드 연속 나왔습니다(${rep.slice(0, 8).join(", ")}${rep.length > 8 ? " …" : ""}). 사용자에게 올려 어떻게 할지 정하세요.`,
+            `The same issues came up in ${cfg.repeatLimit ?? 7} rounds in a row (${rep.slice(0, 8).join(", ")}${rep.length > 8 ? " …" : ""}). Ask the user what to do.`,
+          ),
+          options: [
+            { value: "continue", meaning: tx("계속한다: e2e_round_start 를 acknowledge_repeated=true 로 다시 호출", "Continue: call e2e_round_start again with acknowledge_repeated=true") },
+            { value: "stop", meaning: tx("멈추고 이 이슈를 개발 쪽에 따로 넘긴다", "Stop and hand these issues to the development side separately") },
+            { value: "na", meaning: tx("기대값이 틀렸다면 e2e_case_set_status 로 해당 없음(na) 처리하고 사유를 적는다", "If the expected value is wrong, set the case to not applicable (na) with e2e_case_set_status and write the reason") },
+          ],
+        },
+      };
   }
   const headless = opts.headless ?? cfg.headless;
   if (!headless && !displayAvailable())
-    return { ok: false, decision: { needs_decision: true, question: "화면이 없는 환경입니다(DISPLAY 없음). 기본인 Headed 로는 돌릴 수 없습니다. 자동으로 바꾸지 않으니 사용자에게 물으세요.", options: [{ value: "headless", meaning: "Headless 로 돌린다: e2e_round_start 를 headless=true 로 다시 호출" }, { value: "display", meaning: "화면을 준비한다(예: xvfb-run 으로 실행, 원격 데스크톱) 후 다시 시작" }] } };
+    return {
+      ok: false,
+      decision: {
+        needs_decision: true,
+        question: tx("화면이 없는 환경입니다(DISPLAY 없음). 기본인 Headed 로는 돌릴 수 없습니다. 자동으로 바꾸지 않으니 사용자에게 물으세요.", "There is no display (no DISPLAY). The default, headed mode, cannot run. This is not changed automatically, so ask the user."),
+        options: [
+          { value: "headless", meaning: tx("Headless 로 돌린다: e2e_round_start 를 headless=true 로 다시 호출", "Run headless: call e2e_round_start again with headless=true") },
+          { value: "display", meaning: tx("화면을 준비한다(예: xvfb-run 으로 실행, 원격 데스크톱) 후 다시 시작", "Prepare a display (for example run with xvfb-run, or use a remote desktop), then start again") },
+        ],
+      },
+    };
   const usage = evidenceUsage(project);
   if (usage.level === "over")
-    return { ok: false, decision: { needs_decision: true, question: `증거(영상·스크린샷) 보관 용량이 상한을 넘었습니다(${usage.usedMB}MB / ${usage.limitMB}MB). 사용자에게 정리할지 상한을 올릴지 물으세요.`, options: [{ value: "prune", meaning: "오래된 회차의 증거만 지운다: e2e_evidence action=prune keepLast=N (결과·보고서는 남음)" }, { value: "raise", meaning: "상한을 올린다: e2e_init 의 evidenceLimitMB" }] } };
+    return {
+      ok: false,
+      decision: {
+        needs_decision: true,
+        question: tx(`증거(영상·스크린샷) 보관 용량이 상한을 넘었습니다(${usage.usedMB}MB / ${usage.limitMB}MB). 사용자에게 정리할지 상한을 올릴지 물으세요.`, `The evidence storage (videos and screenshots) is over its limit (${usage.usedMB}MB / ${usage.limitMB}MB). Ask the user whether to clean up or to raise the limit.`),
+        options: [
+          { value: "prune", meaning: tx("오래된 회차의 증거만 지운다: e2e_evidence action=prune keepLast=N (결과·보고서는 남음)", "Delete only the evidence of old rounds: e2e_evidence action=prune keepLast=N (results and reports stay)") },
+          { value: "raise", meaning: tx("상한을 올린다: e2e_init 의 evidenceLimitMB", "Raise the limit: evidenceLimitMB of e2e_init") },
+        ],
+      },
+    };
   let d = opts.data;
   if (!d && cfg.data.policy !== "ask") d = cfg.data.policy;
   if (!d)
@@ -134,19 +212,25 @@ export function precheck(project: Project, opts: StartOpts): { ok: true; decisio
       ok: false,
       decision: {
         needs_decision: true,
-        question: "이번 회차를 시작하기 전에 데이터를 초기화할까요, 그대로 진행할까요? (사용자에게 물어보고 e2e_round_start 의 data 로 전달)",
+        question: tx("이번 회차를 시작하기 전에 데이터를 초기화할까요, 그대로 진행할까요? (사용자에게 물어보고 e2e_round_start 의 data 로 전달)", "Reset the data before this round, or go on with the data as it is? (Ask the user and pass the answer as data of e2e_round_start)"),
         options: [
-          { value: "reset", meaning: `데이터 초기화 후 시작${cfg.data.resetCommand ? ` (실행: ${cfg.data.resetCommand})` : " — 초기화 명령이 설정돼 있지 않음. e2e_init 의 resetCommand 를 먼저 정하거나 manual-reset-done 을 쓰세요"}. 삭제·로그아웃 같은 파괴적 동작도 점검한다.` },
-          { value: "keep", meaning: "지금 데이터 그대로 진행. 파괴적 동작은 건너뛰고(SKIP), 등록·수정 같은 쓰기 동작은 실제로 실행되어 데이터가 남는다." },
-          { value: "manual-reset-done", meaning: "사용자가 이미 직접 초기화를 마쳤음. 이 도구는 초기화를 실행하지 않고 파괴적 동작도 점검한다." },
+          {
+            value: "reset",
+            meaning: tx(
+              `데이터 초기화 후 시작${cfg.data.resetCommand ? ` (실행: ${cfg.data.resetCommand})` : " — 초기화 명령이 설정돼 있지 않음. e2e_init 의 resetCommand 를 먼저 정하거나 manual-reset-done 을 쓰세요"}. 삭제·로그아웃 같은 파괴적 동작도 점검한다.`,
+              `Reset the data, then start${cfg.data.resetCommand ? ` (runs: ${cfg.data.resetCommand})` : " — no reset command is set. Set resetCommand of e2e_init first, or use manual-reset-done"}. Destructive actions such as delete and logout are checked too.`,
+            ),
+          },
+          { value: "keep", meaning: tx("지금 데이터 그대로 진행. 파괴적 동작은 건너뛰고(SKIP), 등록·수정 같은 쓰기 동작은 실제로 실행되어 데이터가 남는다.", "Go on with the current data. Destructive actions are skipped (SKIP). Write actions such as create and edit really run, and their data stays.") },
+          { value: "manual-reset-done", meaning: tx("사용자가 이미 직접 초기화를 마쳤음. 이 도구는 초기화를 실행하지 않고 파괴적 동작도 점검한다.", "The user already reset the data by hand. This tool runs no reset, and it checks destructive actions too.") },
         ],
       },
     };
   // 남은 시간이 짧은 토큰을 그대로 쓰면 시험 도중 만료돼 로그인 화면으로 튕긴다(오류 V)
   const tp = tokenProblem(cfg);
   if (tp) return { ok: false, error: tp };
-  if (opts.retest && !readRetest(project).length) return { ok: false, error: "재시험 대기열이 비어 있습니다(선행 도구 오류로 돌리지 않은 케이스가 없음). retest 없이 시작하세요." };
-  if (d === "reset" && !cfg.data.resetCommand) return { ok: false, error: "data=reset 인데 resetCommand 가 없습니다. e2e_init 으로 초기화 명령을 설정하거나, 직접 초기화했다면 manual-reset-done 으로 시작하세요." };
+  if (opts.retest && !readRetest(project).length) return { ok: false, error: tx("재시험 대기열이 비어 있습니다(선행 도구 오류로 돌리지 않은 케이스가 없음). retest 없이 시작하세요.", "The retest queue is empty (no case was left unrun because of a prior tool error). Start without retest.") };
+  if (d === "reset" && !cfg.data.resetCommand) return { ok: false, error: tx("data=reset 인데 resetCommand 가 없습니다. e2e_init 으로 초기화 명령을 설정하거나, 직접 초기화했다면 manual-reset-done 으로 시작하세요.", "data=reset, but there is no resetCommand. Set the reset command with e2e_init, or if the data was reset by hand, start with manual-reset-done.") };
   return { ok: true, decision: d };
 }
 
@@ -168,9 +252,11 @@ export function runningRound(project: Project): RoundMeta | null {
 }
 
 export async function startRound(project: Project, opts: StartOpts, onEvent?: (ev: any) => void): Promise<{ id: string; done: Promise<RoundMeta> }> {
+  // 라운드는 뒤에서 돌고 그사이 다른 MCP 호출이 프로세스의 언어를 바꿀 수 있다: 시작할 때와 케이스마다 이 프로젝트의 언어로 맞춘다
+  setLang(project.config().lang);
   const pre = precheck(project, opts);
   if (!pre.ok) throw new Error(pre.error ?? JSON.stringify(pre.decision));
-  if (runningRound(project)) throw new Error("이미 진행 중인 회차가 있습니다. e2e_round_status 로 확인하거나 e2e_round_stop 으로 중단하세요.");
+  if (runningRound(project)) throw new Error(tx("이미 진행 중인 회차가 있습니다. e2e_round_status 로 확인하거나 e2e_round_stop 으로 중단하세요.", "A round is already running. Check it with e2e_round_status, or stop it with e2e_round_stop."));
   const pf = await browserPreflight(opts);
   if (!pf.ok) throw new Error(pf.error ?? JSON.stringify(pf.decision));
   const cfg = project.config();
@@ -234,7 +320,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         emit({ type: "reset-start" });
         const r = await sh(cfg.data.resetCommand!, cfg.data.resetCwd ?? project.root);
         meta.data.resetOutput = r.out;
-        if (r.code !== 0) throw new Error(`데이터 초기화 실패(종료 코드 ${r.code}): ${r.out.slice(-300)}`);
+        if (r.code !== 0) throw new Error(tx(`데이터 초기화 실패(종료 코드 ${r.code}): ${r.out.slice(-300)}`, `Data reset failed (exit code ${r.code}): ${r.out.slice(-300)}`));
         emit({ type: "reset-done" });
       }
       await driver.open();
@@ -242,13 +328,14 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         pre.decision === "reset" && cfg.data.resetScope === "case"
           ? async () => {
               const r = await sh(cfg.data.resetCommand!, cfg.data.resetCwd ?? project.root);
-              if (r.code !== 0) throw new Error(`케이스 전 초기화 실패: ${r.out.slice(-200)}`);
+              if (r.code !== 0) throw new Error(tx(`케이스 전 초기화 실패: ${r.out.slice(-200)}`, `Reset before the case failed: ${r.out.slice(-200)}`));
             }
           : undefined;
       for (let i = 0; i < selected.length; i++) {
+        setLang(project.config().lang);
         if (existsSync(project.p("stop"))) {
           meta.status = "aborted";
-          meta.error = "사용자 요청으로 중단";
+          meta.error = tx("사용자 요청으로 중단", "Stopped by user request");
           break;
         }
         // 사용자가 '지금 흐름에서 적용'을 고른 경우: 끼워 넣은 케이스를 뒤에 붙여 이어서 실행
@@ -297,14 +384,14 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
             const got = acquire(keys, { chapter: chapterKey(c), round: id, project: project.root });
             if (got.ok) heldLocks = keys;
             else {
-              guard.end(c, `동시 실행 거부: 대상 「${got.key}」 를 챕터 「${got.holder.chapter}」(라운드 ${got.holder.round ?? "-"}, 프로세스 ${got.holder.pid})가 쓰는 중`, "N");
+              guard.end(c, tx(`동시 실행 거부: 대상 「${got.key}」 를 챕터 「${got.holder.chapter}」(라운드 ${got.holder.round ?? "-"}, 프로세스 ${got.holder.pid})가 쓰는 중`, `Concurrent run refused: target "${got.key}" is in use by chapter "${got.holder.chapter}" (round ${got.holder.round ?? "-"}, process ${got.holder.pid})`), "N");
               emit({ type: "concurrent-reject", chapter: chapterKey(c), key: got.key, owner: got.holder.chapter, ownerRound: got.holder.round, ownerPid: got.holder.pid });
             }
           }
           if (!guard.skipReason(c)) {
             const left = await waitNoStale(8000);
             if (left.length) {
-              guard.end(c, `이전 브라우저 프로세스 ${left.length}개가 남아 있어 두 브라우저가 겹침(${describeProcs(left)})`);
+              guard.end(c, tx(`이전 브라우저 프로세스 ${left.length}개가 남아 있어 두 브라우저가 겹침(${describeProcs(left)})`, `Earlier browser processes are still running (${left.length}), so two browsers overlap (${describeProcs(left)})`));
               emit({ type: "stale-browsers", chapter: chapterKey(c), count: left.length });
             }
           }
@@ -333,7 +420,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
           } catch (e: any) {
             const gone = browserGone(e);
             // 브라우저를 다시 띄워도 안 되면 사이트의 결함이 아니라 환경 문제 → 검증 못 한 것(BLOCKED)
-            r = { id: c.id, title: c.title, type: c.type, status: gone ? "BLOCKED" : "FAIL", reason: gone ? `브라우저가 죽어 판정하지 못함(다시 띄웠지만 실패): ${String(e?.message ?? e).slice(0, 200)}` : `실행기 오류: ${String(e?.message ?? e).slice(0, 300)}`, warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(), ...(gone ? {} : { priority: "P1" as const }) };
+            r = { id: c.id, title: c.title, type: c.type, status: gone ? "BLOCKED" : "FAIL", reason: gone ? tx(`브라우저가 죽어 판정하지 못함(다시 띄웠지만 실패): ${String(e?.message ?? e).slice(0, 200)}`, `The browser died, so there is no verdict (it was started again, but failed): ${String(e?.message ?? e).slice(0, 200)}`) : tx(`실행기 오류: ${String(e?.message ?? e).slice(0, 300)}`, `Runner error: ${String(e?.message ?? e).slice(0, 300)}`), warnings: [], steps: [], console: [], pageErrors: [], failedRequests: [], durationMs: 0, startedAt: nowIso(), ...(gone ? {} : { priority: "P1" as const }) };
           }
           r = guard.settle(c, r);
           if (r.toolError?.kind === "F") emit({ type: "chapter-na", case: c.id, why: r.toolError.detail.slice(0, 200) });
@@ -354,11 +441,17 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
       meta.status = "aborted";
       meta.error = String(e?.message ?? e).slice(0, 500);
     } finally {
+      setLang(project.config().lang);
       await driver.close().catch(() => {});
       releaseAll();
       // 닫은 뒤에도 이 도구가 띄운 브라우저 프로세스가 남았는지 확인하고, 남았으면 나무째 끊고 0개를 다시 확인한다
       const leftover = await cleanupOwn().catch(() => null);
-      if (leftover?.before) kit.warnings.push(leftover.after.length ? `라운드가 끝난 뒤 브라우저 프로세스 ${leftover.after.length}개를 끊지 못함(${describeProcs(leftover.after)})` : `라운드가 끝난 뒤 남은 브라우저 프로세스 ${leftover.before}개를 끊음`);
+      if (leftover?.before)
+        kit.warnings.push(
+          leftover.after.length
+            ? tx(`라운드가 끝난 뒤 브라우저 프로세스 ${leftover.after.length}개를 끊지 못함(${describeProcs(leftover.after)})`, `After the round, browser processes could not be ended (${leftover.after.length}: ${describeProcs(leftover.after)})`)
+            : tx(`라운드가 끝난 뒤 남은 브라우저 프로세스 ${leftover.before}개를 끊음`, `After the round, leftover browser processes were ended: ${leftover.before}`),
+        );
       meta.finishedAt = nowIso();
       const cnt: Record<string, number> = { PASS: 0, FAIL: 0, FLAKY: 0, BLOCKED: 0, NA: 0, SKIP: 0 };
       for (const r of results) cnt[r.status] = (cnt[r.status] ?? 0) + 1;
@@ -368,7 +461,7 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         meta.evidenceWarnings = kit.warnings.length ? kit.warnings : undefined;
         project.writeJson("created.json", [...createdSet].slice(-500));
       } catch (e: any) {
-        meta.evidenceWarnings = [...kit.warnings, `증거 정리 오류: ${String(e?.message ?? e).slice(0, 200)}`];
+        meta.evidenceWarnings = [...kit.warnings, tx(`증거 정리 오류: ${String(e?.message ?? e).slice(0, 200)}`, `Evidence cleanup error: ${String(e?.message ?? e).slice(0, 200)}`)];
       } finally {
         await kit.close();
       }
@@ -379,9 +472,10 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
         updateRetest(project, id, results, (cid) => chapterKey(selected.find((x) => x.id === cid) ?? ({ id: cid, title: "", type: "spec", steps: [] } as Case)));
       } catch {}
       try {
+        setLang(project.config().lang);
         writeReports(project, meta, results);
       } catch (e: any) {
-        meta.error = (meta.error ?? "") + ` 보고서 생성 오류: ${e?.message}`;
+        meta.error = (meta.error ?? "") + tx(` 보고서 생성 오류: ${e?.message}`, ` Report build error: ${e?.message}`);
         project.writeJson(`rounds/${id}/meta.json`, meta);
       }
       emit({ type: "round-end", round: id, status: meta.status, summary: meta.summary });
@@ -393,13 +487,13 @@ export async function startRound(project: Project, opts: StartOpts, onEvent?: (e
 
 const probesOff = (p: string) => p === "off";
 
-const featureKey = (c: Case) => `${c.screen ?? screenFromSteps(c)}|${c.feature ?? c.source_ref ?? "(기능 미지정)"}`;
+const featureKey = (c: Case) => `${c.screen ?? screenFromSteps(c)}|${c.feature ?? c.source_ref ?? tx("(기능 미지정)", "(no feature)")}`;
 const screenFromSteps = (c: Case) => {
   const g = c.steps.find((x) => x.op === "goto" && typeof x.url === "string");
   try {
-    return g ? new URL(g.url, "http://x").pathname : "(화면 미지정)";
+    return g ? new URL(g.url, "http://x").pathname : tx("(화면 미지정)", "(no screen)");
   } catch {
-    return "(화면 미지정)";
+    return tx("(화면 미지정)", "(no screen)");
   }
 };
 
@@ -439,8 +533,8 @@ async function retryFailed(first: CaseResult, mk: (attempt: number) => Promise<C
     }
     if (retries.pass > 0 && retries.fail > 0) break; // 일부만 통과 — 불안정으로 확정
   }
-  if (retries.pass === retries.n && lastPass) return { ...lastPass, retries, warnings: [`첫 시도는 실패(${String(first.reason).slice(0, 100)})했지만 재시도 ${retries.n}번이 모두 통과함`, ...lastPass.warnings] };
-  if (retries.pass > 0) return { ...first, status: "FLAKY", reason: `불안정: 첫 시도 실패 뒤 재시도 ${retries.n}번 중 ${retries.pass}번 통과 — 첫 실패: ${first.reason}`, retries };
+  if (retries.pass === retries.n && lastPass) return { ...lastPass, retries, warnings: [tx(`첫 시도는 실패(${String(first.reason).slice(0, 100)})했지만 재시도 ${retries.n}번이 모두 통과함`, `The first try failed (${String(first.reason).slice(0, 100)}), but all ${retries.n} retries passed`), ...lastPass.warnings] };
+  if (retries.pass > 0) return { ...first, status: "FLAKY", reason: tx(`불안정: 첫 시도 실패 뒤 재시도 ${retries.n}번 중 ${retries.pass}번 통과 — 첫 실패: ${first.reason}`, `Flaky: the first try failed, then ${retries.pass} of ${retries.n} retries passed — first failure: ${first.reason}`), retries };
   return { ...first, retries };
 }
 

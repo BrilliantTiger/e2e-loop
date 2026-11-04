@@ -3,6 +3,7 @@
 // 정규식 기반의 근사 분석이라 "후보"를 뽑을 뿐이고, 실제 화면과의 대조는 reconcile.ts 가 한다.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, relative, sep } from "node:path";
+import { tx } from "../i18n.ts";
 
 export interface CodeRoute {
   path: string;
@@ -330,11 +331,11 @@ function extractFileOps(f: SrcFile): CodeFileOp[] {
 
 export function analyzeCode(root: string): CodeAnalysis {
   const notes: string[] = [];
-  if (!existsSync(root)) throw new Error(`코드 경로가 없습니다: ${root}`);
+  if (!existsSync(root)) throw new Error(tx(`코드 경로가 없습니다: ${root}`, `Code path does not exist: ${root}`));
   const st = statSync(root);
   const base = st.isDirectory() ? root : join(root, "..");
   const { files, truncated } = st.isDirectory() ? walk(root) : { files: [{ abs: root, rel: basename(root), text: readFileSync(root, "utf8"), lines: readFileSync(root, "utf8").split("\n") }], truncated: false };
-  if (truncated) notes.push(`파일이 ${MAX_FILES}개를 넘어 일부만 읽었습니다.`);
+  if (truncated) notes.push(tx(`파일이 ${MAX_FILES}개를 넘어 일부만 읽었습니다.`, `More than ${MAX_FILES} files, so only some were read.`));
   const deps = new Set<string>();
   try {
     const pj = JSON.parse(readFileSync(join(base, "package.json"), "utf8"));
@@ -395,8 +396,8 @@ export function analyzeCode(root: string): CodeAnalysis {
     fileOps: dedupe(fileOps, (o) => `${o.type} ${o.file}:${o.line}`).slice(0, CAPS.fileOps),
     notes,
   };
-  if (!out.frameworks.length) notes.push("라우터를 찾지 못했습니다. 지원하는 패턴: Next(app·pages), React Router, Vue Router, Nuxt, SvelteKit, 정적 HTML. 이벤트·API 후보는 그대로 뽑았습니다.");
-  if (out.events.length >= CAPS.events || out.apis.length >= CAPS.apis) notes.push("후보가 많아 일부만 담았습니다.");
+  if (!out.frameworks.length) notes.push(tx("라우터를 찾지 못했습니다. 지원하는 패턴: Next(app·pages), React Router, Vue Router, Nuxt, SvelteKit, 정적 HTML. 이벤트·API 후보는 그대로 뽑았습니다.", "No router found. Supported patterns: Next (app, pages), React Router, Vue Router, Nuxt, SvelteKit, static HTML. Event and API candidates were still extracted."));
+  if (out.events.length >= CAPS.events || out.apis.length >= CAPS.apis) notes.push(tx("후보가 많아 일부만 담았습니다.", "Too many candidates, so only some were kept."));
   return out;
 }
 

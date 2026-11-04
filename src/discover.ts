@@ -7,6 +7,7 @@ import { resolveDriver } from "./drivers/index.ts";
 import { inventoryExpr } from "./drivers/inpage.ts";
 import { Project, nowIso } from "./store.ts";
 import { closeModal, observe, sleep } from "./probes.ts";
+import { tx } from "./i18n.ts";
 
 const h6 = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 6);
 
@@ -78,10 +79,10 @@ export async function discover(
       if (seenPages.has(key)) continue;
       seenPages.add(key);
       if (ignore.some((re) => re.test(u.pathname + u.search))) {
-        inv.skipped.push({ url, reason: "ignore 패턴" });
+        inv.skipped.push({ url, reason: tx("ignore 패턴", "ignore pattern") });
         continue;
       }
-      log(`방문 ${key}`);
+      log(tx(`방문 ${key}`, `Visit ${key}`));
       try {
         await page.goto(url);
         await sleep(300);
@@ -92,7 +93,7 @@ export async function discover(
       const landed = new URL(await page.url());
       const path = normalizePath(landed) + (landed.search || "");
       if (landed.origin !== base.origin) {
-        inv.skipped.push({ url, reason: "다른 도메인으로 이동" });
+        inv.skipped.push({ url, reason: tx("다른 도메인으로 이동", "moved to another domain") });
         continue;
       }
       const first = await collect(path, "page", null);
@@ -126,7 +127,7 @@ export async function discover(
               const inner = await collect(path, `modal:${t.id}`, scope);
               const mine = inner.out.filter((e) => !first.out.some((o) => o.selector === e.selector));
               inv.elements.push(...mine);
-              log(`  모달 발견: ${t.label} (요소 ${mine.length})`);
+              log(tx(`  모달 발견: ${t.label} (요소 ${mine.length})`, `  Modal found: ${t.label} (elements: ${mine.length})`));
               await closeModal(page);
             }
           } catch {
@@ -158,11 +159,11 @@ export function probeCases(cfg: Config, inv: Inventory): Case[] {
   const featureOf = (e: InvElement): string => {
     if (e.formKey) {
       const sub = forms.get(`${e.page}|${e.layer}|${e.formKey}`)?.find((x) => (x as any).submit);
-      return `폼 “${(sub?.label ?? e.formKey).slice(0, 30)}”`;
+      return tx(`폼 “${(sub?.label ?? e.formKey).slice(0, 30)}”`, `Form "${(sub?.label ?? e.formKey).slice(0, 30)}"`);
     }
-    if (e.layer.startsWith("modal:")) return `모달 “${(byId.get(e.layer.slice(6))?.label ?? "").slice(0, 30)}”`;
-    if (e.download || e.kind === "file") return "파일 다운로드·업로드";
-    return ({ link: "화면 이동(링크)", tab: "탭", summary: "펼침 영역", toggle: "입력 요소", input: "입력 요소", select: "입력 요소", button: "버튼 동작" } as Record<string, string>)[e.kind] ?? "기타";
+    if (e.layer.startsWith("modal:")) return tx(`모달 “${(byId.get(e.layer.slice(6))?.label ?? "").slice(0, 30)}”`, `Modal "${(byId.get(e.layer.slice(6))?.label ?? "").slice(0, 30)}"`);
+    if (e.download || e.kind === "file") return tx("파일 다운로드·업로드", "File download and upload");
+    return ({ link: tx("화면 이동(링크)", "Navigation (link)"), tab: tx("탭", "Tab"), summary: tx("펼침 영역", "Expandable area"), toggle: tx("입력 요소", "Input element"), input: tx("입력 요소", "Input element"), select: tx("입력 요소", "Input element"), button: tx("버튼 동작", "Button action") } as Record<string, string>)[e.kind] ?? tx("기타", "Other");
   };
 
   const pre = (e: InvElement): Step[] => {
@@ -192,35 +193,35 @@ export function probeCases(cfg: Config, inv: Inventory): Case[] {
     let extra: Partial<Case> = {};
     if ((e.risk === "logout" || e.risk === "delete") && (e.kind === "button" || e.kind === "link") && !(e as any).submit) {
       kind = e.risk;
-      title = e.risk === "logout" ? `로그아웃 “${label}” → 동작 확인 후 다시 로그인` : `삭제 “${label}” → 테스터가 등록한 데이터만`;
+      title = e.risk === "logout" ? tx(`로그아웃 “${label}” → 동작 확인 후 다시 로그인`, `Logout "${label}" → check that it works, then log in again`) : tx(`삭제 “${label}” → 테스터가 등록한 데이터만`, `Delete "${label}" → only data the tester created`);
     } else if (e.kind === "link" && e.download) {
       kind = "download";
-      title = `다운로드 링크 “${label}”`;
+      title = tx(`다운로드 링크 “${label}”`, `Download link "${label}"`);
     } else if (e.kind === "file") {
       kind = "upload";
-      title = `파일 올리기 “${label}”`;
+      title = tx(`파일 올리기 “${label}”`, `File upload "${label}"`);
     } else if (e.kind === "button" && !(e as any).submit && DOWNLOAD_LABEL.test(e.label)) {
       kind = "download";
-      title = `버튼 “${label}” → 다운로드 확인`;
+      title = tx(`버튼 “${label}” → 다운로드 확인`, `Button "${label}" → check the download`);
       (common as any).soft = true;
     } else if (e.kind === "link") {
       if (e.external) {
         kind = "nav";
-        title = `링크(외부) “${label}”`;
+        title = tx(`링크(외부) “${label}”`, `Link (external) "${label}"`);
         (common as any).newTab = true;
       } else {
         kind = "nav";
-        title = `링크 “${label}” → ${e.href}`;
+        title = tx(`링크 “${label}” → ${e.href}`, `Link "${label}" → ${e.href}`);
       }
     } else if (e.kind === "button") {
       if ((e as any).submit && e.formKey) continue; // 폼 점검에서 다룬다
       kind = "click";
-      title = `버튼 “${label}” 클릭`;
-    } else if (e.kind === "tab") { kind = "tab"; title = `탭 “${label}” 전환`; }
-    else if (e.kind === "summary") { kind = "summary"; title = `펼침 “${label}”`; }
-    else if (e.kind === "input") { kind = "input"; title = `입력 “${label}”(${e.inputType ?? "text"})`; }
-    else if (e.kind === "select") { kind = "select"; title = `선택 “${label}”`; }
-    else if (e.kind === "toggle") { kind = "toggle"; title = `토글 “${label}”`; }
+      title = tx(`버튼 “${label}” 클릭`, `Click button "${label}"`);
+    } else if (e.kind === "tab") { kind = "tab"; title = tx(`탭 “${label}” 전환`, `Switch to tab "${label}"`); }
+    else if (e.kind === "summary") { kind = "summary"; title = tx(`펼침 “${label}”`, `Expand "${label}"`); }
+    else if (e.kind === "input") { kind = "input"; title = tx(`입력 “${label}”(${e.inputType ?? "text"})`, `Input "${label}" (${e.inputType ?? "text"})`); }
+    else if (e.kind === "select") { kind = "select"; title = tx(`선택 “${label}”`, `Select "${label}"`); }
+    else if (e.kind === "toggle") { kind = "toggle"; title = tx(`토글 “${label}”`, `Toggle "${label}"`); }
     else continue;
     cases.push({
       ...base,
@@ -236,7 +237,7 @@ export function probeCases(cfg: Config, inv: Inventory): Case[] {
     const e = c.element ? byId.get(c.element) : undefined;
     if (!e) continue;
     const n = seenShared.get(`${e.layer}|${e.kind}|${e.selector}|${e.href ?? ""}|${e.label}`) ?? 1;
-    if (n > 1) c.area = `${c.area} (+같은 요소가 ${n - 1}개 페이지에 더 있음)`;
+    if (n > 1) c.area = tx(`${c.area} (+같은 요소가 ${n - 1}개 페이지에 더 있음)`, `${c.area} (+the same element is on ${n - 1} more pages)`);
   }
 
   // 폼 점검: 빈 제출, 유효 제출
@@ -249,11 +250,11 @@ export function probeCases(cfg: Config, inv: Inventory): Case[] {
     const fid = "F-" + h6(key);
     const pf = pre(first);
     if (required)
-      cases.push({ id: fid + "-empty", type: "probe", event: "form-empty", element: submit.id, area: first.page, risk: "safe", screen: first.page, feature: `폼 “${submit.label.slice(0, 30)}”`, title: `폼 “${submit.label}” 필수값 비우고 제출 → 검증`, steps: [...pf, { op: "probe", kind: "form-empty", sel: submit.selector, label: submit.label }] });
+      cases.push({ id: fid + "-empty", type: "probe", event: "form-empty", element: submit.id, area: first.page, risk: "safe", screen: first.page, feature: tx(`폼 “${submit.label.slice(0, 30)}”`, `Form "${submit.label.slice(0, 30)}"`), title: tx(`폼 “${submit.label}” 필수값 비우고 제출 → 검증`, `Form "${submit.label}": submit with required fields empty → validation`), steps: [...pf, { op: "probe", kind: "form-empty", sel: submit.selector, label: submit.label }] });
     cases.push({
-      id: fid + "-valid", type: "probe", event: "form-valid", element: submit.id, area: first.page, screen: first.page, feature: `폼 “${submit.label.slice(0, 30)}”`,
+      id: fid + "-valid", type: "probe", event: "form-valid", element: submit.id, area: first.page, screen: first.page, feature: tx(`폼 “${submit.label.slice(0, 30)}”`, `Form "${submit.label.slice(0, 30)}"`),
       risk: ["safe", "mutating"].includes(riskOf(cfg, submit)) ? "mutating" : "destructive",
-      title: `폼 “${submit.label}” 유효한 값으로 제출`,
+      title: tx(`폼 “${submit.label}” 유효한 값으로 제출`, `Form "${submit.label}": submit with valid values`),
       steps: [...pf, { op: "probe", kind: "form-valid", sel: submit.selector, label: submit.label, fields: fields.map((f) => ({ sel: f.selector, kind: f.kind, inputType: f.inputType, label: f.label, options: f.options, accept: f.attrs?.accept })) }],
     });
   }

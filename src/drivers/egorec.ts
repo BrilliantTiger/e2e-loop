@@ -4,6 +4,7 @@
 import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { run, which, type Env } from "../env/detect.ts";
+import { tx } from "../i18n.ts";
 
 export interface Frame {
   file: string;
@@ -36,13 +37,13 @@ export function concatList(frames: Frame[], lastMs = 300): string {
 /** 프레임들을 mp4(h264)로 만든다. 성공하면 프레임을 지우고 영상 경로를, 못 하면 이유를 돌려준다. */
 export async function buildVideoFromFrames(dir: string, out: string, env: Env = process.env): Promise<{ video?: string; frames: number; warn?: string }> {
   const frames = listFrames(dir);
-  if (!frames.length) return { frames: 0, warn: "Ego 화면 프레임을 하나도 받지 못해 영상을 만들지 못했습니다." };
+  if (!frames.length) return { frames: 0, warn: tx("Ego 화면 프레임을 하나도 받지 못해 영상을 만들지 못했습니다.", "No Ego screen frame was received, so no video was made.") };
   const ffmpeg = which("ffmpeg", env);
-  if (!ffmpeg) return { frames: frames.length, warn: "ffmpeg 가 없어 Ego 프레임을 영상으로 만들지 못했습니다(e2e_doctor 로 설치)." };
+  if (!ffmpeg) return { frames: frames.length, warn: tx("ffmpeg 가 없어 Ego 프레임을 영상으로 만들지 못했습니다(e2e_doctor 로 설치).", "ffmpeg is missing, so the Ego frames were not made into a video (install it with e2e_doctor).") };
   const list = join(dir, "frames.txt");
   writeFileSync(list, concatList(frames));
   const r = await run([ffmpeg, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", list, "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-fps_mode", "passthrough", out], { env, timeoutMs: 300000 });
-  if (r.code !== 0 || !existsSync(out)) return { frames: frames.length, warn: `Ego 프레임을 영상으로 만들지 못했습니다: ${r.out.slice(-160)}` };
+  if (r.code !== 0 || !existsSync(out)) return { frames: frames.length, warn: tx(`Ego 프레임을 영상으로 만들지 못했습니다: ${r.out.slice(-160)}`, `Making a video from the Ego frames failed: ${r.out.slice(-160)}`) };
   if (!process.env.E2E_KEEP_FRAMES) for (const f of frames) rmSync(f.file, { force: true });
   rmSync(list, { force: true });
   return { video: out, frames: frames.length };
