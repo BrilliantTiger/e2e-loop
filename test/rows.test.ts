@@ -60,6 +60,25 @@ test("줄 목록이 다시 정렬되어도 같은 파일 줄을 찾는다(번호
   await page.setContent(HTML);
 });
 
+test("글자가 정확히 같은 머리글·줄이 있으면 그것을 먼저 찾고(「File Name」·「data.csv」 가 먼저 걸리지 않음), 없으면 지금처럼 글자를 가진 것을 찾는다", async () => {
+  const pg = await browser.newPage();
+  await pg.setContent(`<!doctype html><body><table><thead><tr><th>File Name</th><th>Name</th><th>상태 ▲</th></tr></thead><tbody>
+<tr><td>data.csv</td><td>데이터</td><td>막힘</td></tr>
+<tr><td>a.csv</td><td>에이</td><td>완료</td></tr>
+<tr><td>lab_a.csv.bak</td><td>백업</td><td>대기</td></tr>
+</tbody></table></body>`);
+  const t = async (sel: string) => (await pg.locator(translateSel(sel)).allInnerTexts()).map((x) => x.trim());
+  // 머리글: 「Name」 과 정확히 같은 컬럼(앞의 「File Name」 이 아님)
+  expect(await t('cell[col="Name"]')).toEqual(["데이터", "에이", "백업"]);
+  // 줄: 칸 글자가 「a.csv」 와 정확히 같은 줄(data.csv · lab_a.csv.bak 줄이 아님)
+  expect(await t('cell[col="Name"][row="a.csv"]')).toEqual(["에이"]);
+  expect(await t("row=a.csv")).toEqual(["a.csv\t에이\t완료"]);
+  // 정확히 같은 것이 없으면 지금처럼 부분 일치: 머리글 「상태 ▲」 · 줄 글자 「lab_a」
+  expect(await t('cell[col="상태"][row="lab_a"]')).toEqual(["대기"]);
+  expect((await pg.locator(translateSel("row=csv")).count())).toBe(3);
+  await pg.close();
+});
+
 test("역할 기반 표(role=grid)도 컬럼 이름으로 찾는다", async () => {
   expect(await texts('cell[col="단계"][row="김철수"]')).toEqual(["L3"]);
 });

@@ -16,7 +16,11 @@ export interface Diff {
 }
 
 export function diffWithPrevious(project: Project, meta: RoundMeta, results: CaseResult[]): Diff {
-  const prev = [...project.rounds()].reverse().find((r) => r.n < meta.n && r.status === "finished");
+  // 전체 라운드는 앞 전체 라운드와 비교한다 — 사이의 부분 라운드(수정 확인용)와 비교하면 그 라운드에 없던 케이스의 회귀가 「새 케이스」로 숨는다
+  const prev = project
+    .rounds()
+    .filter((r) => r.n < meta.n && r.status === "finished" && (meta.scope !== "full" || r.scope === "full"))
+    .reduce<RoundMeta | undefined>((a, r) => (!a || r.n > a.n ? r : a), undefined);
   const d: Diff = { prev: prev?.id, fixed: [], regressed: [], stillFailing: [], newFailures: [], newCases: [] };
   if (!prev) return d;
   const old = new Map(project.readJson<CaseResult[]>(`rounds/${prev.id}/results.json`, []).map((r) => [r.id, r.status]));

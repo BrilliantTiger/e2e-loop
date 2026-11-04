@@ -1,7 +1,7 @@
 // 환경 점검: 무엇이 있고 무엇이 없는지 읽기만 한다. 설치는 install.ts 가 한다.
 import { existsSync, statfsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export type Env = Record<string, string | undefined>;
 
@@ -33,6 +33,8 @@ export interface Check {
   /** auto = fix=true 일 때 알아서 설치 / ask = 사용자 승인 뒤에만 설치 / manual = 안내만 */
   fix: FixKind;
   command?: string[];
+  /** command 를 실행할 폴더(없으면 부른 쪽의 현재 폴더) */
+  cwd?: string;
   manual?: string;
   /** 이 도구가 필요한 상황 */
   neededFor?: string;
@@ -106,6 +108,9 @@ export async function runChecks(env: Env = process.env): Promise<Check[]> {
     detail: pw.ok ? pw.path! : "설치되어 있지 않음",
     fix: pw.ok ? "none" : "auto",
     command: ["bunx", "playwright", "install", "chromium"],
+    // MCP 서버는 대상 프로젝트 폴더에서 돈다. 그 폴더에서 bunx 를 부르면 그 프로젝트의(또는 npm 최신) playwright 가 잡혀
+    // 이 패키지가 쓰는 판과 다른 브라우저를 깐다. 이 패키지 폴더에서 실행해 고정된 판을 쓴다
+    cwd: resolve(import.meta.dir, "../.."),
     neededFor: "Chrome 계열 실행(기본 내장 브라우저)",
   });
 

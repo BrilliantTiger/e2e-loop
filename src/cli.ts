@@ -19,7 +19,12 @@ for (let i = 0; i < rest.length; i++) {
 }
 for (const k of Object.keys(flags)) {
   const v = flags[k];
-  if (typeof v === "string" && (v.startsWith("{") || v.startsWith("["))) flags[k] = JSON.parse(v);
+  // [ · { 로 시작해도 JSON 이 아니면(예: --text "[긴급] …") 글자 그대로 둔다
+  if (typeof v === "string" && (v.startsWith("{") || v.startsWith("["))) {
+    try {
+      flags[k] = JSON.parse(v);
+    } catch {}
+  }
   if (v === "true") flags[k] = true;
   if (v === "false") flags[k] = false;
 }
@@ -42,7 +47,7 @@ const HELP = `e2e-loop — 웹 E2E 회차 루프
   round [--data reset|keep|manual-reset-done] [--only '["id"]'] [--onlyFailed]   한 회차 실행(끝날 때까지 기다림)
   report [--round R01] [--format md|json|paths]
   check                                  완료 판정
-  feedback --text "요청" [--apply now --mode restart|in-flow]
+  feedback --text "요청" [--apply now --mode restart|in-flow|next]
   status                                 현재 상태와 다음 행동
   dashboard [--open] [--host IP]         현황판(내부망 IP, 토큰). 이 프로세스가 떠 있는 동안 코멘트를 받고 자동 응답도 맡는다
   mcp                                    MCP 서버 실행(stdio)

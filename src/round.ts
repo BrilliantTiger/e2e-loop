@@ -58,6 +58,9 @@ export interface StartOpts {
  */
 export async function browserPreflight(opts: StartOpts): Promise<{ ok: true; cleaned?: number } | { ok: false; error?: string; decision?: Decision }> {
   const stale = await staleBrowserProcs();
+  // 띄운 프로세스가 살아 있으면 이전 라운드가 남긴 것이 아니라 다른 라운드가 쓰는 중인 브라우저다: 시작하지 않고, 끊지도 않는다
+  const live = stale.filter((p) => p.ownerAlive);
+  if (live.length) return { ok: false, error: `다른 라운드가 아직 브라우저를 쓰는 중입니다(${describeProcs(live)}). 두 브라우저가 겹치면 판정이 어긋나므로 시작하지 않습니다. 다른 라운드의 것이라 cleanup_browsers 로도 끊지 않습니다. 그 라운드가 끝난 뒤(또는 그 세션을 닫은 뒤) 다시 시작하세요.` };
   if (!stale.length) return { ok: true };
   if (!opts.cleanupBrowsers)
     return { ok: false, decision: { needs_decision: true, question: `이전 라운드가 남긴 브라우저 프로세스 ${stale.length}개가 있습니다(${describeProcs(stale)}). 두 브라우저가 겹치면 판정이 어긋나므로 이대로 시작하지 않습니다. 끊고 시작할까요?`, options: [{ value: "cleanup", meaning: "끊고 시작한다: e2e_round_start 를 cleanup_browsers=true 로 다시 호출(노드 스크립트·브라우저 프로세스를 나무째 끊고 0개를 다시 확인)" }, { value: "stop", meaning: "시작하지 않는다(다른 라운드가 아직 돌고 있다면 끝난 뒤에 시작)" }] } };
@@ -106,7 +109,8 @@ export function precheck(project: Project, opts: StartOpts): { ok: true; decisio
   const pendingFb = project.feedback().filter((f) => f.status === "pending");
   if (pendingFb.length)
     return { ok: false, error: `아직 반영하지 않은 사용자 요청 ${pendingFb.length}건이 있습니다: ${pendingFb.map((f) => `${f.id} “${f.text.slice(0, 50)}”`).join(" / ")}. 요청대로 케이스·설정을 고친 뒤(e2e_case_upsert·e2e_prestart 등) e2e_feedback_resolve 로 표시하고 라운드를 시작하세요. 요청이 E2E 와 무관하거나 바꿀 것이 없으면 그 사유를 note 에 적어 표시하면 됩니다.` };
-  const isFull = !opts.only?.length && !opts.onlyFailed;
+  // 재시험(retest)도 부분 라운드다 — 라운드 상한은 전체 라운드만 센다
+  const isFull = !opts.only?.length && !opts.onlyFailed && !opts.retest;
   if (isFull && fullRounds(project).length >= cfg.maxRounds)
     return { ok: false, decision: { needs_decision: true, question: `라운드 상한 ${cfg.maxRounds}번에 닿았습니다(전체 라운드 ${fullRounds(project).length}번). 사용자에게 올려 더 돌릴지 정하세요.`, options: [{ value: "raise", meaning: "상한을 올린다: e2e_prestart 의 maxRounds 를 더 큰 값으로 기록한 뒤 다시 시작" }, { value: "stop", meaning: "여기서 멈추고 남은 이슈를 사용자에게 보고한다" }] } };
   const rep = repeatedIssues(project);

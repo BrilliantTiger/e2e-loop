@@ -231,16 +231,18 @@ export async function waitReady(page: DPage, cfg: Config, c: Pick<Case, "ready" 
   const list = ([] as ReadySignal[]).concat(c.ready ?? []);
   const t0 = Date.now();
   for (const r of list) {
+    // 상한은 신호마다 센다: 앞 신호를 기다린 시간이 뒤 신호의 상한을 먹지 않는다
+    const t1 = Date.now();
     const cap = (r.timeoutSec ?? c.maxWaitSec ?? MAX_WAIT_MS / 1000) * 1000;
     const poll = r.pollMs ?? 2000;
     let lastLog = Date.now();
     for (;;) {
       const got = await readyNow(page, cfg, r);
       if (got.ok) break;
-      if (Date.now() - t0 >= cap) throw new ToolError("M", `선행 계산 미완료: 준비 신호 「${readyLabel(r)}」 가 ${Math.round(cap / 1000)}초 안에 오지 않음(지금 ${got.now}) — 서버 계산이 끝나기 전에는 누르지 않음`, readyLabel(r));
+      if (Date.now() - t1 >= cap) throw new ToolError("M", `선행 계산 미완료: 준비 신호 「${readyLabel(r)}」 가 ${Math.round(cap / 1000)}초 안에 오지 않음(지금 ${got.now}) — 서버 계산이 끝나기 전에는 누르지 않음`, readyLabel(r));
       if (Date.now() - lastLog >= 15000) {
         lastLog = Date.now();
-        onLog?.(`준비 신호 「${readyLabel(r)}」 기다리는 중 ${Math.round((Date.now() - t0) / 1000)}초 — 지금 ${got.now}`);
+        onLog?.(`준비 신호 「${readyLabel(r)}」 기다리는 중 ${Math.round((Date.now() - t1) / 1000)}초 — 지금 ${got.now}`);
       }
       await new Promise((res) => setTimeout(res, poll));
     }
@@ -342,6 +344,8 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   const policy: ProbePolicy = { ownDataOnly: ctx.decision === "keep", created: ctx.created ?? [], onCreated: ctx.onCreated };
   const allowErrors = (c.tags ?? []).includes("allow-errors");
   const steps: Step[] = [...(cfg.auth?.setupSteps ?? []), ...c.steps];
+  /** 로그인 스텝(같은 객체를 로그아웃 뒤 다시 로그인할 때도 끼워 넣는다) */
+  const setupSet = new Set<Step>(cfg.auth?.setupSteps ?? []);
   const keepAllShots = !ctx.driver.capabilities.video;
   let failedAt = -1;
   let osBlocked: string | undefined;
@@ -504,7 +508,13 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
         case "click": await page.click(s.sel); break;
         case "dblclick": await page.dblclick(s.sel); break;
         case "hover": await page.hover(s.sel); break;
-        case "fill": { const v = expandEnv(String(s.value ?? "")); if (v.length >= 4) ctx.onCreated?.(v); await page.fill(s.sel, v); break; }
+        case "fill": {
+          const v = expandEnv(String(s.value ?? ""));
+          // 로그인 스텝에서 친 아이디·비밀번호는 테스터가 등록한 데이터가 아니다 — 남기면 keep 회차의 삭제 점검이 그 계정 이름이 보이는 실데이터 줄을 지우고, 비밀번호가 created.json 에 남는다
+          if (v.length >= 4 && !setupSet.has(s0)) ctx.onCreated?.(v);
+          await page.fill(s.sel, v);
+          break;
+        }
         case "select": await page.selectOption(s.sel, String(s.value)); break;
         case "check": await page.check(s.sel, s.checked ?? true); break;
         case "press": await page.press(s.sel ?? null, s.key); break;
@@ -755,13 +765,15 @@ export async function runCase(ctx: RunCtx, c: Case): Promise<CaseResult> {
   }
   // 마지막 동작 뒤에 결과 기대가 없으면 「오류 없음」만으로는 통과가 아니다 — 고른 값이 틀려도 PASS 로 남는다(오류 X)
   if (c.type === "spec" && failedAt < 0 && !toolErr && !osBlocked && !skipped && res.status === "PASS") {
-    const ran = res.steps.filter((x) => x.status === "ok").map((x) => steps[x.i]!);
+    // 로그인 스텝(auth.setupSteps — 로그아웃 뒤 다시 로그인한 것 포함)은 케이스의 동작이 아니다
+    const ran = res.steps.filter((x) => x.status === "ok").map((x) => steps[x.i]!).filter((x) => !setupSet.has(x));
     const k = uncheckedAction(ran);
     if (k !== undefined) toolErr = { kind: "X", detail: `확인 없는 통과 — 마지막 동작(${describe(ran[k]!)}) 뒤에 결과 기대가 없어 「오류 없음」만으로는 통과로 보지 않음. 고른 값·저장된 결과를 근거와 대조하는 기대를 넣을 것` };
   }
   // 화면 글이 빈 것이 사이트의 JS 오류·서버 5xx 와 함께 나왔다면 도구 탓이 아니라 사이트의 결함이다 — FAIL 로 둔다
   const siteFault = res.pageErrors.length > 0 || res.failedRequests.some((r) => /^(5\d\d|ERR)\b/.test(r));
-  if (toolErr && siteFault) toolErr = undefined;
+  // 실패한 단계가 있을 때만 FAIL 로 돌린다. 실패 없이 생긴 도구 오류(X)를 지우면 FAIL 이 아니라 PASS 로 남는다
+  if (toolErr && siteFault && failedAt >= 0) toolErr = undefined;
   if (prereqIncomplete) {
     // 선행 단계가 끝나지 않아 목표 화면에 못 들어감 — 도구 오류도 제품 FAIL 도 아니라 「선행 결함에 막힘」(H)
     res.status = "NA";

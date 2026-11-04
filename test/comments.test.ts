@@ -42,6 +42,16 @@ test("코멘트 달기: 검증(빈 글·너무 긴 글·모르는 케이스), �
   expect(openCount(p)).toBe(2);
 });
 
+test("코멘트 상한(500개)은 정리하지 않은 코멘트만 센다: 정리하면 다시 달 수 있다", () => {
+  const p = project();
+  for (let i = 0; i < 500; i++) addComment(p, { case: "S-OK", text: `코멘트 ${i}` });
+  expect(() => addComment(p, { case: "S-OK", text: "하나 더" })).toThrow("500개");
+  resolveComments(p, listComments(p).slice(0, 10).map((c) => c.id));
+  const c = addComment(p, { case: "S-OK", text: "정리한 뒤 다시" });
+  expect(c.id).toBe("C501");
+  expect(() => addComment(p, { case: "S-OK", text: "정리한 자리만큼 더" })).not.toThrow();
+});
+
 test("AI 가 읽고 답한다: open 목록 → 답하면 answered, resolve=true 면 정리됨", () => {
   const p = project();
   addComment(p, { case: "S-STATS", text: "첫 코멘트", author: "민수" });

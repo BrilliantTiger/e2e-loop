@@ -104,3 +104,14 @@ test("선행 챕터가 로그인 만료(V)로 끝나면 하위 챕터는 누르�
   expect(r.toolError?.kind).toBe("R");
   expect(r.retest?.after).toBe("C11");
 });
+
+test("로그인 스텝에서 친 아이디·비밀번호는 「테스터가 등록한 값」으로 남기지 않는다 — keep 회차의 삭제 점검이 그 계정 이름이 보이는 실데이터 줄을 지우지 않게", async () => {
+  const { isOwnData } = await import("../src/probes.ts");
+  const created: string[] = [];
+  const ctx = fakeCtx({});
+  ctx.cfg.auth = { setupSteps: [{ op: "goto", url: "/login" }, { op: "fill", sel: "#id", value: "qa@company.com" }, { op: "fill", sel: "#pw", value: "Secret#1" }, { op: "click", sel: "#login" }] };
+  ctx.onCreated = (v) => created.push(v);
+  await runCase(ctx, { id: "V-20", title: "V-20", type: "spec", source_ref: "x", steps: [{ op: "goto", url: "/list" }, { op: "fill", sel: "#name", value: "e2e 보고서" }, { op: "click", sel: "#save" }, { op: "expect", sel: "h1", visible: true, basis: "x" }] });
+  expect(created).toEqual(["e2e 보고서"]);
+  expect(isOwnData("보고서 2025 · 작성자 qa@company.com", created)).toBe(false);
+});

@@ -1,5 +1,19 @@
 import { Project } from "./store.ts";
 
+const ALNUM = /[0-9A-Za-z]/;
+/** 근거(source_ref)가 절 이름을 가리키는가. 절 이름의 앞뒤가 영문·숫자에 붙어 있으면 다른 절이다(3.1 은 3.10 이 아니고 POL-1 은 POL-12 가 아니다). 한글·기호는 경계로 본다(「3.1절」 은 3.1) */
+function refersTo(ref: string, name: string): boolean {
+  if (!name) return true;
+  const edgeA = ALNUM.test(name[0]!);
+  const edgeB = ALNUM.test(name[name.length - 1]!);
+  for (let i = ref.indexOf(name); i >= 0; i = ref.indexOf(name, i + 1)) {
+    const before = i > 0 ? ref[i - 1]! : "";
+    const after = ref[i + name.length] ?? "";
+    if (!(edgeA && before && ALNUM.test(before)) && !(edgeB && after && ALNUM.test(after))) return true;
+  }
+  return false;
+}
+
 export interface Coverage {
   elements: { total: number; coveredBySpec: number; coveredByProbe: number; uncovered: number; uncoveredList: { id: string; page: string; kind: string; label: string; selector: string; risk: string }[] };
   sources: { id: string; title: string; kind: string; sections: { name: string; cases: number }[]; uncoveredSections: string[] }[];
@@ -32,7 +46,7 @@ export function coverage(project: Project): Coverage {
   if (!inv) notes.push("인벤토리가 없음 — 개발된 사이트가 있으면 e2e_discover 로 모든 요소를 수집하세요.");
   if (cfg.probes === "off") notes.push("자동 점검(probes)이 꺼져 있어 spec 케이스만 실행됩니다.");
   const sources = project.sources().map((s) => {
-    const sections = (s.sections ?? []).map((name) => ({ name, cases: spec.filter((c) => (c.source_ref ?? "").includes(name)).length }));
+    const sections = (s.sections ?? []).map((name) => ({ name, cases: spec.filter((c) => refersTo(c.source_ref ?? "", name)).length }));
     return { id: s.id, title: s.title, kind: s.kind, sections, uncoveredSections: sections.filter((x) => x.cases === 0).map((x) => x.name) };
   });
   for (const s of sources) if (s.kind !== "live-site" && s.kind !== "code" && s.sections.length === 0) notes.push(`근거 “${s.title}” 에 sections 가 없어 절 단위 커버리지를 못 셉니다. e2e_source_add 에 sections 를 넣으세요.`);

@@ -1,6 +1,6 @@
 // 사유 T: 챕터마다 같은 줄 반복 — 같은 (화면, 요소, 동작, 사유)가 여러 챕터에서 되풀이되면 제외 시트에서 한 줄로 합친다(F·I 재발).
 import { expect, test } from "bun:test";
-import { excludedRows, excludedTsv } from "../src/toolerror.ts";
+import { excludedRows, excludedTsv, mergeExcludedAcross } from "../src/toolerror.ts";
 import { nowIso } from "../src/store.ts";
 import type { CaseResult } from "../src/types.ts";
 
@@ -30,4 +30,22 @@ test("한 챕터 안의 같은 줄은 지금처럼 그 챕터의 줄로 합치�
   const h = (id: string, ch: string): CaseResult => ({ ...na(id, "D"), toolError: undefined, blockedBy: { chapter: "C9", by: ["C9-1"], detail: "선행 결함에 막힘(C9-1, 챕터 C9)" } });
   const rows = excludedRows([na("A-1", "D"), na("A-2", "D"), h("B-1", "C11"), h("C-1", "C12")], () => "-", { round: "R09", info: (r) => ({ chapter: r.id.startsWith("A") ? "C1" : r.id.startsWith("B") ? "C11" : "C12", screen: "/x", element: "#y", verb: "확인" }) });
   expect(rows.map((x) => `${x.kind} ${x.chapter} ×${x.count}`)).toEqual(["D C1 ×2", "H C11 ×1", "H C12 ×1"]);
+});
+
+test("라운드를 넘어 합친 시트: 두 챕터에 나와 T 로 합친 줄과, 다음 라운드에 한 챕터에만 나온 같은 줄은 한 줄에 쌓이고 챕터·비고가 새로 적힌다", () => {
+  const at = (chapter: string) => (r: CaseResult) => ({ chapter: r.id.startsWith("B") ? "C9B2" : chapter, screen: "/1710", element: "일괄 Handoff (0)", verb: "클릭" });
+  const r09 = excludedRows([na("A-1", "D"), na("B-1", "D")], () => "-", { round: "R09", info: at("C9C") });
+  const r10 = excludedRows([na("A-1", "D")], () => "-", { round: "R10", info: at("C9C") });
+  const r11 = excludedRows([na("A-1", "D")], () => "-", { round: "R11", info: at("C9D") });
+  expect(r09.map((x) => x.kind)).toEqual(["T"]);
+  expect(r10.map((x) => x.kind)).toEqual(["D"]);
+  const all = mergeExcludedAcross([{ round: "R09", rows: r09 }, { round: "R10", rows: r10 }, { round: "R11", rows: r11 }]);
+  expect(all.length).toBe(1);
+  expect(all[0]).toMatchObject({ no: "R09-X-01", kind: "T", origKind: "D", count: 4, rounds: ["R09", "R10", "R11"], chapter: "C9C·C9B2·C9D", chapters: ["C9C", "C9B2", "C9D"] });
+  expect(all[0]!.reason).toBe("T 챕터마다 같은 줄 반복(챕터 C9C·C9B2·C9D): D 화면이 그려지기 전에 읽음: 실제 값을 읽지 못함(빈 칸·undefined)");
+  expect(all[0]!.note).toBe("도구 판정 불가 · 챕터 3곳에서 같은 줄");
+  expect(all[0]!.action).toBe(r09[0]!.action);
+  // 한 챕터에만 라운드마다 나온 줄은 그 챕터의 줄 그대로(T 가 아님)
+  const one = mergeExcludedAcross([{ round: "R10", rows: r10 }, { round: "R12", rows: excludedRows([na("A-1", "D")], () => "-", { round: "R12", info: at("C9C") }) }]);
+  expect(one.map((x) => `${x.kind} ${x.chapter} ×${x.count} ${x.note}`)).toEqual(["D C9C ×2 도구 판정 불가"]);
 });

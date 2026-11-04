@@ -54,7 +54,7 @@ export async function doctor(opts: DoctorOpts = {}): Promise<EnvReport> {
       actions.push({ id: c.id, command: c.command, status: "planned", detail: `실행 예정: ${q(c.command)}` });
       return;
     }
-    const r = await run(c.command, { env, timeoutMs: 900000 });
+    const r = await run(c.command, { env, cwd: c.cwd, timeoutMs: 900000 });
     actions.push({ id: c.id, command: c.command, status: r.code === 0 ? "done" : "failed", detail: r.code === 0 ? `${c.name} 설치 완료` : `${c.name} 설치 실패: ${r.out.slice(-300)}` });
   };
 
@@ -72,13 +72,6 @@ export async function doctor(opts: DoctorOpts = {}): Promise<EnvReport> {
   const skills = opts.fix ? installSkills({ env, home: opts.home, dryRun: opts.dryRun }) : [];
   const clients = await detectClients(env);
 
-  const needs = checks
-    .filter((c) => c.status === "missing" && c.fix === "ask" && !opts.confirm?.includes(c.id))
-    .map((c) => ({ id: c.id, question: `${c.name} 가 없습니다(${c.neededFor ?? "필요"}). 설치할까요?`, command: q(c.command!) }));
-  const manual = checks
-    .filter((c) => (c.status === "missing" || c.status === "warn") && c.fix === "manual" && c.manual)
-    .map((c) => ({ id: c.id, why: `${c.name}: ${c.detail}`, steps: c.manual! }));
-
   // 컴퓨터 제어 MCP: 클라이언트 목록에서 보이는지로만 판단한다(설치할 패키지가 따로 없다. Codex 는 앱 내장, Claude 는 기본 연동).
   const seen = clients.filter((c) => c.computerUse === true).map((c) => c.name);
   checks.push({
@@ -90,6 +83,16 @@ export async function doctor(opts: DoctorOpts = {}): Promise<EnvReport> {
     manual: "OS 다운로드·파일 선택 창이 시트에 있을 때만 필요하다. 쓰는 클라이언트(Claude Code, Codex)의 컴퓨터 제어 기능을 켜세요. 테스트 전에 동작 여부를 점검하고, 안 되면 권한을 요구하며 스킵/허용을 묻는다.",
     neededFor: "브라우저 밖 OS 창(다운로드·파일 선택)",
   });
+
+  // 승인했어도 설치가 실패해 아직 없는 것은 질문에 다시 올린다(실패를 숨기고 준비됐다고 하지 않는다)
+  const failed = new Map(actions.filter((x) => x.status === "failed").map((x) => [x.id, x.detail]));
+  const needs = checks
+    .filter((c) => c.status === "missing" && c.fix === "ask" && (!opts.confirm?.includes(c.id) || failed.has(c.id)))
+    .map((c) => ({ id: c.id, question: failed.has(c.id) ? `${failed.get(c.id)}. 원인을 확인한 뒤 다시 설치할까요?` : `${c.name} 가 없습니다(${c.neededFor ?? "필요"}). 설치할까요?`, command: q(c.command!) }));
+  // 컴퓨터 제어 점검도 안내에 넣는다(위에서 점검 목록에 붙인 뒤에 모은다)
+  const manual = checks
+    .filter((c) => (c.status === "missing" || c.status === "warn") && c.fix === "manual" && c.manual)
+    .map((c) => ({ id: c.id, why: `${c.name}: ${c.detail}`, steps: c.manual! }));
 
   const has = (id: string, ok = "ok") => checks.find((c) => c.id === id)?.status === ok;
   const egoOk = has("ego");

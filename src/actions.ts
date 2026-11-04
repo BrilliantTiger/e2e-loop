@@ -22,7 +22,7 @@ import { completeCheck } from "./gate.ts";
 import { dashboardToken, startDashboard, type DashboardInfo } from "./dashboard.ts";
 import { addFeedback, resolveFeedback } from "./feedback.ts";
 import { trend } from "./report.ts";
-import { evidenceSources, intake, readIntake, readSession, sessionStart, type Material, type SessionStartOpts } from "./session.ts";
+import { evidenceSources, intake, readIntake, readSession, sessionStart, shq, type Material, type SessionStartOpts } from "./session.ts";
 
 export const proj = (p?: string) => new Project(p ?? process.env.E2E_PROJECT ?? process.cwd());
 
@@ -216,12 +216,19 @@ export const aSheet = (a: { project?: string; confirm?: boolean; confirm_before_
 
 export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
   const p = proj(a.project);
+  const { byId, added, updated, errors, warns } = checkCases(p, a.cases);
+  if (!errors.length || added + updated) p.saveCases([...byId.values()]);
+  return { added, updated, total: byId.size, errors, warns };
+}
+
+/** 케이스 등록 검사와 저장된 정의와의 합치기(저장은 하지 않는다). e2e_case_upsert 와 「지금 흐름에서 적용」(e2e_feedback)이 함께 쓴다 */
+export function checkCases(p: Project, cases: Partial<Case>[]) {
   const byId = new Map(p.cases().map((c) => [c.id, c]));
   const errors: string[] = [];
   const warns: string[] = [];
   let added = 0;
   let updated = 0;
-  for (const c of a.cases) {
+  for (const c of cases) {
     if (!c.id || !c.title || !Array.isArray(c.steps) || !c.steps.length) {
       errors.push(`${c.id ?? "(id 없음)"}: id/title/steps 필수`);
       continue;
@@ -363,7 +370,8 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
       for (const x of datasetConflicts({ steps: c.steps, dataset: ds }, dsets, isExpectation)) warns.push(`${c.id}: ${x} — 고치기 전에는 실행하지 않고 NA(Q)`);
     }
     // 마지막 동작 뒤에 결과 기대가 없으면 「오류 없음」만으로 PASS 가 되지 않는다(오류 X)
-    if (c.type === "spec") {
+    // type 을 빼고 등록하면 기본 spec 이다(실행 때와 같은 기준) — 고쳐 쓰는 케이스는 저장된 type 을 따른다
+    if ((c.type ?? byId.get(c.id)?.type ?? "spec") === "spec") {
       const k = uncheckedAction(c.steps);
       if (k !== undefined) warns.push(`${c.id}: 마지막 동작 #${k + 1} 뒤에 결과 기대가 없음 — 「오류 없음」만으로는 통과로 보지 않고 NA(X). 고른 값·저장된 결과를 근거와 대조하는 기대를 넣을 것`);
     }
@@ -383,10 +391,9 @@ export function aCaseUpsert(a: { project?: string; cases: Partial<Case>[] }) {
   }
   {
     const known = new Set([...byId.values()].map((x) => x.chapter?.trim()).filter(Boolean) as string[]);
-    for (const c of a.cases) for (const need of c.requires ?? []) if (typeof need === "string" && need.trim() && !known.has(need.trim())) warns.push(`${c.id}: requires 의 챕터 「${need}」 를 chapter 로 가진 케이스가 없음 — 이름이 맞는지 확인(없는 챕터는 막지 않음)`);
+    for (const c of cases) for (const need of c.requires ?? []) if (typeof need === "string" && need.trim() && !known.has(need.trim())) warns.push(`${c.id}: requires 의 챕터 「${need}」 를 chapter 로 가진 케이스가 없음 — 이름이 맞는지 확인(없는 챕터는 막지 않음)`);
   }
-  if (!errors.length || added + updated) p.saveCases([...byId.values()]);
-  return { added, updated, total: byId.size, errors, warns };
+  return { byId, added, updated, errors, warns };
 }
 
 export function aCaseList(a: { project?: string; type?: "spec" | "probe"; status?: string; area?: string; limit?: number }) {
@@ -506,7 +513,7 @@ export function aCompleteCheck(a: { project?: string }) {
   return pending.length ? { ...g, cleanup_pending: pending.map((x) => ({ id: x.id, username: x.username })), cleanup_next: "테스트 계정이 남아 있습니다. 종료하기 전에 e2e_account action=cleanup 으로 지우세요." } : g;
 }
 
-export const aFeedback = (a: { project?: string; text: string; apply?: "next" | "now"; mode?: "restart" | "in-flow"; cases?: Case[] }) => addFeedback(proj(a.project), a);
+export const aFeedback = (a: { project?: string; text: string; apply?: "next" | "now"; mode?: "restart" | "in-flow" | "next"; cases?: Case[] }) => addFeedback(proj(a.project), a);
 export const aFeedbackResolve = (a: { project?: string; ids: string[]; note?: string }) => ({ resolved: resolveFeedback(proj(a.project), a.ids, a.note).map((f) => f.id) });
 
 export async function aDashboard(a: { project?: string; open?: boolean; rotate_token?: boolean; rotate_owner_token?: boolean; host?: string; standalone?: boolean; stop?: boolean }) {
@@ -536,7 +543,7 @@ export async function aDashboard(a: { project?: string; open?: boolean; rotate_t
       p.ensure();
       rmSync(p.p("dashboard.json"), { force: true });
       const logf = p.p("dashboard.log");
-      Bun.spawn(["/bin/sh", "-c", `nohup ${JSON.stringify(process.execPath)} ${JSON.stringify(join(import.meta.dir, "cli.ts"))} dashboard --project ${JSON.stringify(p.root)}${a.host ? ` --host ${a.host}` : ""} > ${JSON.stringify(logf)} 2>&1 &`], { stdout: "ignore", stderr: "ignore" });
+      Bun.spawn(["/bin/sh", "-c", standaloneCommand(process.execPath, join(import.meta.dir, "cli.ts"), p.root, logf, a.host)], { stdout: "ignore", stderr: "ignore" });
       for (let i = 0; i < 50 && !existsSync(p.p("dashboard.json")); i++) await Bun.sleep(200);
     }
     const j = p.readJson<{ port: number; host: string; url: string; lan: boolean; pid: number } | null>("dashboard.json", null);
@@ -559,6 +566,10 @@ export async function aDashboard(a: { project?: string; open?: boolean; rotate_t
   if (a.open) Bun.spawn(["open", d.access_url], { stdout: "ignore", stderr: "ignore" });
   return dashboardReply({ url: d.url, host: d.host, lan: d.lan, access_url: d.access_url, owner_url: d.owner_url, alternatives: d.alternatives, warn: d.warn, pid: process.pid, standalone: false }, p);
 }
+
+/** 독립 현황판을 띄우는 셸 명령. 경로·host 는 작은따옴표로 감싸 $·백틱이 셸에서 풀리지 않게 한다 */
+export const standaloneCommand = (bun: string, cli: string, root: string, log: string, host?: string) =>
+  `nohup ${shq(bun)} ${shq(cli)} dashboard --project ${shq(root)}${host ? ` --host ${shq(host)}` : ""} > ${shq(log)} 2>&1 &`;
 
 function dashboardReply(d: { url: string; host: string; lan: boolean; access_url: string; owner_url: string; alternatives: string[]; warn?: string; pid: number; standalone: boolean }, p: Project) {
   const r = p.config().responder;

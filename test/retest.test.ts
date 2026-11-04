@@ -9,6 +9,7 @@ import { readRetest, retestSelection, updateRetest } from "../src/retest.ts";
 import { toolErrorCount, blockedCount } from "../src/toolerror.ts";
 import * as A from "../src/actions.ts";
 import { Project, nowIso } from "../src/store.ts";
+import { precheck } from "../src/round.ts";
 import type { Case, CaseResult } from "../src/types.ts";
 
 const mk = (id: string, chapter: string, requires?: string[]): Case => ({ id, title: id, type: "spec", source_ref: "x", chapter, ...(requires ? { requires } : {}), steps: [{ op: "goto", url: "/" }] });
@@ -165,4 +166,22 @@ test("등록: 시험 조건에 name·확인할 것이 없으면 거부, 장애�
   expect(up.errors.join()).toContain("F-BAD: 시험 조건 #2 에는 name");
   expect(up.warns.join()).toContain("F-NOC: 실패·장애를 일부러 만드는 케이스(태그 fault)에 시험 조건(condition 스텝)이 없음");
   A.aCaseSetStatus({ project: root, ids: ["F-NOC"], status: "na", reason: "시험용" });
+});
+
+test("라운드 상한에 닿아도 재시험(retest, 부분 라운드)은 막지 않는다 — 상한은 전체 라운드만 센다", () => {
+  const root = mkdtempSync(join(tmpdir(), "e2e-loop-rtcap-"));
+  const p = new Project(root);
+  p.ensure();
+  writeFileSync(join(root, "plan.md"), "# 기획서");
+  p.writeJson("sources.json", [{ id: "S01", kind: "plan", title: "기획서", location: join(root, "plan.md"), addedAt: "" }]);
+  p.saveCases([{ ...mk("C44-1", "C44"), steps: [{ op: "goto", url: "/" }, { op: "expect", sel: "h1", text: "a", basis: "CCB-1" }] }]);
+  A.aPrestart({ project: root, dataPolicy: "keep", maxRounds: 1, login: "none", account: { mode: "none" }, acknowledged: true });
+  p.writeJson("rounds/R01/meta.json", { id: "R01", n: 1, status: "finished", scope: "full" });
+  p.writeJson("rounds/R01/results.json", []);
+  updateRetest(p, "R01", [res(mk("C44-1", "C44"), { status: "NA", toolError: { kind: "R", detail: "선행 도구 오류로 미실행" }, retest: { after: "C45" } } as any)], () => "C44");
+  expect(readRetest(p).length).toBe(1);
+  const full: any = precheck(p, { data: "keep" });
+  expect(full.ok).toBe(false);
+  expect(full.decision.question).toContain("라운드 상한 1번");
+  expect((precheck(p, { data: "keep", retest: true }) as any).ok).toBe(true);
 });

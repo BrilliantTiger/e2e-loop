@@ -1,18 +1,18 @@
 // 사용자의 E2E 관련 요청 처리 규칙
 //  - 기본: 지금 돌고 있는 회차는 건드리지 않고 "다음 회차"부터 적용한다.
 //  - "지금 회차부터 적용"이라고 하면: 처음부터 다시 돌릴지, 지금 흐름에서 적용할지 먼저 묻고(mode) 그대로 적용한다.
-import { writeFileSync } from "node:fs";
 import type { Case, Feedback } from "./types.ts";
 import { Project, nowIso } from "./store.ts";
 import { runningRound, stopRound } from "./round.ts";
+import { checkCases } from "./actions.ts";
 
 export type FeedbackResult =
-  | { ok: true; feedback: Feedback; message: string }
+  | { ok: true; feedback: Feedback; message: string; warns?: string[] }
   | { ok: false; needs_decision: true; question: string; options: { value: string; meaning: string }[] };
 
 export function addFeedback(
   project: Project,
-  a: { text: string; apply?: "next" | "now"; mode?: "restart" | "in-flow"; cases?: Case[] },
+  a: { text: string; apply?: "next" | "now"; mode?: "restart" | "in-flow" | "next"; cases?: Case[] },
 ): FeedbackResult {
   const running = runningRound(project);
   const list = project.feedback();
@@ -25,7 +25,8 @@ export function addFeedback(
     return f;
   };
 
-  if (!running || a.apply !== "now") {
+  // 질문의 선택지 「다음 회차부터」(next)를 고른 경우도 다음 회차 적용이다
+  if (!running || a.apply !== "now" || a.mode === "next") {
     const f = save({ ...base, appliesTo: "next-round", appliesFrom: nextId });
     return {
       ok: true,
@@ -55,15 +56,21 @@ export function addFeedback(
     return { ok: true, feedback: f, message: `${running.id} 중단을 요청했습니다(진행 중인 케이스가 끝나면 멈춤). 멈춘 뒤 요청대로 케이스·설정을 고치고 e2e_round_start 로 처음부터 다시 시작하세요.` };
   }
 
+  if (a.mode !== "in-flow") throw new Error(`mode 는 restart·in-flow·next 중 하나여야 합니다(받은 값: ${a.mode}).`);
+
+  // 끼워 넣을 케이스는 e2e_case_upsert 와 같은 검사를 거치고 저장된 정의(파괴적 표시·챕터·선행·잠금 등)와 합친다.
+  // 하나라도 틀리면 요청도 케이스도 기록하지 않는다.
+  const checked = a.cases?.length ? checkCases(project, a.cases) : undefined;
+  if (checked?.errors.length) throw new Error(`끼워 넣을 케이스에 오류가 있어 요청을 기록하지 않았습니다: ${checked.errors.join(" / ")}`);
   const f = save({ ...base, appliesTo: "now-in-flow", appliesFrom: running.id });
-  if (a.cases?.length) {
-    const all = project.cases();
-    const byId = new Map(all.map((c) => [c.id, c]));
-    for (const c of a.cases) byId.set(c.id, { ...c, type: c.type ?? "spec" });
-    project.saveCases([...byId.values()]);
-    writeFileSync(project.p("inject.json"), JSON.stringify(a.cases.map((c) => ({ ...c, type: c.type ?? "spec" }))));
+  if (checked) {
+    project.saveCases([...checked.byId.values()]);
+    // 실행기가 아직 읽지 않은 앞선 요청의 케이스는 남기고 뒤에 붙인다(같은 id 는 새 정의로)
+    const add = a.cases!.map((c) => checked.byId.get(c.id)!);
+    const ids = new Set(add.map((c) => c.id));
+    project.writeJson("inject.json", [...project.readJson<Case[]>("inject.json", []).filter((c) => !ids.has(c.id)), ...add]);
   }
-  return { ok: true, feedback: f, message: `${running.id} 의 지금 흐름에 적용합니다.${a.cases?.length ? ` 케이스 ${a.cases.length}건을 뒤에 끼워 넣어 이어서 실행합니다.` : " (케이스 변경이 없으면 설정 변경만 기록됨)"} 이 회차는 완료 근거가 되지 않으므로 끝난 뒤 전체 회차를 한 번 더 돌려야 합니다.` };
+  return { ok: true, feedback: f, warns: checked?.warns.length ? checked.warns : undefined, message: `${running.id} 의 지금 흐름에 적용합니다.${a.cases?.length ? ` 케이스 ${a.cases.length}건을 뒤에 끼워 넣어 이어서 실행합니다.` : " (케이스 변경이 없으면 설정 변경만 기록됨)"} 이 회차는 완료 근거가 되지 않으므로 끝난 뒤 전체 회차를 한 번 더 돌려야 합니다.` };
 }
 
 export function resolveFeedback(project: Project, ids: string[], note?: string) {

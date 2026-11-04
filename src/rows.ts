@@ -20,10 +20,20 @@ const DATA_CELL = `*[self::td or @role="cell" or @role="gridcell"]`;
 const rowCond = (text: string, exact: boolean) =>
   exact ? `.//${CELL}[normalize-space(.)=${lit(text.trim())}]` : `contains(normalize-space(.), ${lit(text.trim())})`;
 
-/** 가장 안쪽 줄만(표 안의 표에서 바깥 줄이 같이 걸리지 않게) */
+/** 줄이 든 가장 가까운 표(table · role=table/grid/treegrid) */
+const TABLE = `ancestor::*[self::table or @role="table" or @role="grid" or @role="treegrid"][1]`;
+
+/**
+ * 가장 안쪽 줄만(표 안의 표에서 바깥 줄이 같이 걸리지 않게).
+ * 부분 일치로 찾을 때도 칸 글자가 정확히 같은 줄이 그 표에 있으면 그 줄만 찾는다(a.csv 를 찾는데 data.csv 줄이 먼저 걸리지 않게). 없으면 지금처럼 글자를 가진 줄.
+ */
 const rowPath = (text: string, exact: boolean, dataOnly = false): string => {
+  const only = dataOnly ? `[./${DATA_CELL}]` : "";
   const c = rowCond(text, exact);
-  return `//${ROW}${dataOnly ? `[./${DATA_CELL}]` : ""}[${c}][not(.//${ROW}[${c}])]`;
+  const base = `//${ROW}${only}[${c}][not(.//${ROW}[${c}])]`;
+  if (exact) return base;
+  const ex = rowCond(text, true);
+  return `${base}[${ex} or not(${TABLE}//${ROW}${only}[${ex}])]`;
 };
 
 const unq = (v: string) => {
@@ -73,7 +83,10 @@ export function translateSel(sel: string): string {
     const col = attrs.get("col");
     const row = attrs.get("row");
     if (!col) throw new Error(`cell 에는 col(컬럼 이름)이 필요함: ${head}`);
-    const hdr = `(ancestor::table[1]//th[contains(normalize-space(.), ${lit(col)})] | ancestor::*[@role="table" or @role="grid" or @role="treegrid"][1]//*[@role="columnheader"][contains(normalize-space(.), ${lit(col)})])[1]`;
+    // 머리글 글자가 정확히 같은 컬럼이 있으면 그 컬럼, 없을 때만 글자를 가진 컬럼(「Name」 을 찾는데 앞의 「File Name」 이 걸리지 않게)
+    const heads = (cond: string) => `ancestor::table[1]//th[${cond}] | ancestor::*[@role="table" or @role="grid" or @role="treegrid"][1]//*[@role="columnheader"][${cond}]`;
+    const exactHead = `normalize-space(.)=${lit(col)}`;
+    const hdr = `(${heads(exactHead)} | (${heads(`contains(normalize-space(.), ${lit(col)})`)})[not(${heads(exactHead)})])[1]`;
     // 머리글 줄은 빼고 데이터 줄만, 그리고 그 컬럼 머리글이 실제로 있는 표에서만 찾는다
     const rowStep = row ? rowPath(row, false, true) : `//${ROW}[./${DATA_CELL}]`;
     xp = `${rowStep}/${CELL}[count(${hdr}) = 1 and position() = count(${hdr}/preceding-sibling::*) + 1]`;

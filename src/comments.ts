@@ -59,7 +59,8 @@ export function addComment(p: Project, a: { case: string; text: string; author?:
   const known = new Set([...p.cases().map((c) => c.id), ...p.rounds().flatMap((r) => p.readJson<{ id: string }[]>(`rounds/${r.id}/results.json`, []).map((x) => x.id))]);
   if (!known.has(a.case)) throw new Error(`알 수 없는 케이스입니다: ${a.case}`);
   const list = readComments(p);
-  if (list.length >= MAX_COMMENTS) throw new Error(`코멘트가 ${MAX_COMMENTS}개에 닿았습니다. 정리(resolved)한 뒤 다시 달아 주세요.`);
+  // 정리(resolved)한 코멘트는 상한에 세지 않는다 — 안내대로 정리하면 다시 달 수 있다
+  if (list.filter((x) => x.status !== "resolved").length >= MAX_COMMENTS) throw new Error(`코멘트가 ${MAX_COMMENTS}개에 닿았습니다. 정리(resolved)한 뒤 다시 달아 주세요.`);
   const title = p.cases().find((c) => c.id === a.case)?.title ?? a.case;
   const c: Comment = {
     id: "C" + String(list.length + 1).padStart(3, "0"), case: a.case, ...(target.ref ? { ref: target.ref } : {}), title, round: a.round ?? p.rounds().at(-1)?.id,

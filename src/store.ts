@@ -95,9 +95,10 @@ export class Project {
   rounds(): RoundMeta[] {
     const d = this.p("rounds");
     if (!existsSync(d)) return [];
+    // 글자 순서로 두면 R100 이 R11 앞에 온다 — 번호 순서로 정렬한다
     return readdirSync(d)
       .filter((n) => /^R\d+$/.test(n))
-      .sort()
+      .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
       .map((n) => this.readJson<RoundMeta | null>(`rounds/${n}/meta.json`, null))
       .filter((x): x is RoundMeta => !!x);
   }

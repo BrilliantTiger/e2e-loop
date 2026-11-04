@@ -249,6 +249,25 @@ export function excludedRows(results: CaseResult[], symptomOf: (r: CaseResult) =
  * 챕터마다 같은 줄 반복(T): 같은 (화면, 요소, 동작, 사유)가 여러 챕터에서 나왔으면 한 줄로 합친다(예: 같은 모달의 같은 두 줄이 C9C·C9B2 에서 되풀이).
  * 합친 줄의 사유는 T 이고 원래 사유(origKind)와 챕터들을 남긴다. 번호는 다시 매긴다.
  */
+function tText(chapters: string[], base: Pick<ExcludedRow, "reason" | "action" | "note">): Pick<ExcludedRow, "reason" | "action" | "note"> {
+  return {
+    reason: `T ${EXCLUDED_LABEL.T}(챕터 ${chapters.join("·")}): ${base.reason}`,
+    action: `${EXCLUDED_ACTION.T} — ${base.action}`,
+    note: `${base.note} · 챕터 ${chapters.length}곳에서 같은 줄`,
+  };
+}
+
+/** T 줄의 사유·처리·비고에서 T 머리말을 걷어 원래 사유의 글로 */
+function untText(x: ExcludedRow): Pick<ExcludedRow, "reason" | "action" | "note"> {
+  if (x.kind !== "T" || !x.chapters) return { reason: x.reason, action: x.action, note: x.note };
+  const t = tText(x.chapters, { reason: "", action: "", note: "" });
+  return {
+    reason: x.reason.startsWith(t.reason) ? x.reason.slice(t.reason.length) : x.reason,
+    action: x.action.startsWith(t.action) ? x.action.slice(t.action.length) : x.action,
+    note: x.note.endsWith(t.note) ? x.note.slice(0, -t.note.length) : x.note,
+  };
+}
+
 function mergeAcrossChapters(rows: ExcludedRow[], round: string): ExcludedRow[] {
   const groups = new Map<string, ExcludedRow[]>();
   for (const x of rows) {
@@ -270,9 +289,7 @@ function mergeAcrossChapters(rows: ExcludedRow[], round: string): ExcludedRow[] 
       kind: "T",
       origKind: first.kind,
       key: `T\u0001${k}`,
-      reason: `T ${EXCLUDED_LABEL.T}(챕터 ${chapters.join("·")}): ${first.reason}`,
-      action: `${EXCLUDED_ACTION.T} — ${first.action}`,
-      note: `${first.note} · 챕터 ${chapters.length}곳에서 같은 줄`,
+      ...tText(chapters, first),
     };
     merged.set(first, row);
     for (const x of list.slice(1)) merged.set(x, null);
@@ -313,13 +330,20 @@ export interface ExcludedAllRow extends ExcludedRow {
   lastRound: string;
 }
 
-/** 라운드별 제외 줄(오래된 라운드부터)을 같은 key 끼리 합친다. 번호는 처음 나온 번호를 유지하고 횟수는 더한다. */
+/**
+ * 라운드별 제외 줄(오래된 라운드부터)을 같은 key 끼리 합친다. 번호는 처음 나온 번호를 유지하고 횟수는 더한다.
+ * 챕터를 넘어 합치는 사유(T 와 그 원래 사유)는 챕터와 상관없는 (화면, 요소, 동작, 원래 사유)로 합친다 — 어느 라운드에는 두 챕터(T), 다른 라운드에는 한 챕터에만 나와도 같은 줄이 한 줄에 쌓인다.
+ * 합친 챕터가 둘 이상이면 T 줄로 두고 챕터·사유·비고를 다시 쓴다.
+ */
 export function mergeExcludedAcross(perRound: { round: string; rows: ExcludedRow[] }[]): ExcludedAllRow[] {
   const out = new Map<string, ExcludedAllRow>();
   for (const { round, rows } of perRound) {
     for (const x of rows) {
       if (!x.key) continue; // key 가 없는 옛 형식 줄은 합치지 않는다
-      const hit = out.get(x.key);
+      const base = x.kind === "T" ? x.origKind : x.kind;
+      const across = !!base && ACROSS_CHAPTERS.has(base);
+      const key = across ? ["T", x.screen, x.element, x.verb, base].join("\u0001") : x.key;
+      const hit = out.get(key);
       if (hit) {
         hit.count += x.count;
         hit.cases = [...new Set([...hit.cases, ...x.cases])];
@@ -329,8 +353,15 @@ export function mergeExcludedAcross(perRound: { round: string; rows: ExcludedRow
         hit.reason = x.reason;
         hit.evidence = x.evidence ?? hit.evidence;
       } else {
-        out.set(x.key, { ...x, cases: [...x.cases], rounds: [round], lastRound: round });
+        out.set(key, { ...x, key, cases: [...x.cases], rounds: [round], lastRound: round });
       }
+      if (!across) continue;
+      // 챕터를 모으고, 가장 최근 줄의 원래 사유로 챕터·사유·처리·비고를 다시 쓴다
+      const row = out.get(key)!;
+      const chapters = [...new Set([...(hit ? (hit.chapters ?? [hit.chapter]) : []), ...(x.chapters ?? [x.chapter])])];
+      const b = untText(x);
+      if (chapters.length >= 2) Object.assign(row, { kind: "T", origKind: base, chapter: chapters.join("·"), chapters }, tText(chapters, b));
+      else Object.assign(row, { chapter: chapters[0] ?? x.chapter }, b);
     }
   }
   return [...out.values()];

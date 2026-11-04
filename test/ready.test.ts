@@ -82,3 +82,18 @@ test("준비 신호 등록: api 와 sel 중 하나, 상한은 양수만 받는�
   expect(out.errors.length).toBe(4);
   expect(out.added).toBe(2);
 });
+
+test("준비 신호가 여럿이면 상한은 신호마다 센다 — 앞 신호를 기다린 시간이 뒤 신호의 상한을 먹지 않는다", async () => {
+  const t0 = Date.now();
+  const page = { count: async () => 1, isVisible: async () => true, text: async (s: string) => (s === "#a" ? (Date.now() - t0 > 600 ? "끝" : "세는 중") : Date.now() - t0 > 800 ? "끝" : "세는 중") };
+  const ready = [{ name: "A", sel: "#a", text: "끝", timeoutSec: 60, pollMs: 50 }, { name: "B", sel: "#b", text: "끝", timeoutSec: 0.5, pollMs: 50 }];
+  // B 는 A 가 온 뒤 0.2초 만에 온다 — B 의 상한(0.5초) 안이다
+  const msg = await waitReady(page as any, { baseUrl: "http://fake/" } as any, { ready });
+  expect(msg).toContain("「A」 「B」 확인");
+  // B 가 제 상한 안에 안 오면 여전히 NA(M)
+  const t1 = Date.now();
+  const slow = { count: async () => 1, isVisible: async () => true, text: async (s: string) => (s === "#a" ? "끝" : Date.now() - t1 > 5000 ? "끝" : "세는 중") };
+  const e = await waitReady(slow as any, { baseUrl: "http://fake/" } as any, { ready }).catch((x) => x);
+  expect(e.kind).toBe("M");
+  expect(e.message).toContain("「B」 가 1초 안에 오지 않음");
+});

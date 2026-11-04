@@ -45,3 +45,32 @@ test("등록 때 마지막 동작 뒤에 기대가 없으면 경고한다", () =
   const up = A.aCaseUpsert({ project: root, cases: [mk("X-9", pick)] });
   expect(up.warns.join("\n")).toContain("X-9: 마지막 동작 #3 뒤에 결과 기대가 없음");
 });
+
+test("type 을 빼고 등록해도(기본 spec) 등록 때 X 경고가 나온다 — 실행 때와 같은 기준", () => {
+  const root = mkdtempSync(join(tmpdir(), "e2e-loop-ux-"));
+  new Project(root).ensure();
+  const { type: _t, ...noType } = mk("X-10", pick);
+  const up = A.aCaseUpsert({ project: root, cases: [noType] });
+  expect(up.warns.join("\n")).toContain("X-10: 마지막 동작 #3 뒤에 결과 기대가 없음");
+});
+
+test("로그인 스텝(auth.setupSteps)의 누름은 케이스의 마지막 동작으로 세지 않는다 — 케이스의 동작은 그대로 센다", async () => {
+  const login: Step[] = [{ op: "goto", url: "/login" }, { op: "fill", sel: "#id", value: "tester" }, { op: "click", sel: "#login" }];
+  const ctx = fakeCtx({});
+  ctx.cfg.auth = { setupSteps: login };
+  const opened = await runCase(ctx, mk("X-11", [{ op: "goto", url: "/l2/datasets/1/keys" }]));
+  expect(opened.status).toBe("PASS");
+  expect(opened.toolError).toBeUndefined();
+  const ctx2 = fakeCtx({});
+  ctx2.cfg.auth = { setupSteps: login };
+  const own = await runCase(ctx2, mk("X-12", pick));
+  expect(own.toolError?.kind).toBe("X");
+  expect(own.reason).toContain("클릭 #save");
+});
+
+test("allow-errors 케이스에서 JS 오류가 함께 나와도 X 가 지워져 PASS 로 남지 않는다", async () => {
+  const ctx = fakeCtx({ drain: async () => ({ console: [], pageErrors: ["TypeError: x is undefined"], failedRequests: [] }) });
+  const r = await runCase(ctx, { ...mk("X-13", pick), tags: ["allow-errors"] });
+  expect(r.status).toBe("NA");
+  expect(r.toolError?.kind).toBe("X");
+});

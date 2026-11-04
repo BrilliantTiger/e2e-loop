@@ -37,6 +37,18 @@ test("박힌 Dataset 전용 값 찾기: 따옴표로 감싼 값만, 여러 Datas
   expect(hardValuesIn({ op: "expect", sel: "#t", textContains: "tested" }, DS)).toEqual([]);
 });
 
+test("박힌 Dataset 전용 값 찾기: 스텝의 키 이름(value·text 등)은 Dataset 값과 같아도 박힌 값으로 보지 않는다", () => {
+  const ds: NonNullable<Config["datasets"]> = { 가: { values: { featureCols: ["value", "visit"] } }, 나: { values: { featureCols: ["score"] } } };
+  // 키 이름만 같은 것: 박힌 값 아님(이걸 박힌 값으로 보면 나 Dataset 의 진짜 FAIL 이 NA(P)로 숨는다)
+  expect(hardValuesIn({ op: "expect", sel: "#age", value: "42" }, ds)).toEqual([]);
+  expect(hardValuesIn({ op: "api", url: "/api/x", json: { value: 1 } }, ds)).toEqual([]);
+  // 글 값 전체이거나 글 안에 따옴표로 감싼 값은 지금처럼 박힌 값
+  expect(hardValuesIn({ op: "expect", sel: "#x", text: "visit" }, ds).map((h) => h.value)).toEqual(["visit"]);
+  expect(hardValuesIn({ op: "eval", script: "cols.includes('visit')", equals: true }, ds).map((h) => h.value)).toEqual(["visit"]);
+  expect(hardValuesIn({ op: "expect", sel: 'cell[col="value"][row="a.csv"]', text: "1" }, ds).map((h) => h.value)).toEqual(["value"]);
+  expect(hardValuesIn({ op: "collect", sel: "row=x", contains: ["visit"] }, ds).map((h) => h.value)).toEqual(["visit"]);
+});
+
 const mk = (id: string, dataset: string, script: string): Case => ({ id, title: id, type: "spec", source_ref: "기획서 1810", screen: "/handoff", feature: "Handoff 현황", chapter: "C18", dataset, steps: [{ op: "goto", url: "/handoff" }, { op: "eval", script, equals: [], basis: "POL-048" }] });
 
 test("다른 Dataset 의 예외 목록을 박은 판정식이 어긋나면 FAIL 이 아니라 NA(P), 설정에서 읽으면 이 Dataset 의 의도된 「안 보냄」이 통과", async () => {

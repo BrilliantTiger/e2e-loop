@@ -86,3 +86,40 @@ test("라운드 시작 전 점검: 남은 프로세스가 있으면 시작하지
   }
   expect(() => process.kill(shellPid, 0)).toThrow();
 });
+
+/** 띄운 프로세스(owner)가 살아 있는 표지 프로세스를 고아로 만든다. owner=1(launchd·init)은 늘 살아 있다 */
+async function liveOwnedOrphan() {
+  const starter = Bun.spawn(["/bin/sh", "-c", `nohup /bin/sh -c 'sleep 300; :' e2e-loop-owner=1 >/dev/null 2>&1 & echo $!`], { stdout: "pipe", stderr: "ignore" });
+  const pid = Number((await new Response(starter.stdout).text()).trim());
+  await Bun.sleep(300);
+  return pid;
+}
+
+test("끊기(cleanupStale)는 띄운 프로세스가 아직 살아 있는 브라우저(다른 라운드의 것)를 끊지 않는다", async () => {
+  const pid = await liveOwnedOrphan();
+  try {
+    const r = await cleanupStale(2147483000, (p) => p.pid === pid); // 시험이 띄운 것만 대상으로
+    expect(r.before).toBe(0);
+    expect(() => process.kill(pid, 0)).not.toThrow();
+  } finally {
+    await killTree(pid);
+  }
+});
+
+test("라운드 시작 전 점검: 다른 살아 있는 라운드의 브라우저면 이전 라운드가 남긴 것이라 하지 않고 시작하지 않으며, cleanup_browsers 로도 끊지 않는다", async () => {
+  const pid = await liveOwnedOrphan();
+  try {
+    const pf = await browserPreflight({});
+    expect(pf.ok).toBe(false);
+    if (!pf.ok) {
+      expect(pf.decision).toBeUndefined();
+      expect(pf.error).toContain("다른 라운드");
+      expect(pf.error).toContain(String(pid));
+    }
+    const again = await browserPreflight({ cleanupBrowsers: true });
+    expect(again.ok).toBe(false);
+    expect(() => process.kill(pid, 0)).not.toThrow(); // 끊지 않았다
+  } finally {
+    await killTree(pid);
+  }
+});

@@ -62,11 +62,19 @@ export interface HardValue {
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** 스텝의 글 값들(배열·객체 안까지). 키 이름은 넣지 않는다 — 키(value·text 등)가 Dataset 값과 같아도 박힌 값이 아니다 */
+function stringLeaves(v: unknown): string[] {
+  if (typeof v === "string") return [v];
+  if (Array.isArray(v)) return v.flatMap(stringLeaves);
+  if (v && typeof v === "object") return Object.values(v).flatMap(stringLeaves);
+  return [];
+}
+
 /** 스텝 하나에 따옴표로 박힌 Dataset 전용 값. 여러 Dataset 에 같이 있는 값은 「전용」이 아니라 세지 않는다 */
 export function hardValuesIn(step: Step, datasets: Config["datasets"]): HardValue[] {
   if (!datasets || !Object.keys(datasets).length) return [];
   const { basis: _b, name: _n, ...rest } = step;
-  const text = JSON.stringify(rest);
+  const texts = stringLeaves(rest);
   const owners = new Map<string, Set<string>>();
   for (const [name, d] of Object.entries(datasets)) for (const v of leaves(d.values)) owners.set(v, (owners.get(v) ?? new Set()).add(name));
   const out: HardValue[] = [];
@@ -74,8 +82,9 @@ export function hardValuesIn(step: Step, datasets: Config["datasets"]): HardValu
     for (const [key, val] of Object.entries(d.values ?? {})) {
       for (const v of leaves(val)) {
         if ((owners.get(v)?.size ?? 0) > 1) continue;
-        // 'te' · "te" · `te` · \"te\" 처럼 따옴표로 감싼 값만 본다(글자 조각이 우연히 겹친 것은 세지 않는다)
-        if (new RegExp(`(?:\\\\"|['"\`])${esc(v)}(?:\\\\"|['"\`])`).test(text)) out.push({ dataset: name, key, value: v });
+        // 글 값 전체가 그 값이거나, 글 안에서 'te' · "te" · `te` 처럼 따옴표로 감싼 값만 본다(글자 조각이 우연히 겹친 것은 세지 않는다)
+        const quoted = new RegExp(`['"\`]${esc(v)}['"\`]`);
+        if (texts.some((t) => t === v || quoted.test(t))) out.push({ dataset: name, key, value: v });
       }
     }
   }

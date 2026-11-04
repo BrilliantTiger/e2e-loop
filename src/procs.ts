@@ -110,15 +110,16 @@ export async function killTree(pid: number, graceMs = 1500): Promise<number[]> {
   return tree;
 }
 
-/** 이전 프로세스를 나무째 끊고 0개를 다시 확인한다 */
+/** 이전 프로세스를 나무째 끊고 0개를 다시 확인한다. 띄운 프로세스가 아직 살아 있는 것(다른 라운드의 브라우저)은 끊지 않는다 */
 export async function cleanupStale(selfPid: number = process.pid, only: (p: OwnedProc) => boolean = () => true): Promise<{ before: number; killed: number[]; after: OwnedProc[] }> {
-  const before = (await staleBrowserProcs(selfPid)).filter(only);
+  const leftover = (p: OwnedProc) => !p.ownerAlive && only(p);
+  const before = (await staleBrowserProcs(selfPid)).filter(leftover);
   const killed: number[] = [];
   // 가장 바깥(부모가 목록 안에 없는) 것부터 나무째 끊는다
   const pids = new Set(before.map((p) => p.pid));
   for (const p of before) if (!pids.has(p.ppid) && alive(p.pid)) killed.push(...(await killTree(p.pid)));
   for (const p of before) if (alive(p.pid)) killed.push(...(await killTree(p.pid)));
-  return { before: before.length, killed, after: (await staleBrowserProcs(selfPid)).filter(only) };
+  return { before: before.length, killed, after: (await staleBrowserProcs(selfPid)).filter(leftover) };
 }
 
 /** 이 프로세스가 띄운 것 중 남은 브라우저를 끊고 0개를 다시 확인한다(라운드가 끝난 뒤) */

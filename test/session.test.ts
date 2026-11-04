@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Project } from "../src/store.ts";
 import { agentCommand, checkWebUrl, intake, readSession, sessionStart } from "../src/session.ts";
-import { installSkills, skillSource } from "../src/env/skills.ts";
+import { copySkill, installSkills, skillSource } from "../src/env/skills.ts";
 import { doctor } from "../src/env/install.ts";
 import { aStatus } from "../src/actions.ts";
 import { precheck } from "../src/round.ts";
@@ -50,6 +50,20 @@ test("웹 주소가 열리면 ok, 닫혀 있거나 형식이 틀리면 이유와
   expect((await checkWebUrl("localhost:3000")).ok).toBe(false);
   expect((await checkWebUrl("ftp://x.test")).reason).toContain("http");
   expect((await checkWebUrl(undefined)).ok).toBe(false);
+});
+
+test("자체 서명 인증서의 https 개발 사이트도 열리는 주소로 본다(Playwright 의 ignoreHTTPSErrors 와 같게)", async () => {
+  const dir = tmp();
+  const gen = Bun.spawnSync(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "k.pem"), "-out", join(dir, "c.pem"), "-days", "1", "-subj", "/CN=localhost"], { stdout: "ignore", stderr: "ignore" });
+  expect(gen.exitCode).toBe(0);
+  const tls = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: { cert: Bun.file(join(dir, "c.pem")), key: Bun.file(join(dir, "k.pem")) }, fetch: () => new Response("ok") });
+  try {
+    const r = await checkWebUrl(`https://localhost:${tls.port}/`);
+    expect(r.reason).toBeUndefined();
+    expect(r.ok).toBe(true);
+  } finally {
+    tls.stop(true);
+  }
 });
 
 test("웹 주소만 있고 근거가 없으면 시작하지 않고 근거를 요청한다", async () => {
@@ -236,7 +250,10 @@ test("SKILL.md 가 있고(영어) 이름·설명 머리말과 동작 흐름 9단
   for (const t of ["endStates", "row=<row text>", "cell[col=", "data-testid", "waitFor", "basis", "`gate` step", "Rehearsal", "tool errors are 0", "excluded_issues.tsv", "issues N, tool errors (NA) M", "Do not report a tool error"]) expect(text).toContain(t);
   for (const t of ["A, waiting for a state that never comes", "B, reusing a row number", "C, finding an element", "D, reading before the screen is drawn", "E, an expectation that differs"]) expect(text).toContain(t);
   // 2차 반영: 원인 F·G, 긴 계산 대기, 누르기 전 대기, 토스트, 쪽 넘김, 문구 대조, 시트 설계, 브라우저 프로세스 점검, 반복 한도
-  for (const t of ["Twenty causes are known (A to G, L, M, N, O, P, Q, R, S, T, U, V, W, and X)", "X, a pass with nothing checked", "pass with nothing checked", "W, reading a typed or chosen value as screen text", "checked by field value", "A wrong address (C)", "\"status\": 404", "V, a login that expires during the round", "authLoginPath", "login expired", "T, the same failing row in several chapters", "S, an expectation based on the screen design rather than the plan", "\"differs\"", "R, a prior chapter that ended with a tool error", "retest=true", "Test conditions (part of F)", "test condition not met", "Q, an expectation that contradicts what the dataset has", "`when`", "P, a dataset-only exception list written into the judgement", "{{dataset.<name>}}", "e2e_dataset", "U, a freeze on opening a screen that does not come back", "freeze not reproduced", "O, a freeze measured in a hidden window", "measurement invalid, window covered", "never pulls the test window to the front", "N, two chapters running at once on the same tab or dataset", "concurrent run refused", "M, pressing while the server is still computing", "\"ready\"", "L, ending a wait as \"no change\" while the server is still working", "wait.progress", "F, pressing on after an earlier step failed", "G, comparing a cut string", "`prereq`", "4th ends the chapter", "panelTitle", "maxWaitSec", "720", "waitGone", "waitEnabled", "Toasts (D)", "server effect", "`collect`", "pop()", "Quote check", "Sheet design", "single version", "V2, V3", "cleanup_browsers", "repeatLimit", "with the cause A to G, L, M, or N", "Chapters that depend on each other (H, not a tool error)", "blocked by a prior defect", "`requires`", "E carried over", "기대 수정 필요", "n회째", "prerequisite not finished", "`<round>-X-<NN>`", "excluded_all.tsv"]) expect(text).toContain(t);
+  for (const t of ["Twenty causes are known (A to G, L, M, N, O, P, Q, R, S, T, U, V, W, and X)", "X, a pass with nothing checked", "pass with nothing checked", "W, reading a typed or chosen value as screen text", "checked by field value", "A wrong address (C)", "\"status\": 404", "V, a login that expires during the round", "authLoginPath", "login expired", "T, the same failing row in several chapters", "S, an expectation based on the screen design rather than the plan", "\"differs\"", "R, a prior chapter that ended with a tool error", "retest=true", "Test conditions (part of F)", "test condition not met", "Q, an expectation that contradicts what the dataset has", "`when`", "P, a dataset-only exception list written into the judgement", "{{dataset.<name>}}", "e2e_dataset", "U, a freeze on opening a screen that does not come back", "freeze not reproduced", "O, a freeze measured in a hidden window", "measurement invalid, window covered", "never pulls the test window to the front", "N, two chapters running at once on the same tab or dataset", "concurrent run refused", "M, pressing while the server is still computing", "\"ready\"", "L, ending a wait as \"no change\" while the server is still working", "wait.progress", "F, pressing on after an earlier step failed", "G, comparing a cut string", "`prereq`", "4th ends the chapter", "panelTitle", "maxWaitSec", "720", "waitGone", "waitEnabled", "Toasts (D)", "server effect", "`collect`", "pop()", "Quote check", "Sheet design", "single version", "V2, V3", "cleanup_browsers", "repeatLimit", "Chapters that depend on each other (H, not a tool error)", "blocked by a prior defect", "`requires`", "E carried over", "기대 수정 필요", "n회째", "prerequisite not finished", "`<round>-X-<NN>`", "excluded_all.tsv"]) expect(text).toContain(t);
+  // 제외 시트의 사유 목록은 코드가 실제로 쓰는 사유(도구 오류·측정·H·T)와 같아야 한다
+  for (const t of ["with the cause A to G, L, M, N, P, Q, R, S, V, or X (tool error), O or U (freeze measurement only, counted apart from tool errors), H (blocked by a prior defect), or T (the same row repeated in several chapters)", "Mark the cause (A to G, L, M, N, P, Q, R, S, V, or X)"]) expect(text).toContain(t);
+  for (const t of ["A to G, L, M, or N (tool error)", "Mark the cause as A, B, C, D, E, F, or G"]) expect(text).not.toContain(t);
   expect(text.indexOf("Quote check")).toBeGreaterThan(text.indexOf("E, an expectation that differs"));
   expect(text.indexOf("Quote check")).toBeLessThan(text.indexOf("F, pressing on"));
   expect(text.indexOf("#### Rehearsal")).toBeGreaterThan(text.indexOf("### 6. "));
@@ -270,6 +287,20 @@ test("클라이언트가 없으면 건너뛰고, 같은 이름의 실제 폴더�
   expect(conflict[0]!.action).toBe("conflict");
   expect(lstatSync(join(home, ".claude/skills/e2e-loop")).isSymbolicLink()).toBe(false);
   expect(readFileSync(join(home, ".claude/skills/e2e-loop/mine.txt"), "utf8")).toBe("내 것");
+});
+
+test("링크가 안 돼 복사한 스킬 폴더에는 표지가 남고, 다시 설치하면 새로 바꾼다(표지 없는 사용자 폴더는 그대로)", () => {
+  const home = tmp();
+  const bin = tmp();
+  stub(bin, "claude", "exit 0");
+  const path = join(home, ".claude/skills/e2e-loop");
+  mkdirSync(join(home, ".claude/skills"), { recursive: true });
+  copySkill(skillSource(), path);
+  expect(existsSync(join(path, "SKILL.md"))).toBe(true);
+  writeFileSync(join(path, "SKILL.md"), "옛 복사본");
+  const r = installSkills({ env: envWith(bin), home });
+  expect(r[0]!.action).not.toBe("conflict");
+  expect(readFileSync(join(path, "SKILL.md"), "utf8")).toBe(readFileSync(join(skillSource(), "SKILL.md"), "utf8"));
 });
 
 test("옛 위치를 가리키는 링크는 새 위치로 바꾼다", () => {

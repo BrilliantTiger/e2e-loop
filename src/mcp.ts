@@ -192,7 +192,7 @@ server.registerTool("e2e_complete_check", {
 server.registerTool("e2e_feedback", {
   title: "사용자의 E2E 요청 기록",
   description: "사용자가 E2E 에 관해 말한 요청(케이스 추가·기대값 변경·범위 변경 등)을 기록한다. 기본은 '진행 중인 회차는 건드리지 않고 다음 회차부터 적용'. 사용자가 '지금 회차부터 적용하라'고 한 경우에만 apply='now' 로 부르고, 그러면 처음부터 다시 돌릴지(restart) 지금 흐름에서 적용할지(in-flow) 먼저 사용자에게 물어보라는 needs_decision 이 돌아온다. 답을 받으면 mode 와 함께 다시 호출한다. in-flow 에서는 cases 에 끼워 넣을 케이스를 준다.",
-  inputSchema: { project, text: z.string(), apply: z.enum(["next", "now"]).optional(), mode: z.enum(["restart", "in-flow"]).optional(), cases: z.array(caseShape).optional() },
+  inputSchema: { project, text: z.string(), apply: z.enum(["next", "now"]).optional(), mode: z.enum(["restart", "in-flow", "next"]).optional(), cases: z.array(caseShape).optional() },
 }, wrap(A.aFeedback as any));
 
 server.registerTool("e2e_feedback_resolve", {

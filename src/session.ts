@@ -48,7 +48,9 @@ const EVIDENCE_KINDS = new Set<string>(["plan", "design", "feature-spec", "code"
 export const readSession = (p: Project) => p.readJson<SessionState | null>("session.json", null);
 export const readIntake = (p: Project) => p.readJson<IntakeState>("intake.json", { updatedAt: "" });
 
-const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+/** 셸 인자 감싸기(작은따옴표): $·백틱·공백이 풀리지 않는다 */
+export const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+const q = shq;
 
 // ---------- 웹 주소 / 근거 ----------
 
@@ -70,7 +72,8 @@ export async function checkWebUrl(raw: string | undefined, timeoutMs = 8000): Pr
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") return { value: raw, ok: false, reason: "http 또는 https 주소만 쓸 수 있습니다." };
   try {
-    const res = await fetch(u, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+    // 인증서 검사는 하지 않는다: 시험 브라우저(Playwright ignoreHTTPSErrors)도 자체 서명 개발 사이트를 연다
+    const res = await fetch(u, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs), tls: { rejectUnauthorized: false } });
     await res.body?.cancel();
     if (res.status < 400 || res.status === 401 || res.status === 403) return { value: raw, ok: true, status: res.status };
     return { value: raw, ok: false, status: res.status, reason: `응답 코드 ${res.status} — 주소가 틀렸거나 사이트가 정상이 아닙니다.` };

@@ -9,13 +9,15 @@ export interface ClientState {
   name: string;
   bin: string | null;
   registered: boolean | null;
+  /** 등록돼 있으면 그 명령과 인자(`mcp get` 의 command·args 줄). 읽지 못하면 없음 */
+  registeredCommand?: string;
   /** 컴퓨터 제어 MCP 가 목록에 보이면 true. 안 보이면 null(내장 기능은 목록에 안 나올 수 있어 "없음"으로 단정하지 않는다) */
   computerUse: boolean | null;
 }
 
 export interface RegisterResult {
   client: ClientId;
-  action: "added" | "already" | "skipped" | "planned" | "failed";
+  action: "added" | "updated" | "already" | "skipped" | "planned" | "failed";
   command?: string[];
   detail: string;
 }
@@ -28,20 +30,28 @@ export function serverCommand(): string[] {
   return [bun, join(import.meta.dir, "../mcp.ts")];
 }
 
+/** `claude mcp get`(Command:/Args:)·`codex mcp get`(command:/args:) 출력에서 등록된 명령과 인자를 읽는다 */
+export function registeredCommandOf(out: string): string | undefined {
+  const cmd = /^\s*command:[ \t]*(.+)$/im.exec(out)?.[1]?.trim();
+  if (!cmd) return undefined;
+  const args = /^\s*args:[ \t]*(.*)$/im.exec(out)?.[1]?.trim() ?? "";
+  return [cmd, args].filter(Boolean).join(" ");
+}
+
 export async function detectClients(env: Env = process.env): Promise<ClientState[]> {
   const out: ClientState[] = [];
   const claude = which("claude", env);
   if (claude) {
     const got = await run([claude, "mcp", "get", SERVER_NAME], { env, timeoutMs: 30000 });
     const list = await run([claude, "mcp", "list"], { env, timeoutMs: 60000 });
-    out.push({ id: "claude", name: "Claude Code", bin: claude, registered: got.code === 0, computerUse: list.code === 0 && /computer-use/i.test(list.out) ? true : null });
+    out.push({ id: "claude", name: "Claude Code", bin: claude, registered: got.code === 0, registeredCommand: got.code === 0 ? registeredCommandOf(got.out) : undefined, computerUse: list.code === 0 && /computer-use/i.test(list.out) ? true : null });
   } else out.push({ id: "claude", name: "Claude Code", bin: null, registered: null, computerUse: null });
 
   const codex = which("codex", env);
   if (codex) {
     const got = await run([codex, "mcp", "get", SERVER_NAME], { env, timeoutMs: 30000 });
     const list = await run([codex, "mcp", "list"], { env, timeoutMs: 30000 });
-    out.push({ id: "codex", name: "Codex", bin: codex, registered: got.code === 0, computerUse: list.code === 0 && /computer-use/i.test(list.out) ? true : null });
+    out.push({ id: "codex", name: "Codex", bin: codex, registered: got.code === 0, registeredCommand: got.code === 0 ? registeredCommandOf(got.out) : undefined, computerUse: list.code === 0 && /computer-use/i.test(list.out) ? true : null });
   } else out.push({ id: "codex", name: "Codex", bin: null, registered: null, computerUse: null });
   return out;
 }
@@ -56,17 +66,26 @@ export async function registerE2eLoop(opts: { env?: Env; dryRun?: boolean } = {}
       results.push({ client: c.id, action: "skipped", detail: `${c.name} 가 설치되어 있지 않아 건너뜀` });
       continue;
     }
-    if (c.registered) {
+    // 등록은 있는데 명령·인자가 지금 설치와 다르면(저장소를 옮기거나 다시 받음) 옛 등록을 지우고 다시 등록한다.
+    // 등록 내용을 읽지 못하면 그대로 둔다
+    const stale = !!c.registered && !!c.registeredCommand && c.registeredCommand !== server.join(" ");
+    if (c.registered && !stale) {
       results.push({ client: c.id, action: "already", detail: `${c.name} 에 이미 등록되어 있음` });
       continue;
     }
     const cmd = c.id === "claude" ? [c.bin, "mcp", "add", SERVER_NAME, "-s", "user", "--", ...server] : [c.bin, "mcp", "add", SERVER_NAME, "--", ...server];
+    const remove = c.id === "claude" ? [c.bin, "mcp", "remove", SERVER_NAME, "-s", "user"] : [c.bin, "mcp", "remove", SERVER_NAME];
     if (opts.dryRun) {
-      results.push({ client: c.id, action: "planned", command: cmd, detail: `${c.name} 에 등록할 예정(dry-run)` });
+      results.push({ client: c.id, action: "planned", command: cmd, detail: stale ? `${c.name} 의 옛 등록(${c.registeredCommand})을 지우고 다시 등록할 예정(dry-run)` : `${c.name} 에 등록할 예정(dry-run)` });
       continue;
     }
+    if (stale) await run(remove, { env, timeoutMs: 60000 });
     const r = await run(cmd, { env, timeoutMs: 60000 });
-    results.push(r.code === 0 ? { client: c.id, action: "added", command: cmd, detail: `${c.name} 에 등록했다. 새 세션부터 e2e_* 도구가 보인다.` } : { client: c.id, action: "failed", command: cmd, detail: `${c.name} 등록 실패: ${r.out.slice(-200)}` });
+    results.push(
+      r.code === 0
+        ? { client: c.id, action: stale ? "updated" : "added", command: cmd, detail: stale ? `${c.name} 의 옛 등록(${c.registeredCommand})을 지우고 다시 등록했다. 새 세션부터 바뀐 경로로 뜬다.` : `${c.name} 에 등록했다. 새 세션부터 e2e_* 도구가 보인다.` }
+        : { client: c.id, action: "failed", command: cmd, detail: `${c.name} 등록 실패: ${r.out.slice(-200)}` },
+    );
   }
   return results;
 }
