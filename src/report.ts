@@ -42,6 +42,7 @@ export function trend(project: Project, upTo?: RoundMeta, upToResults?: CaseResu
   const rows: TrendRow[] = [];
   for (const r of project.rounds()) {
     if (r.status === "running" && r.id !== upTo?.id) continue;
+    if (upTo && r.n > upTo.n) continue; // 앞 라운드의 보고서를 다시 쓸 때 뒤 라운드가 섞이지 않게
     const res = r.id === upTo?.id && upToResults ? upToResults : project.readJson<CaseResult[]>(`rounds/${r.id}/results.json`, []);
     const cfg = project.config();
     const fail = res.filter((x) => x.status === "FAIL").length;

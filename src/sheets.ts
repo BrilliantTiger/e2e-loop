@@ -7,6 +7,7 @@ import { loadAnalyses } from "./analysis/store.ts";
 import { isIssue } from "./issues.ts";
 import { coverage } from "./coverage.ts";
 import { diffWithPrevious, fixHint, trend } from "./report.ts";
+import { FLOW_CSS, flowChartSvg, issueFlow, issueHistoryHtml } from "./charts.ts";
 import { readComments, type Comment } from "./comments.ts";
 import { describeRetest, readRetest } from "./retest.ts";
 import { basisText, hasBasis } from "./basis.ts";
@@ -443,7 +444,7 @@ export function renderHuman(project: Project, meta: RoundMeta, verdict: string, 
         .join("")}</details>`;
     })
     .join("\n");
-  const maxIssues = Math.max(1, ...tr.map((t) => t.issues));
+  const flow = issueFlow(project, meta, results);
   const list = (ids: string[]) => (ids.length ? ids.map(esc).join(", ") : "없음");
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>E2E ${meta.id} 결과</title>
 <style>
@@ -461,7 +462,7 @@ details.case,details.screen{border:1px solid var(--line);border-radius:8px;margi
 table.steps{border-collapse:collapse;width:100%;font-size:13px}.steps td,.steps th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
 tr.fail td{color:var(--fail);font-weight:600}tr.err td{color:var(--fail);font-size:12px}tr.skip td{color:var(--mut)}tr.api td{color:var(--mut);font-size:12px}.steps img{height:54px;border-radius:4px;border:1px solid var(--line)}
 .warn li{color:var(--warn)}.sig li{color:var(--mut);font-size:12px}code{background:var(--card);padding:1px 5px;border-radius:4px}
-.trend{display:flex;gap:14px;align-items:flex-end;margin:8px 0 8px}.tb{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12px}.bar{width:28px;border-radius:4px 4px 0 0}
+${FLOW_CSS}
 table.tt{border-collapse:collapse;font-size:13px;margin-bottom:16px}.tt td,.tt th{border:1px solid var(--line);padding:3px 10px;text-align:right}.tt th:first-child,.tt td:first-child{text-align:left}
 .tw{background:#fff3cd;color:#664d03;border:1px solid #ffe69c;padding:8px 12px;border-radius:8px;margin:12px 0}
 .task{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:6px 0;background:var(--card)}
@@ -471,8 +472,10 @@ table.tt{border-collapse:collapse;font-size:13px;margin-bottom:16px}.tt td,.tt t
 ${meta.error ? `<div class="tw">⚠ ${esc(meta.error)}</div>` : ""}${(meta.evidenceWarnings ?? []).map((w) => `<div class="tw">증거: ${esc(w)}</div>`).join("")}
 <div class="cards"><div class="card"><b style="color:var(--pass)">${s.PASS}</b>통과</div><div class="card"><b style="color:var(--fail)">${s.FAIL}</b>실패</div><div class="card"><b>${s.FLAKY}</b>불안정</div><div class="card"><b>${s.BLOCKED}</b>검증 못 함</div><div class="card"><b>${s.SKIP}</b>스킵</div><div class="card"><b>${s.NA - toolErrorCount(results) - blockedCount(results)}</b>해당 없음</div><div class="card"><b>${toolErrorCount(results)}</b>도구 오류(NA)</div><div class="card"><b>${blockedCount(results)}</b>선행 결함에 막힘(H)</div>${measureInvalidCount(results) ? `<div class="card"><b>${measureInvalidCount(results)}</b>측정 무효(O)</div>` : ""}<div class="card"><b>${s.total}</b>전체</div><div class="card"><b>${warned.length}</b>경고</div></div>
 <h2>이슈 추이 <small class="meta">(이슈 = 실패 + 불안정 + 검증 못 한 것, 스킵은 제외. 0 이 되면 종료)</small></h2>
-<div class="trend">${tr.map((t) => `<div class="tb"><div class="bar" style="height:${Math.round(6 + (t.issues / maxIssues) * 80)}px;background:${t.issues ? "var(--fail)" : "var(--pass)"}"></div><b>${t.issues}</b><span>${t.round}${t.scope === "partial" ? "·부분" : ""}</span></div>`).join("")}</div>
-<table class="tt"><tr><th>라운드</th><th>이슈</th><th>실패</th><th>불안정</th><th>검증 못 함</th><th>스킵</th><th>도구 오류(NA)</th><th>선행 결함에 막힘</th><th>통과</th><th>전체</th></tr>${tr.map((t) => `<tr><td>${t.round}${t.scope === "partial" ? " (부분)" : ""}</td><td><b>${t.issues}</b></td><td>${t.fail}</td><td>${t.flaky}</td><td>${t.blocked}</td><td>${t.skip}</td><td>${t.toolError}</td><td>${t.blockedByDefect}</td><td>${t.pass}</td><td>${t.total}</td></tr>`).join("")}</table>
+${flowChartSvg(flow.rounds)}
+<div style="overflow-x:auto"><table class="tt"><tr><th>라운드</th><th>이슈</th><th>실패</th><th>불안정</th><th>검증 못 함</th><th>스킵</th><th>도구 오류(NA)</th><th>선행 결함에 막힘</th><th>통과</th><th>전체</th></tr>${tr.map((t) => `<tr><td>${t.round}${t.scope === "partial" ? " (부분)" : ""}</td><td><b>${t.issues}</b></td><td>${t.fail}</td><td>${t.flaky}</td><td>${t.blocked}</td><td>${t.skip}</td><td>${t.toolError}</td><td>${t.blockedByDefect}</td><td>${t.pass}</td><td>${t.total}</td></tr>`).join("")}</table></div>
+<h2>이슈 목록 — 라운드별 이력 <small class="meta">(이 라운드까지 한 번이라도 이슈였던 케이스)</small></h2>
+${issueHistoryHtml(flow)}
 ${diff.prev ? `<h2>이전 라운드(${diff.prev})와 비교</h2><p>고쳐짐: ${list(diff.fixed)}<br>새로 깨짐: ${list(diff.regressed)}<br>계속 실패: ${list(diff.stillFailing)}<br>새 케이스: ${diff.newCases.length}건</p>` : ""}
 ${applied.length ? `<h2>이 라운드에 반영한 사용자 요청 ${applied.length}건</h2><ul>${applied.map((f) => `<li>${esc(f.id)} ${esc(f.text)}${f.appliesTo === "now-in-flow" ? " (라운드 도중에 적용)" : ""}</li>`).join("")}</ul>` : ""}${meta.pendingFeedback?.length ? `<div class="tw">이 라운드 시작 때 아직 반영되지 않은 요청 ${meta.pendingFeedback.length}건: ${meta.pendingFeedback.map((f) => esc(f.id + " " + f.text)).join(" / ")}</div>` : ""}${meta.injected?.length ? `<div class="tw">라운드 도중 끼워 넣은 케이스 ${meta.injected.length}건: ${meta.injected.map(esc).join(", ")}</div>` : ""}
 <h2>이슈 ${issues.length}건</h2>

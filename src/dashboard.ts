@@ -5,6 +5,7 @@ import { normalize, resolve, sep } from "node:path";
 import { Project } from "./store.ts";
 import type { CaseResult, RoundMeta } from "./types.ts";
 import { trend } from "./report.ts";
+import { FLOW_CSS, flowChartSvg, issueFlow, issueHistoryHtml } from "./charts.ts";
 import { runningRound } from "./round.ts";
 import { isIssue } from "./issues.ts";
 import { addComment, notifyTester, readComments } from "./comments.ts";
@@ -47,6 +48,11 @@ function state(project: Project, roundId?: string, role: "owner" | "viewer" = "v
     results: results.map((r) => ({ id: r.id, title: r.title, status: r.status, reason: r.reason, warnings: r.warnings.length, ms: r.durationMs, video: r.video, priority: r.priority })),
     events,
     trend: trend(project),
+    // 이슈 흐름 그래프와 이슈 목록(라운드별 이력): 보고서와 같은 그림을 서버에서 만들어 보낸다(끝난 라운드만)
+    flow: (() => {
+      const f = issueFlow(project);
+      return { chart: flowChartSvg(f.rounds), history: issueHistoryHtml(f) };
+    })(),
     feedback: project.feedback().filter((f) => f.status === "pending"),
     hasReport: !!cur && existsSync(project.p("rounds", cur.id, "report.html")),
     notice: "영상과 스크린샷에 화면이 그대로 남습니다. 테스트 데이터와 테스트 계정만 입력하세요.",
@@ -237,7 +243,7 @@ main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;p
 #feed{max-height:260px;overflow:auto;font:12px/1.5 ui-monospace,Menlo,monospace}#feed div{padding:1px 0;border-bottom:1px dotted var(--line)}
 .ok{color:var(--pass)}.fail{color:var(--fail)}.skip{color:var(--skip)}table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 .s{font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;color:#fff}.s.PASS{background:var(--pass)}.s.FAIL{background:var(--fail)}.s.SKIP,.s.NA,.s.BLOCKED{background:var(--skip)}
-.tr{display:flex;gap:10px;align-items:flex-end;height:90px}.tb{display:flex;flex-direction:column;align-items:center;font-size:11px;gap:2px}.tb i{width:22px;border-radius:3px 3px 0 0;display:block}
+${FLOW_CSS}
 .fb{background:#fff3cd;color:#664d03;border-radius:6px;padding:6px 10px;margin-top:6px;font-size:12px}a{color:var(--acc)}
 .wide{grid-column:1/-1}.tabs button.on{background:var(--acc);color:#fff}.badge{background:var(--acc);color:#fff;border-radius:99px;padding:1px 8px;font-size:11px;font-weight:700}.badge.ins{background:var(--warn)}.cm.own{border-left-color:var(--acc)}.inst{display:flex;align-items:center;gap:4px;font-size:12px;margin:4px 0;white-space:nowrap}.cf input[type=checkbox]{width:auto}.cmrow td{background:var(--card)}.cm{border-left:3px solid var(--line);padding:2px 10px;margin:6px 0}.cm .rp{margin:4px 0 4px 14px;border-left:3px solid var(--acc);padding-left:8px}.cm .txt{white-space:pre-wrap}.mut{color:var(--mut);font-size:12px}.cf{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;margin-top:6px}.cf textarea{flex:1;min-width:240px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:inherit}.cf input{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;width:120px}.note{background:#fff3cd;color:#664d03;padding:6px 16px;font-size:12px}.s.FLAKY{background:var(--warn)}.s.BLOCKED{background:var(--fail)}
 </style></head><body>
@@ -248,8 +254,9 @@ main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;p
 <div class="cnt"><div><b id="cp" class="ok">0</b>통과</div><div><b id="cf" class="fail">0</b>이슈</div><div><b id="cs">0</b>스킵·해당 없음</div><div><b id="ct" style="color:var(--warn)">0</b>도구 오류(NA)</div><div><b id="cb" style="color:var(--warn)">0</b>선행 결함에 막힘</div><div><b id="cw" style="color:var(--warn)">0</b>경고</div></div>
 <div id="cur" style="font-weight:600"></div><div id="fbs"></div></section>
 <section class="card live"><h2>지금 화면</h2><img id="live" alt="아직 화면이 없습니다"></section>
-<section class="card"><h2>이슈 추이 (0 에 수렴하면 종료)</h2><div class="tr" id="tr"></div></section>
+<section class="card"><h2>이슈 흐름 (라운드별 · 0 에 수렴하면 종료)</h2><div id="tr"></div></section>
 <section class="card"><h2>실시간 로그</h2><div id="feed"></div></section>
+<section class="card wide"><h2>이슈 목록 — 라운드별 이력</h2><div id="hist"></div></section>
 <section class="card wide"><h2>케이스 <span class="tabs"><button data-f="all" class="on">전체</button> <button data-f="issue">이슈</button> <button data-f="PASS">통과</button> <button data-f="other">스킵·기타</button></span></h2><table><thead><tr><th>상태</th><th>케이스</th><th>사유</th><th>영상</th></tr></thead><tbody id="rows"></tbody></table></section>
 </main>
 <script>
@@ -267,7 +274,7 @@ const pr=s.progress;$('bar').style.width=pr.total?Math.round(pr.done/pr.total*10
 $('cur').textContent=s.running&&pr.current?'▶ '+pr.current.id+' '+pr.current.title:'';
 $('fbs').innerHTML=(s.feedback||[]).map(f=>'<div class="fb">다음 회차에 적용할 요청 '+esc(f.id)+': '+esc(f.text)+'</div>').join('');
 if(s.round){$('live').src='/files/'+s.round.id+'/live.png?t='+Date.now()}
-const mx=Math.max(1,...s.trend.map(t=>t.issues));$('tr').innerHTML=s.trend.map(t=>'<div class="tb"><b>'+t.issues+'</b><i style="height:'+(4+t.issues/mx*60)+'px;background:'+(t.issues?'var(--fail)':'var(--pass)')+'"></i>'+t.round+(t.scope==='partial'?'·부분':'')+'</div>').join('')||'<span style="color:var(--mut)">아직 끝난 회차 없음</span>';
+if($('tr').dataset.v!==s.flow.chart){$('tr').innerHTML=s.flow.chart;$('tr').dataset.v=s.flow.chart}if($('hist').dataset.v!==s.flow.history){$('hist').innerHTML=s.flow.history;$('hist').dataset.v=s.flow.history}
 $('feed').innerHTML=s.events.slice().reverse().map(e=>{const t=new Date(e.t).toLocaleTimeString();
 if(e.type==='step')return '<div class="'+(e.status==='ok'?'ok':'fail')+'">'+t+' '+esc(e.case)+' · '+esc(e.desc)+(e.found?' · 찾음 '+esc(e.found):'')+(e.error?' ✗ '+esc(e.error):'')+'</div>';
 if(e.type==='wait-log')return '<div class="skip">'+t+' ⏳ '+esc(e.case)+' · '+esc(e.line)+'</div>';
